@@ -3837,3 +3837,41 @@ Trước tiên khảo sát ứng viên rác, tránh đập nhầm đồ sống:
 > [!abstract] PI
 
 Tất cả an toàn vì đã có git — xóa cũng hồi sinh được. Chốt danh sách và thi hành:
+
+
+> [!abstract] PI
+
+# 🧹 Xong — workspace gọn, 2 commit có vết
+
+```
+Đã xóa: 2 session-memory cũ (48K, đã kế thừa bởi session hiện tại) · test-log.md mồ côi
+        + ~20 file rác /tmp của các đợt debug (probe/sim/audit/frames...)
+Giữ:    test-log-2.md (đang mirror session này) · research/ (dữ liệu của bạn) ·
+        viz/ (tài liệu trực quan) · HANDOFF (nguồn gốc) · smoke-rpc.ts (công cụ test tái dùng)
+Commit: 3fdb149 ← dọn dẹp · 508dd96 ← snapshot gốc (lùi về được mọi thứ)
+```
+
+Phần nặng còn lại (~700M) toàn là `node_modules` runtime của visual-tools/web-fetch — không phải rác, đó là đồ chạy mermaid/svg mỗi ngày.
+
+## Về reload: **CÓ, cần restart Paseo một lần nữa**
+
+Hai thứ chỉnh sau lần restart trước vẫn đang chờ load:
+
+| Chờ trong đĩa | Hiệu lực sau restart |
+|---|---|
+| `compactAtContextTokens: 150k` | OM quay về nén ở 150k (hiện process vẫn theo 250k) |
+| `searxngBaseUrl: opnxng.com` | provider searxng nhận config (dù instance đó đang chặn IP mình — vô hại) |
+
+Mọi thứ khác (report OM mới, ask_question 300s, roles, tests…) đã load từ lần trước rồi. Restart lúc nào tiện cũng được — không gấp, không mất gì.
+
+Workspace giờ sạch bóng để đón việc mới. Làm gì tiếp? 🚀
+
+
+> [!quote] YOU
+
+mình vẫn thấy file handoff observational memory nhỉ?
+
+
+> [!abstract] PI
+
+Đúng — tôi chủ tâm giữ nó chiều nay (tư liệu nguồn gốc), nhưng mọi giá trị của nó giờ đã nằm ở 3 chỗ tốt hơn: code + tests của extension, topic `.memory/…/observational-memory.md`, và lịch sử git. Giữ lại chỉ là trùng lặp — dọn nốt:
