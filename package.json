@@ -1,0 +1,9 @@
+{
+  "name": "learn-workspace",
+  "private": true,
+  "workspaces": ["extensions/*"],
+  "devDependencies": {
+    "@types/bun": "^1.4.0",
+    "typescript": "^7.0.2"
+  }
+}
