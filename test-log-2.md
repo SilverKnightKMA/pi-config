@@ -3781,3 +3781,59 @@ Chuẩn bị trước hành vi phá hoại — lý trí 😄. Kiểm trạng th�
 > [!abstract] PI
 
 Sạch sẽ: 836M là runtime (`lib`+`bin`+node_modules+venv) — bỏ; phần code thật chỉ vài MB. Git user đã cấu hình sẵn. Tạo repo:
+
+
+> [!abstract] PI
+
+# ✅ Repo sẵn sàng — commit `508dd96`, 354 file
+
+```
+Khởi tạo: main · 354 file được track · bỏ ngoài: node_modules/ .venv/ .pi/lib/ .pi/bin/ (~836M runtime cài lại được)
+Bao gồm: code 2 tầng (dev + live) · 5 skills · tests + report · .memory 8 topics · viz · logs · settings
+```
+
+Kiểm tra nhanh không sót phần sống:
+
+
+> [!abstract] PI
+
+Đủ hồn: 5 role files, settings, INDEX, memory — tất cả trong vòng an toàn. Một lớp bảo hiểm cuối (phòng khi "destructive" quét luôn cả `.git` — nó nằm trong workspace mà):
+
+
+> [!abstract] PI
+
+# 🛡️ An toàn 2 tầng — phá tự do
+
+| Tầng | Vị trí | Khôi phục |
+|---|---|---|
+| **Git repo** | `.git/` trong workspace | mọi lệnh git thường |
+| **Bundle** | `/home/coder/learn-snapshot-20260830-1617.bundle` (909K, NGOÀI workspace) | `git clone /home/coder/learn-snapshot-*.bundle learn-restored` — sống sót kể cả khi workspace bị xóa sạch |
+
+## Cheat-sheet sau khi phá xong
+
+```bash
+git status                    # xem mình đã phá những gì
+git diff                      # chi tiết từng dòng bị đổi
+git restore <file>            # hồi sinh 1 file
+git restore .                 # hồi sinh TOÀN BỘ (cẩn thận: mất cả thay đổi tốt)
+git clean -fd                 # xóa file mới sinh ra (untracked)
+```
+
+Cả `.memory/` (8 topics + INDEX + JOURNEY) cũng đã commit — nên kể cả observational-memory bị đụng tới, durable memory phục hồi được nguyên vẹn.
+
+Một gợi ý nhỏ: sau mỗi mốc thay đổi lớn, `git add -A && git commit -m "..."` một phát — càng nhiều mốc càng dễ lui về đúng chỗ. Giờ thì… phá đi, có vết rồi. 💥
+
+
+> [!quote] YOU
+
+bây giờ mình cần dọn dẹp các file trong workspace này được sinh ra trong quá trình dev/test/setup mà giờ không còn dùng đến, để gọn gàng workspace rồi còn làm việc khác, ngoài ra paseo có cần reload sau khi chỉnh lại 150k context compact không?
+
+
+> [!abstract] PI
+
+Trước tiên khảo sát ứng viên rác, tránh đập nhầm đồ sống:
+
+
+> [!abstract] PI
+
+Tất cả an toàn vì đã có git — xóa cũng hồi sinh được. Chốt danh sách và thi hành:
