@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { TurnWatchdog } from "./watchdog-core.js";
+import { TurnWatchdog, SettleWatch } from "./watchdog-core.js";
+import { mcpCall } from "./daemon.js";
 import { readDetections, wire } from "./index.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -135,5 +136,56 @@ describe("zombie-watchdog wiring", () => {
 			handlers.get("session_shutdown")?.();
 			rmSync(dir, { recursive: true, force: true });
 		}
+	});
+});
+
+describe("SettleWatch (B2 daemon-side settle-loss)", () => {
+	it("busy on both checks after turn_end → b2-settle-lost, once", () => {
+		const sw = new SettleWatch({ firstCheckMs: 20_000, secondCheckMs: 45_000 });
+		sw.onTurnEnd(0);
+		expect(sw.dueCheck(10_000)).toBeNull();
+		expect(sw.dueCheck(20_000)).toBe("first");
+		expect(sw.onPoll(20_000, true)).toBeNull(); // first busy: suspicious only
+		expect(sw.dueCheck(30_000)).toBeNull();
+		expect(sw.onPoll(44_000, true)).toBeNull(); // before second deadline
+		expect(sw.onPoll(45_000, true)).toBe("b2-settle-lost");
+		expect(sw.onPoll(60_000, true)).toBeNull(); // never twice
+		expect(sw.watching).toBe(false);
+	});
+
+	it("daemon settled at first check → no signal, watch disarmed", () => {
+		const sw = new SettleWatch({ firstCheckMs: 20_000, secondCheckMs: 45_000 });
+		sw.onTurnEnd(0);
+		expect(sw.onPoll(20_000, false)).toBeNull();
+		expect(sw.onPoll(45_000, true)).toBeNull(); // disarmed after clean settle
+	});
+
+	it("new turn_start cancels the watch (daemon running is legitimate)", () => {
+		const sw = new SettleWatch({ firstCheckMs: 20_000, secondCheckMs: 45_000 });
+		sw.onTurnEnd(0);
+		sw.onTurnStart();
+		expect(sw.dueCheck(20_000)).toBeNull();
+		expect(sw.onPoll(20_000, true)).toBeNull();
+	});
+
+	it("poll outside due window is ignored", () => {
+		const sw = new SettleWatch({ firstCheckMs: 20_000, secondCheckMs: 45_000 });
+		sw.onTurnEnd(0);
+		expect(sw.onPoll(5_000, true)).toBeNull();
+	});
+});
+
+describe("daemon client", () => {
+	it("mcpCall always sends a JSON-RPC id (notification bug)", async () => {
+		const seen: any[] = [];
+		const fakeFetch = (async (_url: any, init: any) => {
+			seen.push(JSON.parse(init.body));
+			return new Response(JSON.stringify({ result: { content: [{ type: "text", text: "{\"status\":\"idle\"}" }] } }), { status: 200 });
+		}) as unknown as typeof fetch;
+		const r = await mcpCall({ url: "http://x", token: "t" }, "get_agent_status", { agentId: "a" }, 5_000, fakeFetch);
+		expect(r.ok).toBe(true);
+		expect((r.data as any).status).toBe("idle");
+		expect(typeof seen[0].id).toBe("number");
+		expect(seen[0].method).toBe("tools/call");
 	});
 });

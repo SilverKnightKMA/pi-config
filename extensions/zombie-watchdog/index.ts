@@ -23,7 +23,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { TurnWatchdog, type WatchdogSignal } from "./watchdog-core.js";
+import { TurnWatchdog, SettleWatch, type WatchdogSignal } from "./watchdog-core.js";
+import { findMcpEndpoint, getAgentStatus, isBusy } from "./daemon.js";
 
 const LOG_PATH = join(homedir(), ".pi", "agent", "zombie-watchdog.jsonl");
 const MODE = (process.env.PI_ZW_MODE ?? "detect") as "detect" | "auto";
@@ -34,6 +35,7 @@ export interface Detection {
 	sessionFile?: string;
 	code: string;
 	idleMs: number;
+	agentId?: string;
 }
 
 export function fmtDur(ms: number): string {
@@ -45,6 +47,10 @@ export function fmtDur(ms: number): string {
 export interface WireOptions {
 	now?: () => number;
 	logPath?: string;
+	settle?: Partial<import("./watchdog-core.js").SettleConfig>;
+	selfAgentId?: string | null;
+	endpoint?: import("./daemon.js").McpEndpoint | undefined;
+	fetchImpl?: typeof fetch;
 }
 
 export function readDetections(logPath: string = LOG_PATH): Detection[] {
@@ -60,9 +66,45 @@ export function wire(pi: ExtensionAPI, opts: WireOptions = {}): () => WatchdogSi
 	const now = opts.now ?? Date.now;
 	const logPath = opts.logPath ?? LOG_PATH;
 	const wd = new TurnWatchdog();
+	const sw = new SettleWatch(opts.settle ?? {});
+	const selfAgentId = opts.selfAgentId ?? process.env.PASEO_AGENT_ID ?? null;
+	const endpoint = opts.endpoint ?? findMcpEndpoint(selfAgentId);
 	let sessionFile: string | undefined;
 	let ui: any;
 	let timer: ReturnType<typeof setInterval> | undefined;
+	let settleTimers: ReturnType<typeof setTimeout>[] = [];
+
+	function clearSettleTimers(): void {
+		for (const t of settleTimers) clearTimeout(t);
+		settleTimers = [];
+	}
+
+	async function pollDaemon(endedAt: number): Promise<void> {
+		const at = Date.now();
+		if (!selfAgentId || !endpoint || !sw.dueCheck(at)) return;
+		let busy = false;
+		try {
+			const r = await getAgentStatus(endpoint, selfAgentId, opts.fetchImpl ?? fetch);
+			if (!r.ok) return; // query failed: do not feed garbage
+			busy = isBusy(r.status);
+		} catch {
+			return;
+		}
+		const code = sw.onPoll(Date.now(), busy);
+		if (!code) return;
+		appendDetection({ ts: new Date().toISOString(), sessionFile, code, idleMs: Date.now() - endedAt, agentId: selfAgentId });
+		if (ui) {
+			ui.notify(`zw ⚠ B2: turn đã xong trong process nhưng daemon vẫn thấy "running" (settle wake bị rơi, #3845). Bấm STOP cho sạch`, "warning");
+			ui.setStatus("zw", `⚠ zombie daemon-side — bấm STOP`);
+		}
+	}
+
+	function armSettleWatch(endedAt: number): void {
+		clearSettleTimers();
+		if (!selfAgentId || !endpoint) return; // not a Paseo-spawned session
+		settleTimers.push(setTimeout(() => void pollDaemon(endedAt), 20_000));
+		settleTimers.push(setTimeout(() => void pollDaemon(endedAt), 45_000));
+	}
 
 	function appendDetection(d: Detection): void {
 		try {
@@ -108,9 +150,16 @@ export function wire(pi: ExtensionAPI, opts: WireOptions = {}): () => WatchdogSi
 		timer = setInterval(tick, CHECK_INTERVAL_MS);
 	}) as never);
 
-	pi.on("turn_start", () => wd.onTurnStart(now()));
+	pi.on("turn_start", () => {
+		wd.onTurnStart(now());
+		sw.onTurnStart();
+		clearSettleTimers();
+	});
 	pi.on("turn_end", () => {
-		wd.onTurnEnd(now());
+		const endedAt = now();
+		wd.onTurnEnd(endedAt);
+		sw.onTurnEnd(endedAt);
+		armSettleWatch(endedAt);
 		if (ui) ui.setStatus("zw", undefined);
 	});
 	pi.on("message_start", () => wd.onActivity(now()));
@@ -125,6 +174,7 @@ export function wire(pi: ExtensionAPI, opts: WireOptions = {}): () => WatchdogSi
 	pi.on("session_shutdown", () => {
 		if (timer) clearInterval(timer);
 		timer = undefined;
+		clearSettleTimers();
 	});
 
 	pi.registerCommand("zw", {

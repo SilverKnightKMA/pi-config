@@ -14,6 +14,7 @@
 	"include": [
 		"index.ts",
 		"watchdog-core.ts",
+		"daemon.ts",
 		"zombie-watchdog.test.ts"
 	]
 }
