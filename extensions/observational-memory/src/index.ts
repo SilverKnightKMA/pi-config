@@ -10,6 +10,8 @@
  * extension is completely invisible.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { registerCompactCommand } from "./commands/compact.js";
 import { registerConsolidateCommand } from "./commands/consolidate.js";
 import { registerStatusCommand } from "./commands/status.js";
@@ -24,13 +26,19 @@ import { ensureSessionMemory } from "./memory/session.js";
 import { Runtime } from "./runtime.js";
 
 function readGateFromLedger(branch: Entry[]): boolean {
+	// pipeline stays opt-in: only an explicit `on` entry enables it
+	return readGateEx(branch) === true;
+}
+
+/** Last explicit gate value; undefined when the session never recorded one. */
+function readGateEx(branch: Entry[]): boolean | undefined {
 	for (let i = branch.length - 1; i >= 0; i--) {
 		const entry = branch[i];
 		if (entry.type === "custom" && entry.customType === OM_ENABLED) {
 			return (entry.data as { enabled?: boolean } | undefined)?.enabled ?? false;
 		}
 	}
-	return false;
+	return undefined;
 }
 
 export default function observationalMemory(pi: ExtensionAPI): void {
@@ -51,6 +59,14 @@ export default function observationalMemory(pi: ExtensionAPI): void {
 		runtime.dispatchedCoversUpToId = undefined;
 		const branch = ctx.sessionManager.getBranch() as Entry[];
 		runtime.enabled = readGateFromLedger(branch);
+		// memory-guard gate (2026-09-01): on when OM runs here, OR in any fresh
+		// session of a project that HAS a .memory tree (spawned subagents: their
+		// ledger is empty so readGateFromLedger alone would leave them unguarded
+		// — E2E 8d08ad84 proved write/rm sailed through). /om off stays the
+		// explicit admin switch-off in the main session.
+		runtime.guardActive =
+			runtime.enabled ||
+			(readGateEx(branch) === undefined && existsSync(join(ctx.cwd ?? process.cwd(), ".memory")));
 		if (runtime.enabled) runtime.memoryRoot = ensureSessionMemory(ctx);
 		attachIfEnabled(ctx);
 		runtime.refreshFooterGauges(branch, ctx.getContextUsage?.()?.tokens ?? null);
@@ -73,6 +89,7 @@ export default function observationalMemory(pi: ExtensionAPI): void {
 				return;
 			}
 			runtime.enabled = next;
+			runtime.guardActive = next;
 			pi.appendEntry(OM_ENABLED, { enabled: next });
 			if (next) {
 				runtime.memoryRoot = ensureSessionMemory(ctx);
@@ -100,5 +117,5 @@ export default function observationalMemory(pi: ExtensionAPI): void {
 	registerStatusTool(pi, runtime);
 
 // 2026-09-01: .memory write-guard + context policy line (see guard/memory-guard.ts)
-	registerMemoryGuard(pi, () => runtime.enabled);
+	registerMemoryGuard(pi, () => runtime.guardActive);
 }

@@ -13,6 +13,8 @@ export class Runtime {
 
 	/** The per-session on/off gate (default OFF). Outermost guard in every handler. */
 	enabled = false;
+	/** memory-guard gate — see session_start comment (2026-09-01). */
+	guardActive = false;
 
 	/**
 	 * Absolute `.memory/<sessionId>/` root for this session's durable + transient memory. Set
