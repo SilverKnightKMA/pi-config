@@ -15,7 +15,7 @@ describe("makeTimelineSink", () => {
 		const { sent, pi } = recorder();
 		const sink = makeTimelineSink(pi, { coalesce: false });
 		sink.notify("observer done");
-		expect(sent).toEqual([{ customType: "om-timeline", content: "om: observer done", display: true }]);
+		expect(sent).toEqual([{ customType: "om-timeline", content: "\n> om: observer done\n", display: true }]);
 	});
 
 	it("defers delivery with triggerTurn:false so an active turn is never steered", () => {
@@ -41,7 +41,7 @@ describe("makeTimelineSink", () => {
 		sink.notify("observer +5");
 		vi.advanceTimersByTime(1);
 		expect(sent.length).toBe(1);
-		expect(sent[0].content).toBe("om: observer +3\nom: observer +5");
+		expect(sent[0].content).toBe("\n> om: observer +3\n> om: observer +5\n");
 		vi.useRealTimers();
 	});
 
@@ -52,14 +52,14 @@ describe("makeTimelineSink", () => {
 		sink.notify("observer failed: boom", "error");
 		// Error fired immediately despite a pending queued line.
 		expect(sent.length).toBe(1);
-		expect(sent[0].content).toBe("om: observer failed: boom");
+		expect(sent[0].content).toBe("\n> om: observer failed: boom\n");
 	});
 
 	it("prefixes bare lines but keeps om:-prefixed ones as-is", () => {
 		const { sent, pi } = recorder();
 		const sink = makeTimelineSink(pi, { coalesce: false });
 		sink.notify("plain");
-		expect(sent[0].content).toBe("om: plain");
+		expect(sent[0].content).toBe("\n> om: plain\n");
 	});
 
 	it("survives a sendMessage that throws during teardown", () => {
@@ -74,7 +74,7 @@ describe("makeTimelineSink", () => {
 		sink.notify("pending line");
 		sink.flush();
 		expect(sent.length).toBe(1);
-		expect(sent[0].content).toBe("om: pending line");
+		expect(sent[0].content).toBe("\n> om: pending line\n");
 	});
 
 	it("renders worker lifecycle lines with delta", () => {
@@ -84,9 +84,9 @@ describe("makeTimelineSink", () => {
 		sink.workerLine({ type: "consolidator", state: "done", delta: 7 });
 		sink.workerLine({ type: "observer", state: "error" });
 		expect(sent.map((m) => m.content)).toEqual([
-			"om: observer started",
-			"om: consolidator done +7",
-			"om: observer failed",
+			"\n> om: observer started\n",
+			"\n> om: consolidator done +7\n",
+			"\n> om: observer failed\n",
 		]);
 	});
 });
@@ -99,5 +99,28 @@ describe("makeNullTimelineSink", () => {
 			sink.workerLine({ type: "observer", state: "done", delta: 1 });
 			sink.flush();
 		}).not.toThrow();
+	});
+});
+
+describe("timeline sink separation (2026-09-01 user request: om events must not glue to agent messages)", () => {
+	it("wraps every event batch in a blank-line-fenced blockquote so it renders as its own block", () => {
+		const sent: { customType: string; content: string; display: boolean }[] = [];
+		const sink = makeTimelineSink({ sendMessage: (m) => sent.push(m) }, { coalesce: false });
+		sink.notify("observer done: 16 observations");
+		expect(sent[0].customType).toBe("om-timeline");
+		expect(sent[0].content).toBe("\n> om: observer done: 16 observations\n");
+	});
+
+	it("prefixes each line of a multi-line batch", () => {
+		const sent: { content: string }[] = [];
+		const sink = makeTimelineSink({ sendMessage: (m) => sent.push(m as never) }, { coalesce: true });
+		sink.notify("observer done: 1");
+		sink.notify("observer done: 2");
+		return new Promise((resolve) => {
+			setTimeout(() => {
+				expect(sent[0].content).toBe("\n> om: observer done: 1\n> om: observer done: 2\n");
+				resolve(null);
+			}, 10);
+		});
 	});
 });

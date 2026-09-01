@@ -89,6 +89,13 @@ export class StatusController {
 		this.ui = undefined;
 	}
 
+	/** Refresh only the context gauge (cheap: no ledger fold) — call per turn. */
+	updateContext(contextTokens: number | null | undefined): void {
+		if (!this.ui || !this.gauges || contextTokens == null) return;
+		this.gauges = { ...this.gauges, ctxValue: contextTokens };
+		this.ui.setStatus(FOOTER_KEY, this.renderFooter());
+	}
+
 	/** Update (or clear) the live footer gauges and re-render the footer in place. */
 	setGauges(gauges: FooterGauges | undefined): void {
 		this.gauges = gauges;
@@ -160,11 +167,11 @@ export class StatusController {
 	}
 
 	/** A compact colored fill bar, e.g. `▕████░░░░▏`. Filled cells use `over` (an alert color) past max. */
-	private gaugeBar(value: number, max: number, cells = 8): string {
+	private gaugeBar(value: number, max: number, cells = 8, fillOverride?: string): string {
 		const theme = this.ui!.theme;
 		const frac = max <= 0 ? 0 : Math.max(0, value / max);
 		const filled = Math.min(cells, Math.round(Math.min(1, frac) * cells));
-		const fillColor = frac >= 1 ? "warning" : "dim";
+		const fillColor = fillOverride ?? (frac >= 1 ? "error" : frac >= 0.95 ? "warning" : "dim");
 		return (
 			theme.fg(fillColor, "▕") +
 			theme.fg(fillColor, "█".repeat(filled)) +
@@ -179,9 +186,17 @@ export class StatusController {
 		const base = `${theme.fg("success", "om")}`;
 		const g = this.gauges;
 		if (!g) return base;
-		const next = `${theme.fg("muted", "O")}${this.gaugeBar(g.nextValue, g.nextMax)}`;
-		const pool = `${theme.fg("muted", "C")}${this.gaugeBar(g.poolValue, g.poolMax)}`;
-		const ctx = `${theme.fg("muted", "X")}${this.gaugeBar(g.ctxValue, g.ctxMax)}`;
+		// 2026-09-01: readable labels (was the cryptic O/C/X with no legend) and
+		// threshold colors matching the /om:status verdict (dim <80%, warning
+		// >=80%, error >=95%). "obs" resets each observer run — never a warning.
+		const ratio = (v: number, m: number) => (m <= 0 ? 0 : Math.max(0, v / m));
+		const limitColor = (v: number, m: number) => {
+			const r = ratio(v, m);
+			return r >= 0.95 ? "error" : r >= 0.8 ? "warning" : "dim";
+		};
+		const next = `${theme.fg("muted", "obs")}${this.gaugeBar(g.nextValue, g.nextMax)}`;
+		const pool = `${theme.fg("muted", "pool")}${this.gaugeBar(g.poolValue, g.poolMax, 8, limitColor(g.poolValue, g.poolMax))}`;
+		const ctx = `${theme.fg("muted", "ctx")}${this.gaugeBar(g.ctxValue, g.ctxMax, 8, limitColor(g.ctxValue, g.ctxMax))}`;
 		const cost = this.cost ? ` ${theme.fg("dim", `$${this.cost.costUsd.toFixed(3)}`)}` : "";
 		return `${next}  ${pool}  ${ctx}${cost}`;
 	}

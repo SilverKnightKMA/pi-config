@@ -115,6 +115,11 @@ export default function observationalMemory(pi: ExtensionAPI): void {
 	registerCompactCommand(pi, runtime);
 	registerConsolidateCommand(pi, runtime);
 	registerStatusTool(pi, runtime);
+	// 2026-09-01: per-turn context gauge refresh (footer used to go stale between
+	// observer/consolidator events while context grows every turn).
+	pi.on("turn_end", (_event: unknown, ctx: any) => {
+		runtime.status.updateContext(ctx?.getContextUsage?.()?.tokens ?? null);
+	});
 
 // 2026-09-01: .memory write-guard + context policy line (see guard/memory-guard.ts)
 	registerMemoryGuard(pi, () => runtime.guardActive);

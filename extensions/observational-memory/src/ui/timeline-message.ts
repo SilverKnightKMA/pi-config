@@ -52,7 +52,12 @@ export function makeTimelineSink(pi: SendMessageTarget, opts: { coalesce?: boole
 
 	function emit(lines: string[]): void {
 		if (lines.length === 0) return;
-		const content = lines.join("\n");
+		// 2026-09-01 (user request): om events used to render glued to the nearest
+		// agent message in the Paseo UI. Wrap every event batch in a markdown
+		// blockquote fenced by blank lines so any renderer shows it as a separate
+		// quoted block standing alone — never as a continuation of the agent's text.
+		const quoted = lines.map((l) => `> ${l}`).join("\n");
+		const content = `\n${quoted}\n`;
 		try {
 			// triggerTurn:false is load-bearing: without it pi steers the message into the
 			// ACTIVE turn (dropped for providers without steer support) instead of appending.
