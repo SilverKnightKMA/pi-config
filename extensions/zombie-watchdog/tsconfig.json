@@ -1,0 +1,19 @@
+{
+	"compilerOptions": {
+		"strict": true,
+		"target": "es2022",
+		"module": "preserve",
+		"moduleResolution": "bundler",
+		"skipLibCheck": true,
+		"noEmit": true,
+		"types": [
+			"bun-types"
+		],
+		"allowImportingTsExtensions": true
+	},
+	"include": [
+		"index.ts",
+		"watchdog-core.ts",
+		"zombie-watchdog.test.ts"
+	]
+}
