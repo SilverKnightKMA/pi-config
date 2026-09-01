@@ -14,6 +14,7 @@ import { registerCompactCommand } from "./commands/compact.js";
 import { registerConsolidateCommand } from "./commands/consolidate.js";
 import { registerStatusCommand } from "./commands/status.js";
 import { registerStatusTool } from "./commands/status-tool.js";
+import { registerMemoryGuard } from "./guard/memory-guard.js";
 import { registerCompactionHook } from "./hooks/compaction-hook.js";
 import { registerCompactionTrigger } from "./hooks/compaction-trigger.js";
 import { registerConsolidatorTrigger } from "./hooks/consolidator-trigger.js";
@@ -97,4 +98,7 @@ export default function observationalMemory(pi: ExtensionAPI): void {
 	registerCompactCommand(pi, runtime);
 	registerConsolidateCommand(pi, runtime);
 	registerStatusTool(pi, runtime);
+
+// 2026-09-01: .memory write-guard + context policy line (see guard/memory-guard.ts)
+	registerMemoryGuard(pi, () => runtime.enabled);
 }

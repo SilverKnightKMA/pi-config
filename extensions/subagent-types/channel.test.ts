@@ -129,3 +129,81 @@ describe("waitForReply", () => {
 		expect(got?.id).toBe("m9");
 	});
 });
+
+// ── Deferred kicks (2026-09-01): queue-only in execute, kick at turn_end ──
+import { markKick, flushKicks, pendingKickIds, pushToQueue } from "./paseo-channel.ts";
+import { mkdtempSync } from "node:fs";
+const kickBase = mkdtempSync(join(tmpdir(), "kicks-"));
+const fakeEp = { url: "http://fake" } as never;
+
+test("flushKicks kicks an idle child with queued messages and empties the queue", async () => {
+	pushToQueue("kid-idle", { id: "m1", from: "main", fromRole: "main", text: "hello kid", ts: "t" }, kickBase);
+	markKick("kid-idle", false);
+	const calls: Array<{ method: string; params: any }> = [];
+	const out = await flushKicks(fakeEp, {
+		base: kickBase,
+		call: async (_e: never, method: string, params: any) => { calls.push({ method, params }); return { ok: true, data: {} }; },
+		status: async () => ({ ok: true, status: "idle" }),
+	});
+	expect(out[0]?.kicked).toBe(true);
+	expect(calls[0]?.method).toBe("send_agent_prompt");
+	expect(calls[0]?.params.notifyOnFinish).toBe(false); // mid-turn notifications abort the parent
+	expect(calls[0]?.params.prompt).toContain("hello kid");
+	expect(drainQueue("kid-idle", kickBase)).toHaveLength(0);
+	expect(pendingKickIds()).not.toContain("kid-idle");
+});
+
+test("flushKicks leaves a busy child to its own drain (no send)", async () => {
+	pushToQueue("kid-busy", { id: "m2", from: "main", fromRole: "main", text: "later", ts: "t" }, kickBase);
+	markKick("kid-busy", false);
+	let sent = 0;
+	const out = await flushKicks(fakeEp, {
+		base: kickBase,
+		call: async () => { sent++; return { ok: true, data: {} }; },
+		status: async () => ({ ok: true, status: "running" }),
+	});
+	expect(out[0]?.kicked).toBe(false);
+	expect(sent).toBe(0);
+	expect(drainQueue("kid-busy", kickBase)).toHaveLength(1); // queue intact for the child's drain
+	expect(pendingKickIds()).not.toContain("kid-busy");
+});
+
+test("interrupt semantics kick even a busy child", async () => {
+	pushToQueue("kid-int", { id: "m3", from: "main", fromRole: "main", text: "pivot", ts: "t" }, kickBase);
+	markKick("kid-int", true);
+	let sent = 0;
+	const out = await flushKicks(fakeEp, {
+		base: kickBase,
+		call: async () => { sent++; return { ok: true, data: {} }; },
+		status: async () => ({ ok: true, status: "running" }),
+	});
+	expect(out[0]?.kicked).toBe(true);
+	expect(sent).toBe(1);
+});
+
+test("failed send re-queues and keeps the marker for the next flush", async () => {
+	pushToQueue("kid-fail", { id: "m4", from: "main", fromRole: "main", text: "retry me", ts: "t" }, kickBase);
+	markKick("kid-fail", false);
+	const out = await flushKicks(fakeEp, {
+		base: kickBase,
+		call: async () => ({ ok: false, error: "boom" }),
+		status: async () => ({ ok: true, status: "finished" }),
+	});
+	expect(out[0]?.kicked).toBe(false);
+	expect(out[0]?.reason).toContain("boom");
+	expect(drainQueue("kid-fail", kickBase)).toHaveLength(1); // re-queued
+	expect(pendingKickIds()).toContain("kid-fail");
+});
+
+test("empty queue (child already drained) is a no-op kick", async () => {
+	markKick("kid-empty", false);
+	let sent = 0;
+	const out = await flushKicks(fakeEp, {
+		base: kickBase,
+		call: async () => { sent++; return { ok: true, data: {} }; },
+		status: async () => ({ ok: true, status: "idle" }),
+	});
+	expect(out[0]?.kicked).toBe(false);
+	expect(out[0]?.reason).toContain("empty");
+	expect(sent).toBe(0);
+});

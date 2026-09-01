@@ -40,7 +40,12 @@ import registerReadonlyTools from "./readonly-tools.ts";
 import {
 	createAgent,
 	findMcpEndpoint,
-	sendToSubagent,
+	flushKicks,
+	markKick,
+	pendingKickIds,
+	getAgentStatus,
+	isBusy,
+	pushToQueue,
 	sendToMain,
 	drainQueue,
 	renderForPrompt,
@@ -369,7 +374,28 @@ export default function subagentTypes(pi: ExtensionAPI) {
 		}
 	}
 
+/**
+ * Deliver pending MAIN->CHILD kicks. Runs only at turn_end / agent_settled:
+ * a daemon kick notifies the parent session, and if that notification lands
+ * while the parent is still streaming the parent's request is aborted
+ * (2026-09-01 chat-workspace reproductions, 4/4 aborts right after kicks).
+ */
+let kicksRunning = false;
+async function kickOutbound(): Promise<void> {
+	if (kicksRunning || pendingKickIds().length === 0) return;
+	kicksRunning = true;
+	try {
+		const endpoint = findMcpEndpoint(myAgentId);
+		if (endpoint) await flushKicks(endpoint);
+	} catch {
+		// never throw from an event handler; the next flush retries
+	} finally {
+		kicksRunning = false;
+	}
+}
+
 	pi.on("turn_end", () => {
+		void kickOutbound();
 		const msgs = flushInbound();
 		if (msgs.length === 0) return;
 		pi.sendMessage({ customType: "subagent-message", content: renderForPrompt(msgs), display: true, details: {} });
@@ -382,6 +408,7 @@ export default function subagentTypes(pi: ExtensionAPI) {
 	});
 
 	pi.on("agent_settled", () => {
+		void kickOutbound();
 		const msgs = flushInbound();
 		if (msgs.length === 0) return;
 		pi.sendMessage({ customType: "subagent-message", content: renderForPrompt(msgs), display: true, details: {} });
@@ -628,12 +655,16 @@ export default function subagentTypes(pi: ExtensionAPI) {
 				ts: new Date().toISOString(),
 				kind: params.kind === "reply" ? "reply" : "message",
 			};
-			const r = await sendToSubagent(endpoint, targetId, msg, { interrupt: params.interrupt === true });
-			const text = !r.ok
-				? `Send failed: ${r.error}`
-				: r.delivered === "queued"
-				? `Queued — ${params.name ?? targetId} will pick this up at its next turn boundary.`
-				: `Delivered to ${params.name ?? targetId}${params.interrupt === true ? " (interrupted current turn)" : " (started new turn)"}.`;
+			// Deferred kick (2026-09-01): never send_agent_prompt while the parent is
+			// streaming — the daemon's child-start notification aborts THIS request.
+			pushToQueue(targetId, msg);
+			markKick(targetId, params.interrupt === true);
+			const st = await getAgentStatus(endpoint, targetId);
+			const busy = st.ok && isBusy(st.status);
+			const label = params.name ?? targetId;
+			const text = busy
+				? `Queued — ${label} is mid-turn and will pick this up at its next turn boundary.`
+				: `Queued for ${label} — kick deferred to the end of your current turn (kicking now is what aborts your own stream; ${params.interrupt === true ? "interrupt semantics apply when it fires" : "the child starts then"}).`;
 			return { content: [{ type: "text" as const, text }], details: {} };
 		},
 	});

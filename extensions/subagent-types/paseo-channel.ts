@@ -146,7 +146,9 @@ export async function createAgent(req: SpawnRequest, endpoint: McpEndpoint): Pro
 		title: req.title,
 		labels: req.labels,
 		initialPrompt: req.initialPrompt,
-		notifyOnFinish: true,
+		// Notifications inject a <paseo-system> message into the parent session;
+		// mid-turn that aborts the parent's in-flight request (see flushKicks).
+		notifyOnFinish: false,
 		settings: { thinkingOptionId: req.thinkingOptionId },
 	});
 	if (!r.ok) return { ok: false, error: r.error };
@@ -233,14 +235,14 @@ interface AgentStatusResult {
 	error?: string;
 }
 
-async function getAgentStatus(endpoint: McpEndpoint, agentId: string): Promise<AgentStatusResult> {
+export async function getAgentStatus(endpoint: McpEndpoint, agentId: string): Promise<AgentStatusResult> {
 	const r = await mcpCall(endpoint, "get_agent_status", { agentId });
 	if (!r.ok) return { ok: false, error: r.error };
 	const sc = (r.data as { status?: string; snapshot?: { lastStatus?: string } }) ?? {};
 	return { ok: true, status: sc.status ?? sc.snapshot?.lastStatus };
 }
 
-function isBusy(status: string | undefined): boolean {
+export function isBusy(status: string | undefined): boolean {
 	return status === "running" || status === "initializing";
 }
 
@@ -281,19 +283,89 @@ export async function sendToMain(endpoint: McpEndpoint, mainAgentId: string, msg
  * `interrupt: true` → always direct daemon send: busy child is
  * interrupted-and-replaced (urgent course change; opt-in only).
  */
-export async function sendToSubagent(endpoint: McpEndpoint, agentId: string, msg: ChannelMessage, opts?: { interrupt?: boolean }): Promise<SendResult> {
-	if (opts?.interrupt) {
-		const r = await mcpCall(endpoint, "send_agent_prompt", { agentId, prompt: renderForPrompt([msg]), background: true, notifyOnFinish: true });
-		return r.ok ? { ok: true, delivered: "now" } : { ok: false, error: r.error };
+// ---------------------------------------------------------------------------
+// Deferred kicks (2026-09-01 redesign)
+//
+// Empirical root cause (chat workspace, NAS-build agents, 2026-09-01 10:29-12:19
+// UTC): every "[System Error] This operation was aborted (stopReason=error...)"
+// on the parent fired <=1s after a message_subagent kick of a child. The daemon
+// notifies the parent when a kicked child starts/finishes; that mid-turn
+// <paseo-system> injection aborts the parent's in-flight request (AbortError),
+// losing streamed-but-unpersisted output. Single-agent sessions never abort.
+//
+// Fix: message_subagent only appends to the file queue and marks a pending
+// kick; the kick itself (send_agent_prompt, notifyOnFinish:false) runs at the
+// PARENT's turn_end / agent_settled -- never while the parent is streaming.
+// ---------------------------------------------------------------------------
+
+/** agentId -> kick intent. In-memory only: the queue file is the durable record. */
+const pendingKicks = new Map<string, { interrupt: boolean; ts: number }>();
+
+export function markKick(agentId: string, interrupt: boolean): void {
+	const prev = pendingKicks.get(agentId);
+	pendingKicks.set(agentId, { interrupt: (prev?.interrupt ?? false) || interrupt, ts: Date.now() });
+}
+
+export function pendingKickIds(): string[] {
+	return [...pendingKicks.keys()];
+}
+
+export interface KickOutcome {
+	agentId: string;
+	kicked: boolean;
+	reason: string;
+}
+
+export interface KickDeps {
+	call?: typeof mcpCall;
+	status?: typeof getAgentStatus;
+	/** queue root override (tests) */
+	base?: string;
+}
+
+/**
+ * Run every pending kick. Safe to call repeatedly; only children whose queue
+ * still holds messages are kicked. A busy child (including a parked
+ * ask_question waiter -- the daemon reports it as running) is not kicked
+ * unless interrupt semantics were requested: its own turn-boundary drain
+ * delivers the queue.
+ */
+export async function flushKicks(endpoint: McpEndpoint, deps: KickDeps = {}): Promise<KickOutcome[]> {
+	const call = deps.call ?? mcpCall;
+	const status = deps.status ?? getAgentStatus;
+	const base = deps.base;
+	const out: KickOutcome[] = [];
+	for (const agentId of [...pendingKicks.keys()]) {
+		const kick = pendingKicks.get(agentId);
+		if (!kick) continue;
+		const st = await status(endpoint, agentId);
+		const busy = st.ok && isBusy(st.status);
+		if (busy && !kick.interrupt) {
+			pendingKicks.delete(agentId);
+			out.push({ agentId, kicked: false, reason: `busy (${st.status}) -- its own turn-boundary drain delivers the queue` });
+			continue;
+		}
+		const msgs = drainQueue(agentId, base);
+		if (msgs.length === 0) {
+			pendingKicks.delete(agentId);
+			out.push({ agentId, kicked: false, reason: "queue empty (already picked up by the child)" });
+			continue;
+		}
+		const r = await call(endpoint, "send_agent_prompt", {
+			agentId,
+			prompt: renderForPrompt(msgs),
+			background: true,
+			notifyOnFinish: false, // notifications inject mid-turn and abort the parent's stream
+		});
+		if (r.ok) {
+			pendingKicks.delete(agentId);
+			out.push({ agentId, kicked: true, reason: busy ? "interrupt delivery (kicked while busy by request)" : "idle/finished -- new turn started" });
+		} else {
+			for (const m of msgs) pushToQueue(agentId, m, base); // re-queue on transient failure
+			out.push({ agentId, kicked: false, reason: `send failed (${r.error}) -- re-queued, retried at next flush` });
+		}
 	}
-	const st = await getAgentStatus(endpoint, agentId);
-	if (st.ok && !isBusy(st.status)) {
-		const r = await mcpCall(endpoint, "send_agent_prompt", { agentId, prompt: renderForPrompt([msg]), background: true, notifyOnFinish: true });
-		if (r.ok) return { ok: true, delivered: "now" };
-		// fall through to queue on transient failure
-	}
-	pushToQueue(agentId, msg);
-	return { ok: true, delivered: "queued" };
+	return out;
 }
 
 /** Render queue entries as prompt-visible subagent-message blocks. */

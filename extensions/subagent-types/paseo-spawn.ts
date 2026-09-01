@@ -91,7 +91,7 @@ export async function createAgent(req: SpawnRequest, endpoint: McpEndpoint): Pro
 				title: req.title,
 				labels: req.labels,
 				initialPrompt: req.initialPrompt,
-				notifyOnFinish: true,
+				notifyOnFinish: false, // mid-turn notifications abort the parent's stream
 				settings: { thinkingOptionId: req.thinkingOptionId },
 			},
 		},
