@@ -1,7 +1,7 @@
 ---
 name: researcher
 description: Web researcher — searches the web and synthesizes findings
-tools: web_search, web_fetch, safe_bash
+tools: web_search, web_fetch, safe_bash, read
 model: cli-openai/zaicp/glm-5.3-flash
 thinking: high
 ---
