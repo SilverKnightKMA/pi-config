@@ -231,3 +231,18 @@ test("buildAutoPing không title vẫn hợp lệ", () => {
 	expect(t).toContain("scout");
 	expect(t).not.toContain("undefined");
 });
+
+// ── Main-tool restriction (2026-09-02): deny-list cho main agent ──
+import { mergeMainBlockedTools } from "./index.ts";
+
+test("mergeMainBlockedTools: workspace thắng user-wide, user-wide thắng rỗng", () => {
+	expect(mergeMainBlockedTools({ subagentTypes: { mainBlockedTools: ["safe_bash"] } }, { subagentTypes: { mainBlockedTools: ["web_search"] } })).toEqual(["safe_bash"]);
+	expect(mergeMainBlockedTools(null, { subagentTypes: { mainBlockedTools: ["web_search"] } })).toEqual(["web_search"]);
+	expect(mergeMainBlockedTools({ subagentTypes: {} }, { subagentTypes: { mainBlockedTools: ["web_search"] } })).toEqual(["web_search"]); // ws có key rỗng → fallback
+	expect(mergeMainBlockedTools(null, null)).toEqual([]);
+});
+
+test("mergeMainBlockedTools lọc phần tử rác, không vỡ với kiểu sai", () => {
+	expect(mergeMainBlockedTools({ subagentTypes: { mainBlockedTools: ["safe_bash", 42, null, "web_fetch"] } }, null)).toEqual(["safe_bash", "web_fetch"]);
+	expect(mergeMainBlockedTools({ subagentTypes: { mainBlockedTools: "not-an-array" } }, null)).toEqual([]);
+});

@@ -154,6 +154,36 @@ export function allowlistFor(role: string | undefined, roles: Map<string, RoleDe
 }
 
 /**
+ * Main-agent tool restriction (2026-09-02, user request): let the user block
+ * specific tools from the MAIN agent (e.g. safe_bash / web_* / render_*).
+ * Same setActiveTools mechanism the role allowlist uses — main just gets a
+ * deny-list instead of an allow-list. Opt-in via settings:
+ *   { "subagentTypes": { "mainBlockedTools": ["safe_bash", ...] } }
+ * Workspace .pi/settings.json wins over ~/.pi/agent/settings.json.
+ */
+export function mergeMainBlockedTools(
+	wsCfg: Record<string, unknown> | null,
+	userCfg: Record<string, unknown> | null,
+): string[] {
+	const pick = (cfg: Record<string, unknown> | null): string[] | null => {
+		if (!cfg) return null;
+		const block = (cfg as { subagentTypes?: { mainBlockedTools?: unknown } }).subagentTypes?.mainBlockedTools;
+		return Array.isArray(block) ? block.filter((t): t is string => typeof t === "string") : null;
+	};
+	return pick(wsCfg) ?? pick(userCfg) ?? [];
+}
+
+function readSettingsJson(path: string): Record<string, unknown> | null {
+	try {
+		if (!existsSync(path)) return null;
+		const d = JSON.parse(readFileSync(path, "utf-8"));
+		return typeof d === "object" && d !== null ? (d as Record<string, unknown>) : null;
+	} catch {
+		return null;
+	}
+}
+
+/**
  * Auto-report backstop (2026-09-02, user request): the 2026-09-01 fix dropped
  * notifyOnFinish on spawns, which also killed the daemon's automatic
  * "child finished" forwarding. Children that simply conclude (researcher
@@ -350,6 +380,11 @@ export default function subagentTypes(pi: ExtensionAPI) {
 	safeBash(pi);
 	registerReadonlyTools(pi); // grep/find/ls — pi 0.84 omits them from default coding tools
 	const roles = loadRoles();
+	// Main-tool restriction config: workspace overrides user-wide (2026-09-02).
+	const mainBlockedTools = mergeMainBlockedTools(
+		readSettingsJson(join(process.cwd(), ".pi", "settings.json")),
+		readSettingsJson(join(homedir(), ".pi", "agent", "settings.json")),
+	);
 	let myRole: string | undefined;
 	let myAgentId: string | null = null;
 	let messageMainCalledThisRun = false;
@@ -357,24 +392,39 @@ export default function subagentTypes(pi: ExtensionAPI) {
 
 	let resolved = false;
 	function applyRole(ctx: { ui: { notify: (m: string, t?: "info" | "warning" | "error") => void }; sessionManager: { getSessionId: () => string } }): void {
-		if (resolved) return;
-		const sessionId = ctx.sessionManager.getSessionId();
-		sessionIdRef.value = sessionId;
-		const self = resolveSelf(sessionId);
-		if (!self.agentId) return; // record not written yet — retry on next event
-		myRole = self.role;
-		myAgentId = self.agentId;
-		resolved = true;
+		if (!resolved) {
+			const sessionId = ctx.sessionManager.getSessionId();
+			sessionIdRef.value = sessionId;
+			const self = resolveSelf(sessionId);
+			if (!self.agentId) return; // record not written yet — retry on next event
+			myRole = self.role;
+			myAgentId = self.agentId;
+			resolved = true;
 
-		const allowed = allowlistFor(myRole, roles);
-		if (allowed[0] === "*") {
-			ctx.ui.notify(`subagent-types: main agent (full tools)${roles.size ? ` — ${roles.size} roles loadable` : ""}`, "info");
-			return;
+			const allowed = allowlistFor(myRole, roles);
+			if (allowed[0] === "*") {
+				ctx.ui.notify(`subagent-types: main agent (full tools)${roles.size ? ` — ${roles.size} roles loadable` : ""}`, "info");
+			} else {
+				// Harden: drop everything not in the allowlist.
+				const active = pi.getActiveTools().filter((t) => allowed.includes(t));
+				pi.setActiveTools(active);
+				ctx.ui.notify(`subagent-types: role=${myRole ?? "(none)"} — tools locked to ${active.join(", ")}`, "info");
+			}
 		}
-		// Harden: drop everything not in the allowlist.
-		const active = pi.getActiveTools().filter((t) => allowed.includes(t));
-		pi.setActiveTools(active);
-		ctx.ui.notify(`subagent-types: role=${myRole ?? "(none)"} — tools locked to ${active.join(", ")}`, "info");
+		// Main-tool restriction: re-applied on EVERY event (session_start, input)
+		// so tools registered after session_start are still filtered. Idempotent:
+		// the toast only fires when a tool was actually removed.
+		if (resolved && myRole === MAIN_ROLE && mainBlockedTools.length > 0) {
+			const before = pi.getActiveTools();
+			const active = before.filter((t) => !mainBlockedTools.includes(t));
+			if (active.length !== before.length) {
+				pi.setActiveTools(active);
+				ctx.ui.notify(
+					`subagent-types: main — đã chặn ${before.length - active.length} tool theo cấu hình (${mainBlockedTools.join(", ")}). Cần chạy thì giao cho subagent.`,
+					"info",
+				);
+			}
+		}
 	}
 
 	// ── Inbound drain (turn-boundary pickup) ─────────────────────────────

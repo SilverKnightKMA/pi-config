@@ -26,3 +26,20 @@ Quy ước cho cấp 2: sửa thẳng bản live, ghi chú nguồn gốc trong h
 
 - **Không ai sinh ra từ không khí**: mọi ext đều truy được nguồn ở repo tác giả (clone tham khảo từng ở `/tmp/ext-audit-2` — tạm thời, header từng file là nơi lưu vĩnh viễn).
 - Header từng file ghi origin + quan hệ với công cụ lân cận (vd: web-fetch vs package `pi-web-access` trong `~/.pi/agent/settings.json`).
+
+## Chặn tool cho main agent (2026-09-02)
+
+`subagent-types` hỗ trợ deny-list cho **main agent** (mặc định rỗng — opt-in). Thêm vào `.pi/settings.json` của workspace (ưu tiên) hoặc `~/.pi/agent/settings.json` (mọi nơi):
+
+```jsonc
+{
+  "subagentTypes": {
+    "mainBlockedTools": ["safe_bash", "web_search", "web_fetch", "render_mermaid", "render_svg", "write_svg", "write_mermaid"]
+  }
+}
+```
+
+- Workspace thắng user-wide. Chỉ áp cho main — subagent role giữ allowlist riêng.
+- Block được tái áp mỗi input nên tool đăng ký muộn vẫn bị lọc.
+- Toast xác nhận số tool đã chặn khi có tác dụng thật (idempotent, không spam).
+- KHÔNG nên chặn `spawn_subagent` / `message_subagent` / `message_main` — main sẽ mất đường giao tiếp với con.
