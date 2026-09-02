@@ -80,20 +80,23 @@ export async function mcpCall(
 			signal: AbortSignal.timeout(timeoutMs),
 		});
 		const text = await res.text();
+		// The daemon answers MCP over SSE frames; keep the last good data: frame.
 		let payload: unknown;
-		try {
-			payload = JSON.parse(text);
-		} catch {
-			payload = undefined;
+		for (const line of text.split("\n")) {
+			if (line.startsWith("data: ")) {
+				try {
+					payload = JSON.parse(line.slice(6));
+				} catch {
+					// keep last good frame
+				}
+			}
 		}
-		const result = (payload as { result?: { content?: Array<{ type: string; text?: string }> } })?.result;
-		const raw = result?.content?.find((c) => c.type === "text")?.text;
-		if (raw === undefined) return { ok: false, error: `http ${res.status} / no text content` };
-		try {
-			return { ok: true, data: JSON.parse(raw) };
-		} catch {
-			return { ok: true, data: raw };
+		if (!payload) return { ok: false, error: `no MCP response (http ${res.status})` };
+		const result = (payload as { result?: { isError?: boolean; structuredContent?: unknown; content?: Array<{ text?: string }> } }).result;
+		if (result?.isError) {
+			return { ok: false, error: (result.content?.[0]?.text ?? "tool failed").slice(0, 300) };
 		}
+		return { ok: true, data: result?.structuredContent ?? result?.content };
 	} catch (e) {
 		return { ok: false, error: e instanceof Error ? e.message : String(e) };
 	}
@@ -106,7 +109,19 @@ export async function getAgentStatus(
 ): Promise<{ ok: boolean; status?: string; error?: string }> {
 	const r = await mcpCall(endpoint, "get_agent_status", { agentId }, 10_000, fetchImpl);
 	if (!r.ok) return { ok: false, error: r.error };
-	const sc = (r.data as { status?: string; snapshot?: { lastStatus?: string } }) ?? {};
+	// data is structuredContent when the daemon sends it, else the content array
+	// whose [0].text carries the JSON string.
+	let sc: { status?: string; snapshot?: { lastStatus?: string } } = {};
+	if (Array.isArray(r.data)) {
+		const txt = (r.data as Array<{ text?: string }>)[0]?.text;
+		try {
+			sc = txt ? JSON.parse(txt) : {};
+		} catch {
+			sc = {};
+		}
+	} else {
+		sc = (r.data as typeof sc) ?? {};
+	}
 	return { ok: true, status: sc.status ?? sc.snapshot?.lastStatus };
 }
 

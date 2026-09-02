@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { TurnWatchdog, SettleWatch } from "./watchdog-core.js";
-import { mcpCall } from "./daemon.js";
+import { mcpCall, getAgentStatus } from "./daemon.js";
 import { readDetections, wire } from "./index.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -176,16 +176,26 @@ describe("SettleWatch (B2 daemon-side settle-loss)", () => {
 });
 
 describe("daemon client", () => {
-	it("mcpCall always sends a JSON-RPC id (notification bug)", async () => {
+	it("mcpCall parses SSE-framed MCP answers (the real daemon format) and always sends a JSON-RPC id", async () => {
 		const seen: any[] = [];
 		const fakeFetch = (async (_url: any, init: any) => {
 			seen.push(JSON.parse(init.body));
-			return new Response(JSON.stringify({ result: { content: [{ type: "text", text: "{\"status\":\"idle\"}" }] } }), { status: 200 });
+			const sse = `event: message\ndata: {"result":{"content":[{"type":"text","text":"{\\\"status\\\":\\\"idle\\\"}"}]}}\n\n`;
+			return new Response(sse, { status: 200 });
 		}) as unknown as typeof fetch;
 		const r = await mcpCall({ url: "http://x", token: "t" }, "get_agent_status", { agentId: "a" }, 5_000, fakeFetch);
 		expect(r.ok).toBe(true);
-		expect((r.data as any).status).toBe("idle");
 		expect(typeof seen[0].id).toBe("number");
 		expect(seen[0].method).toBe("tools/call");
+		const st = await getAgentStatus({ url: "http://x", token: "t" }, "a", fakeFetch);
+		expect(st.status).toBe("idle");
+	});
+
+	it("mcpCall reports tool errors from isError frames", async () => {
+		const fakeFetch = (async () =>
+			new Response(`data: {"result":{"isError":true,"content":[{"text":"nope"}]}}\n`, { status: 200 })) as unknown as typeof fetch;
+		const r = await mcpCall({ url: "http://x", token: "t" }, "x", {}, 5_000, fakeFetch);
+		expect(r.ok).toBe(false);
+		expect(r.error).toContain("nope");
 	});
 });
