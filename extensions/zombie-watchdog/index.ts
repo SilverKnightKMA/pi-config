@@ -95,6 +95,7 @@ export function wire(pi: ExtensionAPI, opts: WireOptions = {}): () => WatchdogSi
 		const code = sw.onPoll(Date.now(), busy);
 		if (!code) return;
 		appendDetection({ ts: new Date().toISOString(), sessionFile, code, idleMs: Date.now() - endedAt, agentId: selfAgentId });
+		emitTimeline(`zw ⚠ B2: turn đã xong trong process ${fmtDur(Date.now() - endedAt)} trước nhưng daemon vẫn thấy "running" (settle wake rơi, #3845). Bấm STOP cho sạch`);
 		if (ui) {
 			ui.notify(`zw ⚠ B2: turn đã xong trong process nhưng daemon vẫn thấy "running" (settle wake bị rơi, #3845). Bấm STOP cho sạch`, "warning");
 			ui.setStatus("zw", `⚠ zombie daemon-side — bấm STOP`);
@@ -116,6 +117,17 @@ export function wire(pi: ExtensionAPI, opts: WireOptions = {}): () => WatchdogSi
 		}
 	}
 
+	function emitTimeline(text: string): void {
+		// Same pattern as om-timeline (2026-09-01): display custom message, blockquote
+		// fenced by blank lines so it renders as its own quoted block in the chat UI.
+		// triggerTurn:false is load-bearing — never kick a turn from here.
+		try {
+			pi.sendMessage({ customType: "zw-timeline", content: `\n> ${text}\n`, display: true }, { triggerTurn: false });
+		} catch {
+			// sendMessage throws during teardown; a missed status line is non-fatal.
+		}
+	}
+
 	function logDetection(sig: WatchdogSignal): void {
 		appendDetection({ ts: new Date(now()).toISOString(), sessionFile, code: sig.code, idleMs: sig.idleMs });
 	}
@@ -133,6 +145,11 @@ export function wire(pi: ExtensionAPI, opts: WireOptions = {}): () => WatchdogSi
 		if (!sig) return null;
 		logDetection(sig);
 		if (sig.code !== "tool-stall" && MODE === "auto") recover(sig);
+		emitTimeline(
+			sig.code === "tool-stall"
+				? `zw: tool chạy ${fmtDur(sig.idleMs)} chưa xong (có thể bình thường)`
+				: `zw ⚠ Turn im ${fmtDur(sig.idleMs)} — request chết im lặng (#3845)${MODE === "detect" ? '. Hồi phục: STOP + "tiếp tục"' : " (auto bị tắt chờ upstream)"}`,
+		);
 		if (ui) {
 			if (sig.code === "tool-stall") {
 				ui.notify(`zw: tool chạy ${fmtDur(sig.idleMs)} chưa xong — có thể bình thường (long-run/crawl), cứ để yên`, "info");
