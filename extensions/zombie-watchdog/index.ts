@@ -73,6 +73,7 @@ export function wire(pi: ExtensionAPI, opts: WireOptions = {}): () => WatchdogSi
 	let ui: any;
 	let timer: ReturnType<typeof setInterval> | undefined;
 	let settleTimers: ReturnType<typeof setTimeout>[] = [];
+	let lastProbe: { at: number; status: string | undefined; busy: boolean } | null = null;
 
 	function clearSettleTimers(): void {
 		for (const t of settleTimers) clearTimeout(t);
@@ -87,6 +88,7 @@ export function wire(pi: ExtensionAPI, opts: WireOptions = {}): () => WatchdogSi
 			const r = await getAgentStatus(endpoint, selfAgentId, opts.fetchImpl ?? fetch);
 			if (!r.ok) return; // query failed: do not feed garbage
 			busy = isBusy(r.status);
+			lastProbe = { at: Date.now(), status: r.status, busy };
 		} catch {
 			return;
 		}
@@ -181,13 +183,16 @@ export function wire(pi: ExtensionAPI, opts: WireOptions = {}): () => WatchdogSi
 		description: "Zombie-watchdog: detection count + last events (silent-dead-turn bug #3845)",
 		handler: async (_args: string, ctx: any) => {
 			const list = readDetections(logPath);
+			const probeLine = lastProbe
+				? `lần thăm dò gần nhất: ${new Date(lastProbe.at).toLocaleTimeString()} → daemon: ${lastProbe.status ?? "?"}${lastProbe.busy ? " (busy!)" : ""}`
+				: "chưa thăm dò lần nào (chưa có turn kết thúc sau khi nạp)";
 			if (list.length === 0) {
-				if (ctx?.hasUI) ctx.ui.notify("zw: chưa phát hiện turn treo nào ✓", "info");
+				if (ctx?.hasUI) ctx.ui.notify(`zw: chưa phát hiện turn treo nào ✓ (${probeLine})`, "info");
 				return;
 			}
 			const last = list.slice(-5).map((d) => `${d.ts.slice(0, 19)} ${d.code} idle=${fmtDur(d.idleMs)}`);
 			if (ctx?.hasUI) {
-				ctx.ui.notify(`zw: ${list.length} lần phát hiện. Gần nhất:\n${last.join("\n")}`, "info");
+				ctx.ui.notify(`zw: ${list.length} lần phát hiện. ${probeLine}\nGần nhất:\n${last.join("\n")}`, "info");
 			}
 		},
 	});
