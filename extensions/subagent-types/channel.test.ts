@@ -2,7 +2,7 @@ import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pushToQueue, drainQueue, queueFile, renderForPrompt, type ChannelMessage } from "./paseo-channel.ts";
+import { pushToQueue, drainQueue, queueFile, renderForPrompt, markKick, flushKicks, pendingKickIds, type ChannelMessage } from "./paseo-channel.ts";
 
 let base: string;
 beforeEach(() => {
@@ -131,8 +131,6 @@ describe("waitForReply", () => {
 });
 
 // ── Deferred kicks (2026-09-01): queue-only in execute, kick at turn_end ──
-import { markKick, flushKicks, pendingKickIds, pushToQueue } from "./paseo-channel.ts";
-import { mkdtempSync } from "node:fs";
 const kickBase = mkdtempSync(join(tmpdir(), "kicks-"));
 const fakeEp = { url: "http://fake" } as never;
 
@@ -142,7 +140,7 @@ test("flushKicks kicks an idle child with queued messages and empties the queue"
 	const calls: Array<{ method: string; params: any }> = [];
 	const out = await flushKicks(fakeEp, {
 		base: kickBase,
-		call: async (_e: never, method: string, params: any) => { calls.push({ method, params }); return { ok: true, data: {} }; },
+		call: async (_e: any, method: string, params: any) => { calls.push({ method, params }); return { ok: true, data: {} }; },
 		status: async () => ({ ok: true, status: "idle" }),
 	});
 	expect(out[0]?.kicked).toBe(true);
@@ -206,4 +204,30 @@ test("empty queue (child already drained) is a no-op kick", async () => {
 	expect(out[0]?.kicked).toBe(false);
 	expect(out[0]?.reason).toContain("empty");
 	expect(sent).toBe(0);
+});
+
+// ── Auto-report backstop (2026-09-02): ping-only khi child settle mà quên message_main ──
+import { shouldAutoPing, buildAutoPing } from "./index.ts";
+
+test("shouldAutoPing chỉ cho subagent chưa gọi message_main", () => {
+	expect(shouldAutoPing("researcher", false, true)).toBe(true);
+	expect(shouldAutoPing("researcher", true, true)).toBe(false);   // đã chủ động báo
+	expect(shouldAutoPing("main", false, true)).toBe(false);          // main không tự ping
+	expect(shouldAutoPing(undefined, false, true)).toBe(false);       // chưa resolve identity
+	expect(shouldAutoPing("worker", false, false)).toBe(false);       // identity chưa chắc
+});
+
+test("buildAutoPing: 1 dòng, có role + agentId + hướng dẫn paseo_activity, KHÔNG chứa payload", () => {
+	const t = buildAutoPing("researcher", "01a05f8e", "Đối chiếu case zippo với 780T/500R stock");
+	expect(t).toContain("researcher");
+	expect(t).toContain("01a05f8e");
+	expect(t).toContain("paseo_activity");
+	expect(t.startsWith("[auto-report]")).toBe(true);
+	expect(t.length).toBeLessThan(300); // ping phải ngắn — không nhân bản văn bản con
+});
+
+test("buildAutoPing không title vẫn hợp lệ", () => {
+	const t = buildAutoPing("scout", "abc", undefined);
+	expect(t).toContain("scout");
+	expect(t).not.toContain("undefined");
 });

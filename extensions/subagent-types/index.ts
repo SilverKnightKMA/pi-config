@@ -153,6 +153,24 @@ export function allowlistFor(role: string | undefined, roles: Map<string, RoleDe
 	return [...new Set([...def.tools.map(mapToolName), "message_main", "message_subagent", "ask_question"])];
 }
 
+/**
+ * Auto-report backstop (2026-09-02, user request): the 2026-09-01 fix dropped
+ * notifyOnFinish on spawns, which also killed the daemon's automatic
+ * "child finished" forwarding. Children that simply conclude (researcher
+ * 01a05f8e: 47 min of work, KẾT LUẬN persisted, 0 message_main calls) leave
+ * the main agent asleep forever. Design: PING-ONLY — wake main with a one-line
+ * notice and let main pull the transcript itself (paseo_activity) only when it
+ * needs it. No text duplication into main's context.
+ */
+export function shouldAutoPing(role: string | undefined, calledMessageMain: boolean, resolvedIdentity: boolean): boolean {
+	return resolvedIdentity && !!role && role !== MAIN_ROLE && !calledMessageMain;
+}
+
+export function buildAutoPing(role: string, agentId: string, title: string | undefined): string {
+	const who = title ? `${role} "${title}"` : role;
+	return `[auto-report] Subagent ${who} (${agentId}) đã hoàn thành và về idle mà không gọi message_main. Dùng paseo_activity(agentId) nếu cần đọc kết quả của nó.`;
+}
+
 /** Identity mapping retained for call sites; .md files now use live names. */
 export function mapToolName(tool: string): string {
 	return tool;
@@ -173,6 +191,7 @@ export interface SelfInfo {
 	agentId: string | null;
 	role: string | undefined;
 	labels: Record<string, string>;
+	title?: string;
 }
 
 /**
@@ -210,6 +229,7 @@ export function resolveSelf(sessionId: string, paseoDir = PASEO_AGENTS_DIR): Sel
 						agentId: d.id ?? rec.replace(/\.json$/, ""),
 						role,
 						labels,
+						title: typeof d.title === "string" ? d.title : undefined,
 					};
 				}
 			} catch {
@@ -332,6 +352,7 @@ export default function subagentTypes(pi: ExtensionAPI) {
 	const roles = loadRoles();
 	let myRole: string | undefined;
 	let myAgentId: string | null = null;
+	let messageMainCalledThisRun = false;
 	const sessionIdRef = { value: "" };
 
 	let resolved = false;
@@ -410,9 +431,37 @@ async function kickOutbound(): Promise<void> {
 	pi.on("agent_settled", () => {
 		void kickOutbound();
 		const msgs = flushInbound();
-		if (msgs.length === 0) return;
-		pi.sendMessage({ customType: "subagent-message", content: renderForPrompt(msgs), display: true, details: {} });
+		if (msgs.length > 0) {
+			pi.sendMessage({ customType: "subagent-message", content: renderForPrompt(msgs), display: true, details: {} });
+		}
+		void autoPingOnSettle();
 	});
+
+	// Auto-report backstop (2026-09-02): a subagent that settled WITHOUT calling
+	// message_main still pings its parent — one line, no payload — so main can
+	// wake and pull the transcript itself (see shouldAutoPing for history).
+	async function autoPingOnSettle(): Promise<void> {
+		if (!shouldAutoPing(myRole, messageMainCalledThisRun, resolved)) return;
+		if (!myRole) return; // belt-and-suspenders narrowing for TS
+		const self = resolveSelf(sessionIdRef.value);
+		const mainId = self.labels["subagent.parent"] ?? self.labels["paseo.parent-agent-id"];
+		if (!mainId || !myAgentId) return;
+		const endpoint = findMcpEndpoint(myAgentId);
+		if (!endpoint) return;
+		const text = buildAutoPing(myRole, myAgentId, self.title);
+		const msg: ChannelMessage = {
+			id: `${Date.now()}-ap`,
+			from: myAgentId,
+			fromRole: myRole ?? "?",
+			text,
+			ts: new Date().toISOString(),
+		};
+		try {
+			await sendToMain(endpoint, mainId, msg); // busy-main → queue; idle-main → wake now
+		} catch {
+			// never let a reporting backstop break settlement
+		}
+	}
 
 	pi.on("session_start", (_event, ctx) => {
 		// First boot races the daemon writing runtimeInfo into the agent
@@ -681,6 +730,7 @@ async function kickOutbound(): Promise<void> {
 			message: Type.String({ description: "Your question or update for the main agent." }),
 		}),
 		async execute(_id, params) {
+			messageMainCalledThisRun = true;
 			const parent = myAgentId ? (resolveSelf(sessionIdRef.value).labels["subagent.parent"] ?? null) : null;
 			const mainId = parent ?? (myAgentId ? (resolveSelf(sessionIdRef.value).labels["paseo.parent-agent-id"] ?? null) : null);
 			if (!mainId) {
