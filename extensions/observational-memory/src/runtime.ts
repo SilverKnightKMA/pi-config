@@ -75,7 +75,7 @@ export class Runtime {
 
 	/** Connect the Paseo-timeline status channel (called once from the extension entry). */
 	wireTimeline(pi: SendMessageTarget): void {
-		this.timeline = makeTimelineSink(pi);
+		this.timeline = makeTimelineSink(pi, { runtime: this });
 	}
 
 

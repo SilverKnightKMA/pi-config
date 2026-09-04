@@ -1,4 +1,18 @@
-# MARKERS.md — Timeline marker contract v1
+# MARKERS.md — Timeline marker contract v2
+
+## v2 change (2026-09-04)
+
+`om-event` and `zw-warning` are **deprecated as live emissions**: custom
+messages are part of the model context (pi feeds `agent.state.messages` to
+the provider; the `display` flag only controls UI), so OM/ZW chatter was
+being read — and occasionally acted on — by the model. Producers now emit
+to display-only state files (OM: workspace om-status.json under the memory
+dir, consumed by the Paseo om-status plugin panel; ZW: zombie-watchdog.jsonl,
+consumed by the Agent Health panel). The two markers below remain valid for
+**rendering historical sessions** and for the escape hatches
+(`OM_TIMELINE_EMISSION=message` / `ZW_TIMELINE_EMISSION=message`).
+`auto-report` and `channel-nack` are functional channel traffic and stay
+live — the main agent must see them.
 
 Single source of truth for the machine-detectable prefixes that pi extensions
 emit into the conversation timeline, and that the Paseo plugin `om-timeline`
@@ -25,7 +39,7 @@ consumes to restyle them as cards. Two repos, one contract:
 
 ## Markers
 
-### 1. `om-event` — observational-memory lifecycle
+### 1. `om-event` — observational-memory lifecycle *(deprecated v2 — history render only)*
 
 | Field | Value |
 |---|---|
@@ -35,7 +49,7 @@ consumes to restyle them as cards. Two repos, one contract:
 | Payload (free text) | `observer started/done/failed`, `consolidator folding/done`, cost lines `· $X this run · session $Y (N runs)` |
 | Typical lines | `> om: observer done: 17 observations from ~9.0k tok · $0.0012 this run · session $5.00 (136 runs)` |
 
-### 2. `zw-warning` — zombie-watchdog warnings
+### 2. `zw-warning` — zombie-watchdog warnings *(deprecated v2 — history render only)*
 
 | Field | Value |
 |---|---|

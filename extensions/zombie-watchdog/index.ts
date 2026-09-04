@@ -117,12 +117,15 @@ export function wire(pi: ExtensionAPI, opts: WireOptions = {}): () => WatchdogSi
 		}
 	}
 
-	function emitTimeline(text: string): void {
-		// Same pattern as om-timeline (2026-09-01): display custom message, blockquote
-		// fenced by blank lines so it renders as its own quoted block in the chat UI.
-		// triggerTurn:false is load-bearing — never kick a turn from here.
+	function emitTimeline(_text: string): void {
+		// v2 (2026-09-04, user directive): custom messages enter the model context —
+		// the agent must not see watchdog chatter. Detection stays visible via
+		// zombie-watchdog.jsonl (Agent Health panel reads it) and the ui.notify
+		// toast (terminal runs). Set ZW_TIMELINE_EMISSION=message to restore the
+		// legacy in-chat emission (escape hatch until pi grows a UI-only channel).
+		if (process.env.ZW_TIMELINE_EMISSION !== "message") return;
 		try {
-			pi.sendMessage({ customType: "zw-timeline", content: `\n> ${text}\n`, display: true }, { triggerTurn: false });
+			pi.sendMessage({ customType: "zw-timeline", content: `\n> ${_text}\n`, display: true }, { triggerTurn: false });
 		} catch {
 			// sendMessage throws during teardown; a missed status line is non-fatal.
 		}

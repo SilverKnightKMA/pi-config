@@ -127,12 +127,10 @@ describe("zombie-watchdog wiring", () => {
 			expect(ui.notes.length).toBe(1);
 			expect(ui.notes[0]).toContain("#3845");
 			expect(ui.statuses.get("zw")).toContain("STOP");
-			// v3 (2026-09-01): detections also land in the chat timeline as a
-			// standalone blockquote, same as om-timeline — never glued to agent text.
-			expect(timeline.length).toBe(1);
-			expect(timeline[0].customType).toBe("zw-timeline");
-			expect(timeline[0].display).toBe(true);
-			expect(timeline[0].content).toContain("\n> zw ⚠ Turn im");
+			// v2 (2026-09-04): timeline emission is OFF by default — custom messages
+			// enter the model context and the agent must stay blind to watchdog
+			// chatter. Detection visibility = jsonl + Agent Health panel (+ toast here).
+			expect(timeline.length).toBe(0);
 			// turn recovers
 			handlers.get("turn_end")!();
 			expect(ui.statuses.get("zw")).toBeUndefined();

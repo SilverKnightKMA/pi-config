@@ -5,7 +5,14 @@
  * daemon while a turn is active (bufferNoTurnOutput returns early when activeTurnStarted) and
  * footer gauges/widgets have no host to render them. The reliable surface is the session
  * transcript itself: a custom message with `display: true` rides `pi.sendMessage` and is
- * rendered on the Paseo timeline (same pattern as the snip extension's status markers).
+ * rendered on the Paseo timeline.
+ *
+ * v2 (2026-09-04, user directive): custom messages are part of the model context — pi
+ * feeds agent.state.messages to the provider and the `display` flag only controls UI, so
+ * every `> om:` line was read (and occasionally acted on) by the model. OM pipeline chatter
+ * must NOT reach the model: the default emission is now a workspace status file consumed
+ * by the Paseo om-status plugin panel. Set OM_TIMELINE_EMISSION=message to restore the
+ * legacy in-chat emission (escape hatch until pi grows a UI-only message channel).
  *
  * This module is the single seam between the orchestrator and that channel so the rest of the
  * code keeps calling notify-shaped helpers and stays close to upstream.
@@ -33,6 +40,9 @@ function renderWorkerLine(line: WorkerLine): string {
 }
 
 /** The coalescing timeline sink returned by {@link makeTimelineSink}. */
+import type { Runtime } from "../runtime.js";
+import { appendOmStatusEvent } from "./status-file.js";
+
 export interface TimelineSink {
 	notify: (message: string, level?: "info" | "warning" | "error") => void;
 	workerLine: (line: WorkerLine) => void;
@@ -45,13 +55,22 @@ export interface TimelineSink {
  * observers collapsing in the same tick still all appear (upstream coalesced them into one
  * multi-line notify for the same reason — pi surfaces only the last status line otherwise).
  */
-export function makeTimelineSink(pi: SendMessageTarget, opts: { coalesce?: boolean } = {}): TimelineSink {
+export function makeTimelineSink(pi: SendMessageTarget, opts: { coalesce?: boolean; runtime?: Runtime } = {}): TimelineSink {
 	const coalesce = opts.coalesce !== false;
+	const runtime = opts.runtime;
+	const legacyMessages = process.env.OM_TIMELINE_EMISSION === "message";
 	let pending: string[] = [];
 	let timer: ReturnType<typeof setTimeout> | undefined;
 
 	function emit(lines: string[]): void {
 		if (lines.length === 0) return;
+		if (runtime && !legacyMessages) {
+			// v2: display channel = status file (panel polls), model stays blind.
+			// No blockquote wrap here — the panel renders structure itself.
+			void appendOmStatusEvent(runtime, lines.join("\n"));
+			return;
+		}
+		// legacy: markdown blockquote as an in-chat custom message
 		// 2026-09-01 (user request): om events used to render glued to the nearest
 		// agent message in the Paseo UI. Wrap every event batch in a markdown
 		// blockquote fenced by blank lines so any renderer shows it as a separate
