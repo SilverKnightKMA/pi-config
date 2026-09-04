@@ -10,7 +10,18 @@
 | `ask-user-question/` | `.pi/extensions/ask-user-question/` | amosblomqvist/pi-config, fork có chủ đích |
 | `observational-memory/` | `.pi/extensions/observational-memory/` | amosblomqvist/pi-observational-memory, port gần nguyên văn |
 
-Sync: `cp extensions/<tên>/{*.ts,tests} .pi/extensions/<tên>/` — luôn chạy `bun test` trước khi sync.
+Sync (idempotent, sau sự cố 2026-09-04 — xem `sync-live.mjs`):
+
+```bash
+node extensions/sync-live.mjs            # sync mọi ext có dev copy
+node extensions/sync-live.mjs snip quiz  # chỉ vài ext
+```
+
+Quy tắc chống tái phạm (hậu quả của lệnh cũ `cp {*.ts,tests}`):
+- `rsync --delete` theo từng ext — không bao giờ `cp` vào dst đã tồn tại (gây lồng `x/x/`).
+- `--exclude '*.test.ts' --exclude 'node_modules'` ở CẤP 1 live — loader quét `*.ts` cấp 1 + `*/index.ts`; file test cấp 1 làm pi chết (`bun:test` not found).
+- Quan trọng: live LÀ `~/.pi/agent/extensions/` (không phải `.pi/extensions/` — bảng trên ghi theo workspace cũ, giữ lại làm tham chiếu lịch sử).
+- Chạy `bun test` ở dev repo trước khi sync; sau sync chạy `pi -p "reply OK"` để xác minh loader sạch.
 
 ## Cấp 2: chỉ có bản live (package tự chứa, KHÔNG tạo dev copy)
 
