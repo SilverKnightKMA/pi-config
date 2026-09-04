@@ -457,7 +457,7 @@ async function kickOutbound(): Promise<void> {
 	kicksRunning = true;
 	try {
 		const endpoint = findMcpEndpoint(myAgentId);
-		if (endpoint) await flushKicks(endpoint);
+		if (endpoint) await flushKicks(endpoint, { mainAgentId: myAgentId ?? undefined });
 	} catch {
 		// never throw from an event handler; the next flush retries
 	} finally {

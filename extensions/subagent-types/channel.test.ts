@@ -246,3 +246,61 @@ test("mergeMainBlockedTools lọc phần tử rác, không vỡ với kiểu sai
 	expect(mergeMainBlockedTools({ subagentTypes: { mainBlockedTools: ["safe_bash", 42, null, "web_fetch"] } }, null)).toEqual(["safe_bash", "web_fetch"]);
 	expect(mergeMainBlockedTools({ subagentTypes: { mainBlockedTools: "not-an-array" } }, null)).toEqual([]);
 });
+
+// ── Kick NACK (2026-09-04): kick rớt phải báo main, không để mục tử tế ──
+// Tang vật thật: researcher 3bd7e7ab settle 09-02, kick NAS 09-03 nằm queue
+// vĩnh viễn, nhiệm vụ không bao giờ chạy, main không được báo (case "zippo").
+
+test("flushKicks send-failure: re-queue + NACK một lần vào queue MAIN", async () => {
+	pushToQueue("kid-dead", { id: "m4", from: "main", fromRole: "main", text: "NAS task", ts: "t" }, kickBase);
+	markKick("kid-dead", false);
+	let fail = 0;
+	const out = await flushKicks(fakeEp, {
+		base: kickBase,
+		mainAgentId: "main-me",
+		call: async () => { fail++; return { ok: false, error: "agent not resumable" }; },
+		status: async () => ({ ok: true, status: "idle" }),
+	});
+	expect(out[0]?.kicked).toBe(false);
+	expect(out[0]?.reason).toContain("NACK");
+	// tin gốc được hoàn lại queue của child
+	expect(drainQueue("kid-dead", kickBase)).toHaveLength(1);
+	// NACK vào queue main, chứa agentId + gợi ý xử lý
+	const mainQ = drainQueue("main-me", kickBase);
+	expect(mainQ).toHaveLength(1);
+	expect(mainQ[0]?.text).toContain("kid-dead");
+	expect(mainQ[0]?.text).toContain("channel-nack");
+	// kick vẫn pending để flush sau retry
+	expect(pendingKickIds()).toContain("kid-dead");
+	// flush lần 2 vẫn fail → KHÔNG NACK lần nữa (tránh spam)
+	const out2 = await flushKicks(fakeEp, {
+		base: kickBase,
+		mainAgentId: "main-me",
+		call: async () => ({ ok: false, error: "still down" }),
+		status: async () => ({ ok: true, status: "idle" }),
+	});
+	expect(out2[0]?.kicked).toBe(false);
+	expect(drainQueue("main-me", kickBase)).toHaveLength(0);
+});
+
+test("flushKicks thành công sau khi đã NACK: xóa cờ, lần fail kế tiếp NACK lại", async () => {
+	// kid-dead hết pending (queue bị drain giữa chừng ở test trên) — dựng lại đủ
+	markKick("kid-dead", false);
+	pushToQueue("kid-dead", { id: "m5b", from: "main", fromRole: "main", text: "retry", ts: "t" }, kickBase);
+	const out = await flushKicks(fakeEp, {
+		base: kickBase,
+		call: async () => ({ ok: true, data: {} }),
+		status: async () => ({ ok: true, status: "idle" }),
+	});
+	expect(out[0]?.kicked).toBe(true);
+	// fail mới → NACK mới
+	markKick("kid-dead", false);
+	pushToQueue("kid-dead", { id: "m5", from: "main", fromRole: "main", text: "again", ts: "t" }, kickBase);
+	await flushKicks(fakeEp, {
+		base: kickBase,
+		mainAgentId: "main-me",
+		call: async () => ({ ok: false, error: "down again" }),
+		status: async () => ({ ok: true, status: "idle" }),
+	});
+	expect(drainQueue("main-me", kickBase)).toHaveLength(1);
+});

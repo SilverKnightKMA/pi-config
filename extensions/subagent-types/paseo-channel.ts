@@ -301,6 +301,9 @@ export async function sendToMain(endpoint: McpEndpoint, mainAgentId: string, msg
 /** agentId -> kick intent. In-memory only: the queue file is the durable record. */
 const pendingKicks = new Map<string, { interrupt: boolean; ts: number }>();
 
+/** agentIds already NACKed this process — one notice per undelivered kick, not one per retry. */
+const nackedKicks = new Set<string>();
+
 export function markKick(agentId: string, interrupt: boolean): void {
 	const prev = pendingKicks.get(agentId);
 	pendingKicks.set(agentId, { interrupt: (prev?.interrupt ?? false) || interrupt, ts: Date.now() });
@@ -321,6 +324,13 @@ export interface KickDeps {
 	status?: typeof getAgentStatus;
 	/** queue root override (tests) */
 	base?: string;
+	/** main's own agentId — when provided, a failed kick also queues a
+	 * [channel-nack] into MAIN's queue so the next turn learns the kick
+	 * was not delivered instead of the message silently rotting in the
+	 * child's file (observed live: researcher 3bd7e7ab settled 09-02,
+	 * NAS kick 09-03 sat in its queue file forever, task never ran,
+	 * main never informed). */
+	mainAgentId?: string;
 }
 
 /**
@@ -359,10 +369,28 @@ export async function flushKicks(endpoint: McpEndpoint, deps: KickDeps = {}): Pr
 		});
 		if (r.ok) {
 			pendingKicks.delete(agentId);
+			nackedKicks.delete(agentId);
 			out.push({ agentId, kicked: true, reason: busy ? "interrupt delivery (kicked while busy by request)" : "idle/finished -- new turn started" });
 		} else {
 			for (const m of msgs) pushToQueue(agentId, m, base); // re-queue on transient failure
-			out.push({ agentId, kicked: false, reason: `send failed (${r.error}) -- re-queued, retried at next flush` });
+			// Keep the kick pending: the next flush retries the send.
+			const errText = String(r.error ?? "send_agent_prompt failed").slice(0, 200);
+			if (deps.mainAgentId && !nackedKicks.has(agentId)) {
+				nackedKicks.add(agentId);
+				pushToQueue(
+					deps.mainAgentId,
+					{
+						id: `${Date.now()}-nack-${agentId.slice(0, 8)}`,
+						from: agentId,
+						fromRole: "system",
+						text: `[channel-nack] Kick tới subagent ${agentId} THẤT BẠI (${errText}). ${msgs.length} tin nhắn vẫn nằm trong queue file của nó — kiểm tra agent-health panel hoặc gửi lại message_subagent.`,
+						ts: new Date().toISOString(),
+						kind: "message",
+					},
+					base,
+				);
+			}
+			out.push({ agentId, kicked: false, reason: `send failed, re-queued + NACK to main: ${errText}` });
 		}
 	}
 	return out;
