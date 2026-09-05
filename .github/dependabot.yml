@@ -1,0 +1,53 @@
+# Dependency auto-upgrade for pi-config.
+# Covers every package.json in the repo — root (dev toolchain + test deps)
+# and the three extensions that carry dependencies:
+#   observational-memory (pi-coding-agent peer), visual-tools (mermaid-cli),
+#   web-fetch (readability/linkedom/turndown/unpdf).
+# Dependabot PRs are auto-merged by .github/workflows/auto-merge.yml once
+# the bun-test CI gate (.github/workflows/ci.yml) is green.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "chore(deps)"
+    labels: [automated, dependencies]
+    groups:
+      root-dev-deps:
+        patterns: ["*"]
+        update-types: [minor, patch]
+  - package-ecosystem: npm
+    directory: /extensions/observational-memory
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "chore(deps om)"
+    labels: [automated, dependencies]
+  - package-ecosystem: npm
+    directory: /extensions/visual-tools
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "chore(deps visual-tools)"
+    labels: [automated, dependencies]
+    groups:
+      visual-tools-deps:
+        patterns: ["*"]
+        update-types: [minor, patch]
+  - package-ecosystem: npm
+    directory: /extensions/web-fetch
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "chore(deps web-fetch)"
+    labels: [automated, dependencies]
+    groups:
+      web-fetch-deps:
+        patterns: ["*"]
+        update-types: [minor, patch]

@@ -1,0 +1,41 @@
+# Auto-merge dependabot dependency PRs once CI (bun test) is green.
+# Polls up to 15 min so the merge waits for the ci job even without branch
+# protection; any failing check leaves the PR open for manual review.
+name: auto-merge
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+  workflow_dispatch:
+
+concurrency:
+  group: automerge-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  automerge:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: wait for CI then merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          for i in $(seq 1 90); do
+            out=$(gh pr checks "$PR" 2>/dev/null) || { sleep 10; continue; }
+            if echo "$out" | grep -qiE 'pending|in_progress'; then sleep 10; continue; fi
+            if echo "$out" | grep -q fail; then
+              echo "::notice::checks failed — leaving PR #$PR open for review"
+              exit 0
+            fi
+            if gh pr merge "$PR" --squash --delete-branch; then
+              echo "merged PR #$PR"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::notice::timed out waiting for checks on PR #$PR"

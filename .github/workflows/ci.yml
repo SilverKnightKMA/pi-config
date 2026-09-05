@@ -1,0 +1,22 @@
+# CI gate for pi-config: the 326-test bun suite is the merge bar for
+# dependency bumps (and everything else). Deps PRs are auto-merged by
+# auto-merge.yml only when this job is green.
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun test
