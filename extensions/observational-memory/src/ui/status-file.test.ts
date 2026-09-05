@@ -41,7 +41,7 @@ describe("om timeline sink v2 — file, not messages", () => {
 		await new Promise((r) => setTimeout(r, 80)); // coalesce tick + async write
 		expect(sent).toBe(0);
 		const statusPath = omStatusPath(rt)!;
-		expect(statusPath.endsWith(join(".memory", "om-status.json"))).toBe(true);
+		expect(statusPath.endsWith(join(".memory", "sess-1", "om-status.json"))).toBe(true);
 		expect(existsSync(statusPath)).toBe(true);
 		const file = JSON.parse(readFileSync(statusPath, "utf8")) as OmStatusFile;
 		expect(file.schema).toBe(1);
@@ -71,16 +71,34 @@ describe("om timeline sink v2 — file, not messages", () => {
 		});
 		const pi: PiSnapshotSource = {
 			sessionManager: { getBranch: () => [], getEntries: () => [costEntry(1.5), costEntry(2.5)] },
-			getContextUsage: () => ({ tokens: 123456 }),
+			getContextUsage: () => ({ tokens: 60000 }),
 		};
 		await appendOmStatusEvent(rt, "om: observer done", pi);
 		const file = JSON.parse(readFileSync(omStatusPath(rt)!, "utf8")) as OmStatusFile;
 		const ctxLine = file.lines.find((l) => l.trim().startsWith("context:"))!;
-		expect(ctxLine).toContain("123,456");
+		expect(ctxLine).toContain("60,000");
 		expect(ctxLine).not.toContain("?");
 		const sessionLine = file.lines.find((l) => l.trim().startsWith("session:"))!;
 		expect(sessionLine).toContain("4.0000");
 		expect(sessionLine).toContain("(2 runs)");
+		expect(file.summary?.sessionCostUsd).toBe(4);
+		expect(file.summary?.sessionRuns).toBe(2);
+		expect(file.summary?.contextTokens).toBe(60000);
+		expect(file.summary?.verdict).toBe("healthy");
+	});
+
+	test("v2.2: file nằm trong .memory/<sessionId>/ — 2 session không giẫm nhau", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "omv2sess-"));
+		const rtA = stubRuntime(dir);
+		const rtB = { ...rtA, memoryRoot: join(dir, ".memory", "sess-2") } as Runtime;
+		await appendOmStatusEvent(rtA, "from-a");
+		await appendOmStatusEvent(rtB, "from-b");
+		const fileA = JSON.parse(readFileSync(omStatusPath(rtA)!, "utf8")) as OmStatusFile;
+		const fileB = JSON.parse(readFileSync(omStatusPath(rtB)!, "utf8")) as OmStatusFile;
+		expect(fileA.sessionId).toBe("sess-1");
+		expect(fileB.sessionId).toBe("sess-2");
+		expect(fileA.events.at(-1)?.text).toBe("from-a"); // b không đè a
+		expect(fileB.events.at(-1)?.text).toBe("from-b");
 	});
 
 	test("v2.1: writeOmStatusSnapshot refresh giữa các event — ring không đổi, lines mới", async () => {

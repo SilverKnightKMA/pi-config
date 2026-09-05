@@ -8,7 +8,9 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Runtime } from "../runtime.js";
 import { buildStatusLines } from "../commands/status.js";
-import type { Entry } from "../ledger/types.js";
+import { foldLedger } from "../ledger/fold.js";
+import { poolTokens } from "../ledger/pool.js";
+import { sumSessionCost, type Entry } from "../ledger/types.js";
 
 /**
  * Minimal pi surface the snapshot needs for real numbers. Optional everywhere:
@@ -46,19 +48,34 @@ export interface OmStatusFile {
 	workspace: string;
 	/** /om status output lines (same numbers the command shows). */
 	lines: string[];
+	/** Machine-readable subset for plugin surfaces (pill/cards) — no text parsing. */
+	summary?: OmStatusSummary;
 	/** Ring of recent lifecycle events, newest last. */
 	events: OmStatusEvent[];
+}
+
+export interface OmStatusSummary {
+	verdict: "working" | "warning" | "healthy";
+	observersRunning: number;
+	observerSlots: number;
+	consolidatorRunning: boolean;
+	contextTokens: number | null;
+	contextMax: number;
+	poolTokens: number;
+	poolMax: number;
+	sessionCostUsd: number;
+	sessionRuns: number;
 }
 
 const RING_LIMIT = 24;
 
 export function omStatusPath(runtime: Runtime): string | null {
 	if (!runtime.memoryRoot) return null;
-	// memoryRoot = <cwd>/.memory/<sessionId> -> status lives at <cwd>/.memory/om-status.json
-	// one dirname only: memoryRoot is <cwd>/.memory/<sessionId>, the status file
-	// is workspace-level -> <cwd>/.memory/om-status.json (what the om-status
-	// Paseo plugin reads). Two dirnames would drop it in the workspace root.
-	return join(dirname(runtime.memoryRoot), "om-status.json");
+	// 2026-09-05 (user report): session-scoped, NOT workspace-level. A workspace
+	// can host several concurrent OM sessions (one .memory/<sessionId>/ per
+	// chat); a single .memory/om-status.json would be last-writer-wins across
+	// them. The Paseo plugin resolves the newest */om-status.json instead.
+	return join(runtime.memoryRoot, "om-status.json");
 }
 
 async function readRing(path: string): Promise<OmStatusEvent[]> {
@@ -113,10 +130,37 @@ async function writeSnapshot(runtime: Runtime, path: string, events: OmStatusEve
 		sessionId: runtime.memoryRoot ? runtime.memoryRoot.split("/").pop() ?? "" : "",
 		workspace: dirname(dirname(runtime.memoryRoot)),
 		lines: buildStatusLines(runtime, branch, contextTokens, allEntries),
+		summary: buildSummary(runtime, contextTokens, allEntries),
 		events,
 	};
 	const tmp = `${path}.tmp-${process.pid}`;
 	await mkdir(dirname(path), { recursive: true });
 	await writeFile(tmp, JSON.stringify(snapshot, null, 2) + "\n", "utf8");
 	await rename(tmp, path);
+}
+
+function buildSummary(runtime: Runtime, contextTokens: number | null, allEntries: Entry[]): OmStatusSummary {
+	const cfg = runtime.config;
+	const running = runtime.observersInFlight.size;
+	const { costUsd, runs } = sumSessionCost(allEntries);
+	const folded = foldLedger(allEntries);
+	const pool = poolTokens(folded.activeObservations);
+	const verdict =
+		running > 0 || runtime.consolidatorInFlight
+			? "working"
+			: pool >= cfg.consolidateAtPoolTokens * 0.9 || (contextTokens != null && contextTokens >= cfg.compactAtContextTokens * 0.8)
+				? "warning"
+				: "healthy";
+	return {
+		verdict,
+		observersRunning: running,
+		observerSlots: cfg.observerConcurrency,
+		consolidatorRunning: runtime.consolidatorInFlight,
+		contextTokens,
+		contextMax: cfg.compactAtContextTokens,
+		poolTokens: pool,
+		poolMax: cfg.consolidateAtPoolTokens,
+		sessionCostUsd: costUsd,
+		sessionRuns: runs,
+	};
 }
