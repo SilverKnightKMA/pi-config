@@ -465,24 +465,29 @@ async function kickOutbound(): Promise<void> {
 	}
 }
 
+	// v1.2.7 delivery pivot — user-role instead of custom messages.
+	// Custom messages are turn-start cut points in pi core: injected mid-run
+	// they desync the daemon's turn state (app shows no STOP while streaming,
+	// queued user input then hits "Agent is already processing"). user-role
+	// delivery renders as a user_message the app + plugins can transform.
 	pi.on("turn_end", () => {
 		void kickOutbound();
 		const msgs = flushInbound();
 		if (msgs.length === 0) return;
-		pi.sendMessage({ customType: "subagent-message", content: renderForPrompt(msgs), display: true, details: {} });
-	});
-
-	pi.on("before_agent_start", () => {
-		const msgs = flushInbound();
-		if (msgs.length === 0) return undefined;
-		return { message: { customType: "subagent-message", content: renderForPrompt(msgs), display: true, details: {} } };
+		// steer keeps the report inside the CURRENT run (flushed at the next
+		// turn boundary) without starting a new one.
+		pi.sendUserMessage(renderForPrompt(msgs), { deliverAs: "steer" });
 	});
 
 	pi.on("agent_settled", () => {
 		void kickOutbound();
 		const msgs = flushInbound();
 		if (msgs.length > 0) {
-			pi.sendMessage({ customType: "subagent-message", content: renderForPrompt(msgs), display: true, details: {} });
+			// settled + pending report: deliver as a queued prompt so the agent
+			// wakes to process the payload (beats the auto-ping text-only ping;
+			// shouldAutoPing still covers subagents that never called
+			// message_main).
+			pi.sendUserMessage(renderForPrompt(msgs), { deliverAs: "followUp" });
 		}
 		void autoPingOnSettle();
 	});
