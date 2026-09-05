@@ -28,7 +28,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, watch, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -45,6 +45,50 @@ interface SnipState {
 	/** ids of active snippets */
 	active: string[];
 	sticky: boolean;
+}
+
+/**
+ * Control file (v1.5): the bridge the snip Paseo plugin uses to drive this
+ * engine from a panel/composer pill. The plugin writes a request
+ * {v:1, active, sticky, sentAt}; this extension watches the file, applies the
+ * payload through the normal setState path (ledger entry + timeline notice),
+ * then rewrites the file with ackAt so the pill can confirm the engine is live.
+ * One file per session: ~/.pi/agent/snip-control/<sessionId>.json (outside the
+ * extensions dir so sync-live never touches it).
+ */
+export interface SnipControlFile {
+	v: 1;
+	active: string[];
+	sticky: boolean;
+	/** set by the plugin on every request; echoed back on ack */
+	sentAt?: string;
+	/** set by this engine when a payload has been applied */
+	ackAt?: string;
+}
+
+export function controlFilePath(sessionId: string): string {
+	const home = process.env.PI_HOME ?? process.env.HOME ?? "/home/coder";
+	return join(home, ".pi", "agent", "snip-control", `${sessionId}.json`);
+}
+
+/** Parse + validate a control payload. Returns null when malformed. */
+export function parseControlPayload(raw: string): SnipControlFile | null {
+	let data: unknown;
+	try {
+		data = JSON.parse(raw);
+	} catch {
+		return null;
+	}
+	if (!data || typeof data !== "object") return null;
+	const d = data as Record<string, unknown>;
+	if (d.v !== 1 || !Array.isArray(d.active) || typeof d.sticky !== "boolean") return null;
+	return {
+		v: 1,
+		active: d.active.filter((x): x is string => typeof x === "string"),
+		sticky: d.sticky,
+		sentAt: typeof d.sentAt === "string" ? d.sentAt : undefined,
+		ackAt: typeof d.ackAt === "string" ? d.ackAt : undefined,
+	};
 }
 
 const STATE_ENTRY_TYPE = "snip-state";
@@ -135,6 +179,64 @@ export function snippetLine(snippet: Snippet, index: number): string {
 export default function snip(pi: ExtensionAPI) {
 	let state: SnipState = { active: [], sticky: false };
 
+	/** Session whose control file this process watches (set at session_start). */
+	let sessionId = "";
+	/** sentAt of the last payload applied via the control file (self-write dedupe). */
+	let lastSentAtSeen: string | undefined;
+	let watchDebounce: ReturnType<typeof setTimeout> | undefined;
+
+	function writeControlFile(): void {
+		if (!sessionId) return;
+		const file = controlFilePath(sessionId);
+		try {
+			mkdirSync(dirname(file), { recursive: true });
+			const payload: SnipControlFile = {
+				v: 1,
+				active: state.active,
+				sticky: state.sticky,
+				sentAt: lastSentAtSeen,
+				ackAt: new Date().toISOString(),
+			};
+			const tmp = `${file}.tmp-${process.pid}`;
+			writeFileSync(tmp, JSON.stringify(payload), "utf8");
+			renameSync(tmp, file);
+		} catch {
+			// best-effort: /snip command flow never depends on the file
+		}
+	}
+
+	/** Apply a plugin-written payload (watch callback). */
+	function consumeControlFile(): void {
+		if (!sessionId) return;
+		let payload: SnipControlFile | null = null;
+		try {
+			payload = parseControlPayload(readFileSync(controlFilePath(sessionId), "utf8"));
+		} catch {
+			return; // unreadable — nothing to apply
+		}
+		if (!payload) return;
+		if (payload.sentAt && payload.sentAt === lastSentAtSeen) return; // our own ack echo
+		lastSentAtSeen = payload.sentAt ?? `no-sentAt-${Date.now()}`;
+		// Same-state rewrite (no-op change) — just refresh the ack.
+		if (setsEqual(payload.active, state.active) && payload.sticky === state.sticky) {
+			writeControlFile();
+			return;
+		}
+		applyState({ active: payload.active, sticky: payload.sticky });
+	}
+
+	function setsEqual(a: string[], b: string[]): boolean {
+		return a.length === b.length && a.every((x) => b.includes(x));
+	}
+
+	/** Core state change: ledger entry + control file + timeline notice. */
+	function applyState(next: SnipState): void {
+		state = next;
+		pi.appendEntry(STATE_ENTRY_TYPE, next);
+		writeControlFile();
+		announceActive();
+	}
+
 	/** "Loaded up here": timeline message rendered by Paseo (notify drops mid-turn). */
 	function announceActive(): void {
 		const snippets = loadSnippets();
@@ -146,18 +248,13 @@ export default function snip(pi: ExtensionAPI) {
 	}
 
 	function setState(next: SnipState, ctx: { ui: { notify: (message: string, type?: "info" | "warning" | "error") => void } }): void {
-		state = next;
-		// Persist as a custom session entry — survives restarts and Paseo resume.
-		pi.appendEntry(STATE_ENTRY_TYPE, next);
-		// "Loaded up here": show the active set on the timeline immediately —
-		// the RPC notify channel is dropped mid-turn, but custom messages render.
+		applyState(next);
 		const snippets = loadSnippets();
 		const names = next.active.map((id) => snippets.find((s) => s.id === id)?.name ?? id);
 		const text = next.active.length === 0
 			? "📝 Snippets: none active"
 			: `📝 Snippets ${next.sticky ? "(sticky) " : ""}armed: ${names.join(", ")}${next.sticky ? "" : " — applies to your next message"}`;
 		ctx.ui.notify(text, "info");
-		announceActive();
 	}
 
 	// --- State restoration at session start -----------------------------------
@@ -173,6 +270,27 @@ export default function snip(pi: ExtensionAPI) {
 		}
 		if (last) state = last;
 		if (!existsSync(snippetsDir)) mkdirSync(snippetsDir, { recursive: true });
+
+		// v1.5 plugin bridge: publish current state + watch for plugin requests.
+		sessionId = (ctx.sessionManager.getSessionId?.() as string | undefined) ?? "";
+		if (sessionId) {
+			writeControlFile();
+			try {
+				const watcher = watch(dirname(controlFilePath(sessionId)), (event, filename) => {
+					if (!filename || !filename.endsWith(`${sessionId}.json`)) return;
+					if (watchDebounce) clearTimeout(watchDebounce);
+					watchDebounce = setTimeout(() => {
+						watchDebounce = undefined;
+						consumeControlFile();
+					}, 150);
+				});
+				watcher.on("error", () => {
+					// best-effort — /snip commands never depend on the watcher
+				});
+			} catch {
+				// watch unsupported (exotic fs) — panel stays read-only
+			}
+		}
 	});
 
 	// The applied ids are stashed so turn_end can write a transparency marker

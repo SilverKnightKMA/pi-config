@@ -1,5 +1,6 @@
+import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
-import {
+import { controlFilePath, parseControlPayload,
 	parseTwoGroupSelection,
 	askGroupSelection,
 	parseSnippet,
@@ -209,5 +210,39 @@ describe("askGroupSelection (3-step guided flow)", () => {
 		expect(r.cancelled).toBe(false);
 		expect(r.ids).toEqual([]);
 		expect(ctx.dialogs).toHaveLength(0);
+	});
+});
+
+describe("control file bridge (v1.5 plugin <-> engine)", () => {
+	test("parseControlPayload: valid request keeps ids + sentAt", () => {
+		const p = parseControlPayload(`{"v":1,"active":["a.md","b.md"],"sticky":true,"sentAt":"2026-09-05T00:00:00Z"}`);
+		expect(p).not.toBeNull();
+		expect(p!.active).toEqual(["a.md", "b.md"]);
+		expect(p!.sticky).toBe(true);
+		expect(p!.sentAt).toBe("2026-09-05T00:00:00Z");
+		expect(p!.ackAt).toBeUndefined();
+	});
+
+	test("parseControlPayload: rejects malformed JSON, wrong version, non-array active", () => {
+		expect(parseControlPayload("not json")).toBeNull();
+		expect(parseControlPayload(`{"v":2,"active":[],"sticky":false}`)).toBeNull();
+		expect(parseControlPayload(`{"v":1,"active":"x","sticky":false}`)).toBeNull();
+		expect(parseControlPayload(`{"v":1,"active":[],"sticky":"yes"}`)).toBeNull();
+	});
+
+	test("parseControlPayload: non-string ids are filtered out", () => {
+		const p = parseControlPayload(`{"v":1,"active":["ok.md",42,null],"sticky":false}`);
+		expect(p!.active).toEqual(["ok.md"]);
+	});
+
+	test("parseControlPayload: ack echo round-trips", () => {
+		const p = parseControlPayload(`{"v":1,"active":[],"sticky":false,"sentAt":"t1","ackAt":"t2"}`);
+		expect(p!.sentAt).toBe("t1");
+		expect(p!.ackAt).toBe("t2");
+	});
+
+	test("controlFilePath: one per session under snip-control/", () => {
+		const p = controlFilePath("abc123");
+		expect(p.endsWith(join(".pi", "agent", "snip-control", "abc123.json"))).toBe(true);
 	});
 });
