@@ -22,9 +22,13 @@ import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } fr
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const home = process.env.PI_HOME ?? process.env.HOME ?? "/home/coder";
-const JSONL = join(home, ".pi", "agent", "sse-probe.jsonl");
-const SUMMARY = join(home, ".pi", "agent", "sse-probe.json");
+export function probePaths(): { jsonl: string; summary: string } {
+	const home = process.env.PI_HOME ?? process.env.HOME ?? "/home/coder";
+	return {
+		jsonl: join(home, ".pi", "agent", "sse-probe.jsonl"),
+		summary: join(home, ".pi", "agent", "sse-probe.json"),
+	};
+}
 
 /** Provider substrings we suspect of SSE cuts (labeling only — we log everything). */
 const SUSPECT_PROVIDERS = ["zaicp"];
@@ -150,22 +154,30 @@ function lastToolCallOf(content: unknown): string | null {
 export default function sseProbe(pi: ExtensionAPI) {
 	let sessionId = "";
 	let turnStartedAt: number | null = null;
-	let lastLoggedTurn = -1;
+	// MessageEndEvent carries NO turnIndex (verified against pi 0.84.4
+	// types.d.ts) — capture it from turn_start instead, and dedupe by the
+	// message id. Deduping by a nonexistent turnIndex (-1 === -1) silently
+	// swallowed EVERY record — the 2026-09-05 16:55Z/16:57Z zaicp drops
+	// were logged nowhere. Regression: the fake pi below fires message_end
+	// WITHOUT turnIndex and expects a record.
+	let currentTurnIndex = -1;
+	let lastLoggedMsgId: string | null = null;
 
 	function writeAll(rec: ProbeRecord): void {
 		try {
-			mkdirSync(dirname(JSONL), { recursive: true });
-			appendFileSync(JSONL, `${JSON.stringify(rec)}\n`, "utf8");
+			const { jsonl, summary } = probePaths();
+			mkdirSync(dirname(jsonl), { recursive: true });
+			appendFileSync(jsonl, `${JSON.stringify(rec)}\n`, "utf8");
 			let prev: ProbeSummary | null = null;
 			try {
-				prev = JSON.parse(readFileSync(SUMMARY, "utf8")) as ProbeSummary;
+				prev = JSON.parse(readFileSync(summary, "utf8")) as ProbeSummary;
 			} catch {
 				prev = null;
 			}
 			const next = updateSummary(prev && typeof prev.total === "number" ? prev : null, rec, Date.now());
-			const tmp = `${SUMMARY}.tmp-${process.pid}`;
+			const tmp = `${summary}.tmp-${process.pid}`;
 			writeFileSync(tmp, JSON.stringify(next), "utf8");
-			renameSync(tmp, SUMMARY);
+			renameSync(tmp, summary);
 		} catch {
 			// observer: never let logging break a turn
 		}
@@ -177,10 +189,7 @@ export default function sseProbe(pi: ExtensionAPI) {
 
 	pi.on("turn_start", (event) => {
 		turnStartedAt = Date.now();
-		if (typeof event.turnIndex === "number" && event.turnIndex !== lastLoggedTurn) {
-			// a NEW turn started: reset the dedupe gate
-			if (lastLoggedTurn !== -1 && event.turnIndex > lastLoggedTurn) lastLoggedTurn = -1;
-		}
+		if (typeof event.turnIndex === "number") currentTurnIndex = event.turnIndex;
 	});
 
 	// message_end is the reliable hook: a stream cut still finalizes the
@@ -189,6 +198,7 @@ export default function sseProbe(pi: ExtensionAPI) {
 	pi.on("message_end", (event) => {
 		const m = event.message as
 			| {
+						id?: string;
 					role?: string;
 					provider?: string;
 					model?: string;
@@ -200,13 +210,13 @@ export default function sseProbe(pi: ExtensionAPI) {
 		if (!m || m.role !== "assistant") return;
 		const stopReason = m.stopReason ?? "";
 		if (stopReason !== "error" && stopReason !== "aborted") return;
-		const turnIndex = (event as { turnIndex?: number }).turnIndex ?? -1;
-		if (turnIndex === lastLoggedTurn) return; // dedupe within the same turn
-		lastLoggedTurn = turnIndex;
+		const msgId = typeof m.id === "string" ? m.id : "";
+		if (msgId && msgId === lastLoggedMsgId) return; // same message twice
+		lastLoggedMsgId = msgId || null;
 		writeAll(
 			buildRecord({
 				sessionId,
-				turnIndex,
+				turnIndex: currentTurnIndex,
 				provider: m.provider ?? "unknown",
 				model: m.model ?? "unknown",
 				stopReason,

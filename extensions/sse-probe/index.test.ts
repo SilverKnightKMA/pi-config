@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 // classify reads model ids too — "zaicp" lives in the MODEL (cli-openai provider)
-import { buildRecord, classify, truncate, updateSummary, type ProbeRecord } from "./index";
+import sseProbe, { buildRecord, classify, probePaths, truncate, updateSummary, type ProbeRecord } from "./index";
 
 const base = {
 	sessionId: "s1",
@@ -100,5 +100,66 @@ describe("sse-probe updateSummary", () => {
 describe("sse-probe truncate", () => {
 	test("short strings untouched", () => {
 		expect(truncate("short")).toBe("short");
+	});
+});
+
+describe("sse-probe event wiring (regression: message_end has NO turnIndex)", () => {
+	// 2026-09-05 incident: MessageEndEvent is { type, message } — the old
+	// handler deduped on a nonexistent event.turnIndex (-1 === initial -1)
+	// and swallowed EVERY drop, including two real zaicp SSE kills.
+	const realHome = process.env.PI_HOME;
+	let tmpHome: string;
+
+	beforeAll(() => {
+		tmpHome = `/tmp/sse-probe-test-${process.pid}`;
+		process.env.PI_HOME = tmpHome;
+	});
+	afterAll(() => {
+		if (realHome === undefined) delete process.env.PI_HOME;
+		else process.env.PI_HOME = realHome;
+	});
+
+	function fakePi() {
+		const handlers: Record<string, (event: any, ...rest: any[]) => unknown> = {};
+		return {
+			on: (ev: string, h: any) => {
+				handlers[ev] = h;
+			},
+			handlers,
+		};
+	}
+
+	test("message_end without turnIndex still logs, dedupes by message id", () => {
+		const { readFileSync, rmSync, existsSync } = require("node:fs") as typeof import("node:fs");
+		rmSync(tmpHome, { recursive: true, force: true });
+		const pi = fakePi();
+		sseProbe(pi as never);
+		pi.handlers.session_start?.({}, { sessionManager: { getSessionId: () => "sess-1" } });
+		pi.handlers.turn_start?.({ type: "turn_start", turnIndex: 42, timestamp: Date.now() - 5_000 });
+		const drop = {
+			type: "message_end" as const,
+			message: {
+				id: "msg-1",
+				role: "assistant",
+				provider: "cli-openai",
+				model: "zaicp/glm-5.3",
+				stopReason: "aborted",
+				errorMessage: "This operation was aborted",
+				content: [{ type: "text", text: "partial answer streamed mid-turn" }],
+			},
+		};
+		pi.handlers.message_end?.(drop);
+		pi.handlers.message_end?.(drop); // same message twice -> deduped
+		const { jsonl, summary } = probePaths();
+		expect(existsSync(jsonl)).toBe(true);
+		const lines = readFileSync(jsonl, "utf8").trim().split("\n");
+		expect(lines.length).toBe(1);
+		const rec = JSON.parse(lines[0]) as ProbeRecord;
+		expect(rec.kind).toBe("suspect-sse-drop");
+		expect(rec.turnIndex).toBe(42); // captured from turn_start, not the event
+		expect(rec.sessionId).toBe("sess-1");
+		expect(rec.turnDurMs).toBeGreaterThan(0);
+		const s = JSON.parse(readFileSync(summary, "utf8")) as { total: number };
+		expect(s.total).toBe(1);
 	});
 });
