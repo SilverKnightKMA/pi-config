@@ -6,9 +6,12 @@
  * it after the process exits, then commits to the right tier (observations → ledger).
  *
  * Worker recordings themselves live in pi's GLOBAL session store, not here (decision 11).
- * `.memory/.runs/` clutter is not GC'd in v1 (accepted).
+ * result.json is GC'd since 2026-09-05 (pi v1.2.7-GC): unlinked right after the orchestrator
+ * commits the run's observations to the ledger (verified — every content already present),
+ * plus a 7-day age sweep that backfills orphans (crash between commit and unlink) and legacy
+ * files. cost.json is NEVER deleted: it is the durable cost source for sumRunCosts().
  */
-import { mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 /** What the observer model emits, before the orchestrator re-derives precise timestamp-ids. */
@@ -133,4 +136,63 @@ export function readObserverResult(path: string): ObserverRunResult {
 
 export function writeObserverResult(path: string, result: ObserverRunResult): void {
 	atomicWrite(path, JSON.stringify(result));
+}
+
+/**
+ * Delete a run's result.json ONLY when its observations are provably committed to the
+ * ledger (every content string present in `ledgerContents`). Returns true when the file is
+ * gone (deleted, empty, or already absent), false when it was kept as a safety copy because
+ * verification failed. A parse failure also keeps the file — the age sweep handles stragglers.
+ */
+export function unlinkCommittedResult(root: string, runId: string, ledgerContents: ReadonlySet<string>): boolean {
+	const path = runResultPath(root, runId);
+	let result: ObserverRunResult;
+	try {
+		result = readObserverResult(path);
+	} catch {
+		// Missing file = nothing to verify; malformed = keep, sweep will age it out.
+		try {
+			statSync(path);
+			return false;
+		} catch {
+			return true;
+		}
+	}
+	if (result.observations.length === 0 || result.observations.every((o) => ledgerContents.has(o.content))) {
+		rmSync(path, { force: true });
+		return true;
+	}
+	return false;
+}
+
+/** Sweep age (days) for orphaned/legacy result.json; 0 disables. Env: OM_RUNS_SWEEP_DAYS. */
+export const RESULT_SWEEP_DAYS = Number(process.env.OM_RUNS_SWEEP_DAYS ?? 7);
+
+/**
+ * Safety net: unlink *.result.json older than RESULT_SWEEP_DAYS days. Covers runs orphaned by
+ * a crash between ledger commit and unlink, plus everything written before GC existed.
+ * cost.json is intentionally never touched.
+ */
+export function sweepOldResults(root: string, maxAgeDays = RESULT_SWEEP_DAYS): number {
+	if (!root || maxAgeDays <= 0) return 0;
+	let files: string[];
+	try {
+		files = readdirSync(runsDir(root)).filter((f) => f.endsWith(".result.json"));
+	} catch {
+		return 0;
+	}
+	const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
+	let removed = 0;
+	for (const f of files) {
+		const path = join(runsDir(root), f);
+		try {
+			if (statSync(path).mtimeMs < cutoff) {
+				rmSync(path, { force: true });
+				removed += 1;
+			}
+		} catch {
+			// raced away — fine
+		}
+	}
+	return removed;
 }

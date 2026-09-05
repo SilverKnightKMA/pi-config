@@ -16,7 +16,7 @@ import {
 } from "../ledger/index.js";
 import type { Runtime } from "../runtime.js";
 import { buildWorkerArgv, buildWorkerEnv, spawnWorker } from "../spawn/launch.js";
-import { readObserverResult, readWorkerCost, runCostPath, runResultPath } from "../spawn/runs.js";
+import { readObserverResult, readWorkerCost, runCostPath, runResultPath, sweepOldResults, unlinkCommittedResult } from "../spawn/runs.js";
 
 type TriggerCtx = {
 	hasUI: boolean;
@@ -173,6 +173,11 @@ async function dispatchObserver(
 		if (observations.length > 0) {
 			pi.appendEntry(OM_OBSERVATIONS_RECORDED, { observations, coversUpToId });
 		}
+		// GC (v1.2.7): the result file is a 3rd copy — ledger (jsonl) is the durable one and
+		// the worker run itself is a recorded pi session. Delete it only when its observations
+		// are provably in the ledger fold; otherwise keep it for the age sweep to collect later.
+		const ledgerContents = new Set([...foldLedger(ctx.sessionManager.getBranch()).observationsByTimestamp.values()].map((o) => o.content));
+		unlinkCommittedResult(runtime.memoryRoot, runId, ledgerContents);
 		runtime.status.workerDone(runId, observations.length);
 		runtime.refreshFooterGauges(ctx.sessionManager.getBranch(), ctx.getContextUsage?.()?.tokens ?? null);
 		// Paseo timeline milestone with the run's cost folded in (replaces the TUI cost footer).
@@ -207,4 +212,12 @@ export function registerObserverTrigger(pi: ExtensionAPI, runtime: Runtime): voi
 	const handler = (_event: unknown, ctx: TriggerCtx) => evaluateObserverTriggers(pi, runtime, ctx);
 	pi.on("turn_end", handler as never);
 	pi.on("agent_start", handler as never);
+	// GC sweep: cheap stat pass, orphaned result.json older than 7 days disappears on its own.
+	pi.on("turn_end", (() => {
+		try {
+			sweepOldResults(runtime.memoryRoot);
+		} catch {
+			// never let housekeeping break a turn
+		}
+	}) as never);
 }
