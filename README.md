@@ -1,9 +1,9 @@
-# pi-config — xưởng phát triển cấu hình pi
+# pi-config — pi configuration dev bench
 
-Dev bench cho extensions chạy live ở `~/.pi/agent/extensions/` (user-wide).
+Dev bench for extensions that run live under `~/.pi/agent/extensions/` (user-wide).
 
-- `extensions/` — cây dev (bun workspaces), mỗi extension có `*.test.ts`
-- Test: `bun test` · Typecheck: `bunx tsc -p tsconfig.json --noEmit`
-- Sync sang live: copy đè thư mục tương ứng trong `~/.pi/agent/extensions/`
-- Lịch sử: tách từ workspace `learn` (2026-08-31), giữ nguyên mọi commit gốc
-- (`pi-backup.tar.gz` — backup cũ, không liên quan bench)
+- `extensions/` — dev tree (bun workspaces), each extension ships `*.test.ts`
+- Tests: `bun test` · Typecheck: `bunx tsc -p tsconfig.json --noEmit`
+- Sync to live: overwrite the matching directory in `~/.pi/agent/extensions/`
+- History: split from the `learn` workspace (2026-08-31), all original commits kept
+- (`pi-backup.tar.gz` — legacy backup, unrelated to this bench)

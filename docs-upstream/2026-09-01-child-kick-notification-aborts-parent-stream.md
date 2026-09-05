@@ -1,4 +1,4 @@
-# [DRAFT — chưa đăng] Bug: child-agent kick notification aborts the parent's in-flight stream; partial output is lost
+# [DRAFT — not posted] Bug: child-agent kick notification aborts the parent's in-flight stream; partial output is lost
 
 ## Environment
 - Paseo 0.6.1 (also present with v0.7.0-beta.2 behavior), pi agent runtime, extensions model

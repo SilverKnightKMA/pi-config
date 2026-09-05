@@ -56,8 +56,8 @@ consumes to restyle them as cards. Two repos, one contract:
 | Emitted by | `zombie-watchdog` (B1 silent-turn, B2 settle-lost) |
 | Mechanism | pi custom message, `customType: "zw-timeline"` |
 | Line prefix (exact) | `> zw ⚠ ` (blockquote-wrapped by `emitTimeline`) |
-| Payload | `B1: Turn im <dur> — request chết im lặng (#3845)`; `B2: turn đã xong trong process <dur> trước nhưng daemon vẫn thấy "running"` + hint |
-| Typical lines | `> zw ⚠ B2: turn đã xong trong process 45s trước nhưng daemon vẫn thấy "running" (settle wake rơi, #3845). Bấm STOP cho sạch` |
+| Payload | `B1: Turn silent <dur> — request died silently (#3845)`; `B2: turn ended in-process <dur> ago but daemon still shows "running"` + hint |
+| Typical lines | `> zw ⚠ B2: turn ended in-process 45s ago but daemon still shows "running" (settle wake dropped, #3845). Press STOP to clean up` |
 
 ### 3. `auto-report` — subagent backstop ping
 
@@ -66,7 +66,7 @@ consumes to restyle them as cards. Two repos, one contract:
 | Emitted by | `subagent-types` (`buildAutoPing`) |
 | Mechanism | plain message (renders as assistant text) |
 | Line prefix (exact) | `[auto-report] ` |
-| Payload | `Subagent <role> (<agentId>) đã hoàn thành… Dùng paseo_activity(agentId)…` |
+| Payload | `Subagent <role> (<agentId>) finished… Use paseo_activity(agentId)…` |
 | Hard limit | ≤ 300 chars, one line, no result payload |
 
 ### 4. `channel-nack` — undelivered kick notice
@@ -76,7 +76,7 @@ consumes to restyle them as cards. Two repos, one contract:
 | Emitted by | `subagent-types` (`flushKicks` failure branch) |
 | Mechanism | queued channel message (main reads it next turn) |
 | Line prefix (exact) | `[channel-nack] ` |
-| Payload | `Kick tới subagent <agentId> THẤT BẠI (<reason>). N tin nhắn vẫn nằm trong queue file…` |
+| Payload | `Kick to subagent <agentId> FAILED (<reason>). N messages are still parked in its queue file…` |
 | Cadence | one notice per failed kick (retries are silent) |
 
 ## Detection (consumer contract)

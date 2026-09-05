@@ -6,3 +6,7 @@ __pycache__/
 *.pyc
 .DS_Store
 pi-backup.tar.gz
+
+# runtime artifacts, not repo material (Vietnamese-free policy)
+test-log-2.md
+viz/*.png

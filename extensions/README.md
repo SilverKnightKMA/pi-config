@@ -1,46 +1,46 @@
-# extensions/ — bố cục dev ↔ live
+# extensions/ — dev ↔ live layout
 
-## Cấp 1: có dev copy trong `extensions/` (sửa ở đây → sync sang `.pi/extensions/`)
+## Tier 1: has a dev copy under `extensions/` (edit here → sync to live)
 
-| Dev copy | Live | Nguồn gốc upstream |
+| Dev copy | Live | Upstream origin |
 |---|---|---|
-| `subagent-types/` | `.pi/extensions/subagent-types/` | amosblomqvist/pi-subagents + roles/extensions từ amosblomqvist/learn; kênh 2 chiều + ask_question + registry là thiết kế riêng cho Paseo (semantics interactive-subagents) |
-| `snip/` | `.pi/extensions/snip/` | amosblomqvist/pi-config (prompt-snippets) |
-| `quiz/` | `.pi/extensions/quiz/` | amosblomqvist/learn (extensions/quiz.ts) |
-| `ask-user-question/` | `.pi/extensions/ask-user-question/` | amosblomqvist/pi-config, fork có chủ đích |
-| `observational-memory/` | `.pi/extensions/observational-memory/` | amosblomqvist/pi-observational-memory, port gần nguyên văn |
+| `subagent-types/` | `~/.pi/agent/extensions/subagent-types/` | amosblomqvist/pi-subagents + roles/extensions from amosblomqvist/learn; the two-way channel + ask_question + name registry are original Paseo-specific design (interactive-subagents semantics) |
+| `snip/` | `~/.pi/agent/extensions/snip/` | amosblomqvist/pi-config (prompt-snippets) |
+| `quiz/` | `~/.pi/agent/extensions/quiz/` | amosblomqvist/learn (extensions/quiz.ts) |
+| `ask-user-question/` | `~/.pi/agent/extensions/ask-user-question/` | amosblomqvist/pi-config, deliberate fork |
+| `observational-memory/` | `~/.pi/agent/extensions/observational-memory/` | amosblomqvist/pi-observational-memory, near-verbatim port |
 
-Sync (idempotent, sau sự cố 2026-09-04 — xem `sync-live.mjs`):
+Sync (idempotent, hardened after the 2026-09-04 incident — see `sync-live.mjs`):
 
 ```bash
-node extensions/sync-live.mjs            # sync mọi ext có dev copy
-node extensions/sync-live.mjs snip quiz  # chỉ vài ext
+node extensions/sync-live.mjs            # sync every ext that has a dev copy
+node extensions/sync-live.mjs snip quiz  # just a few exts
 ```
 
-Quy tắc chống tái phạm (hậu quả của lệnh cũ `cp {*.ts,tests}`):
-- `rsync --delete` theo từng ext — không bao giờ `cp` vào dst đã tồn tại (gây lồng `x/x/`).
-- `--exclude '*.test.ts' --exclude 'node_modules'` ở CẤP 1 live — loader quét `*.ts` cấp 1 + `*/index.ts`; file test cấp 1 làm pi chết (`bun:test` not found).
-- Quan trọng: live LÀ `~/.pi/agent/extensions/` (không phải `.pi/extensions/` — bảng trên ghi theo workspace cũ, giữ lại làm tham chiếu lịch sử).
-- Chạy `bun test` ở dev repo trước khi sync; sau sync chạy `pi -p "reply OK"` để xác minh loader sạch.
+Anti-recurrence rules (consequences of the old `cp {*.ts,tests}` command):
+- Per-ext `rsync --delete` — never `cp` into an existing dst (that nested `x/x/`).
+- `--exclude '*.test.ts' --exclude 'node_modules'` at the live TOP LEVEL — the loader scans top-level `*.ts` + `*/index.ts`; a top-level test file kills pi (`bun:test` not found).
+- Important: live IS `~/.pi/agent/extensions/` (not `.pi/extensions/` — the table above kept the old-workspace spelling for historical reference).
+- Run `bun test` in the dev repo before syncing; after sync run `pi -p "reply OK"` to verify the loader is clean.
 
-## Cấp 2: chỉ có bản live (package tự chứa, KHÔNG tạo dev copy)
+## Tier 2: live-only (self-contained packages, do NOT create a dev copy)
 
-| Live | Vì sao không có dev copy | Nguồn gốc upstream |
+| Live | Why no dev copy | Upstream origin |
 |---|---|---|
-| `.pi/extensions/visual-tools/` | `node_modules` riêng (@mermaid-js/mermaid-cli + chrome) — nhân bản lãng phí; sửa trực tiếp bản live | amosblomqvist/learn (extensions/visual-tools) |
-| `.pi/extensions/web-fetch/` | `node_modules` riêng (readability/linkedom/turndown) | amosblomqvist/pi-config (extensions/web-fetch) |
-| `.pi/extensions/md-log.ts` | file đơn, không dependency — sửa trực tiếp | amosblomqvist/learn (extensions/md-log.ts) |
+| `~/.pi/agent/extensions/visual-tools/` | own `node_modules` (@mermaid-js/mermaid-cli + chrome) — wasteful to duplicate; edit the live copy directly | amosblomqvist/learn (extensions/visual-tools) |
+| `~/.pi/agent/extensions/web-fetch/` | own `node_modules` (readability/linkedom/turndown) | amosblomqvist/pi-config (extensions/web-fetch) |
+| `~/.pi/agent/extensions/md-log.ts` | single file, no dependencies — edit directly | amosblomqvist/learn (extensions/md-log.ts) |
 
-Quy ước cho cấp 2: sửa thẳng bản live, ghi chú nguồn gốc trong header comment (đã có), không tự sinh dev copy.
+Tier-2 convention: edit the live copy directly, note the origin in the header comment (already there), never auto-create a dev copy.
 
-## Ghi chú quan trọng
+## Important notes
 
-- **Không ai sinh ra từ không khí**: mọi ext đều truy được nguồn ở repo tác giả (clone tham khảo từng ở `/tmp/ext-audit-2` — tạm thời, header từng file là nơi lưu vĩnh viễn).
-- Header từng file ghi origin + quan hệ với công cụ lân cận (vd: web-fetch vs package `pi-web-access` trong `~/.pi/agent/settings.json`).
+- **Nothing comes from thin air**: every ext traces back to its author's repo (reference clones lived in `/tmp/ext-audit-2` — temporary; each file's header is the permanent record).
+- Each file's header records origin + relation to neighboring tools (e.g. web-fetch vs the `pi-web-access` package in `~/.pi/agent/settings.json`).
 
-## Chặn tool cho main agent (2026-09-02)
+## Blocking tools for the main agent (2026-09-02)
 
-`subagent-types` hỗ trợ deny-list cho **main agent** (mặc định rỗng — opt-in). Thêm vào `.pi/settings.json` của workspace (ưu tiên) hoặc `~/.pi/agent/settings.json` (mọi nơi):
+`subagent-types` supports a deny-list for the **main agent** (empty by default — opt-in). Add to the workspace `.pi/settings.json` (takes precedence) or `~/.pi/agent/settings.json` (everywhere):
 
 ```jsonc
 {
@@ -50,7 +50,7 @@ Quy ước cho cấp 2: sửa thẳng bản live, ghi chú nguồn gốc trong h
 }
 ```
 
-- Workspace thắng user-wide. Chỉ áp cho main — subagent role giữ allowlist riêng.
-- Block được tái áp mỗi input nên tool đăng ký muộn vẫn bị lọc.
-- Toast xác nhận số tool đã chặn khi có tác dụng thật (idempotent, không spam).
-- KHÔNG nên chặn `spawn_subagent` / `message_subagent` / `message_main` — main sẽ mất đường giao tiếp với con.
+- Workspace beats user-wide. Applies to main only — subagent roles keep their own allowlists.
+- The block is re-applied on every input, so tools registered late still get filtered.
+- A toast confirms how many tools were blocked when it actually applies (idempotent, no spam).
+- Do NOT block `spawn_subagent` / `message_subagent` / `message_main` — main would lose its communication path to children.

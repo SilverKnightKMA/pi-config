@@ -14,7 +14,7 @@
  * advised manual action was already "press STOP"). `tool-stall` NEVER auto-stops
  * (long-run tools are legitimate). Cancel is rate-limited to one attempt / 30s and
  * its outcome lands in the JSONL (auto-stop:ok / auto-stop:err). Recovery typing
- * "tiếp tục" stays manual. Set ZW_AUTO_STOP=0 to fall back to detect-only.
+ * "resume" stays manual. Set ZW_AUTO_STOP=0 to fall back to detect-only.
  *
  * What this deliberately still does NOT do: kick a continuation message into the
  * turn (recover() below stays disabled — a kick while the daemon thinks the turn is
@@ -134,7 +134,7 @@ export function wire(pi: ExtensionAPI, opts: WireOptions = {}): () => WatchdogSi
 			detail: ok ? undefined : (err ?? "unknown"),
 		});
 		if (ui) {
-			ui.setStatus("zw", ok ? `zw: auto-stopped (${reason}) — type "tiếp tục" to resume` : `zw: auto-stop failed (${reason})${err ? ` — ${err}` : ""}`);
+			ui.setStatus("zw", ok ? `zw: auto-stopped (${reason}) — type "resume" to roll` : `zw: auto-stop failed (${reason})${err ? ` — ${err}` : ""}`);
 		}
 	}
 
@@ -190,15 +190,15 @@ export function wire(pi: ExtensionAPI, opts: WireOptions = {}): () => WatchdogSi
 		emitTimeline(
 			sig.code === "tool-stall"
 				? `zw: tool running ${fmtDur(sig.idleMs)}, not done yet (may be normal)`
-				: `zw ⚠ Turn silent ${fmtDur(sig.idleMs)} — request died silently (#3845)${MODE === "detect" ? '. Recovery: STOP + "tiếp tục"' : " (auto disabled pending upstream)"}`,
+				: `zw ⚠ Turn silent ${fmtDur(sig.idleMs)} — request died silently (#3845)${MODE === "detect" ? '. Recovery: STOP + "resume"' : " (auto disabled pending upstream)"}`,
 		);
 		if (ui) {
 			if (sig.code === "tool-stall") {
 				ui.notify(`zw: tool running ${fmtDur(sig.idleMs)} — may be normal (long-run/crawl), leaving it alone`, "info");
 			} else {
-				const hint = MODE === "auto" ? "auto-recover disabled pending upstream (#3848/#3849)" : 'Press STOP then type "tiếp tục"';
+				const hint = MODE === "auto" ? "auto-recover disabled pending upstream (#3848/#3849)" : 'Press STOP then type "resume"';
 				ui.notify(`zw ⚠ Turn silent ${fmtDur(sig.idleMs)} — request may have died silently (bug #3845). ${hint}`, "warning");
-				ui.setStatus("zw", `⚠ hung ${fmtDur(sig.idleMs)} — STOP + "tiếp tục"`);
+				ui.setStatus("zw", `⚠ hung ${fmtDur(sig.idleMs)} — STOP + "resume"`);
 			}
 		}
 		return sig;
