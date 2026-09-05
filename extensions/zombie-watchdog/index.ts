@@ -102,10 +102,10 @@ export function wire(pi: ExtensionAPI, opts: WireOptions = {}): () => WatchdogSi
 		if (!code) return;
 		appendDetection({ ts: new Date().toISOString(), sessionFile, code, idleMs: Date.now() - endedAt, agentId: selfAgentId });
 		void autoStop(code, Date.now() - endedAt);
-		emitTimeline(`zw ⚠ B2: turn đã xong trong process ${fmtDur(Date.now() - endedAt)} trước nhưng daemon vẫn thấy "running" (settle wake rơi, #3845). ${AUTO_STOP ? "Đã tự gửi lệnh STOP" : "Bấm STOP cho sạch"}`);
+		emitTimeline(`zw ⚠ B2: turn ended in-process ${fmtDur(Date.now() - endedAt)} ago but daemon still shows "running" (settle wake dropped, #3845). ${AUTO_STOP ? "STOP sent automatically" : "Press STOP to clean up"}`);
 		if (ui) {
-			ui.notify(`zw ⚠ B2: turn đã xong trong process nhưng daemon vẫn thấy "running" (settle wake bị rơi, #3845). ${AUTO_STOP ? "Đã tự gửi lệnh STOP — nếu spinner vẫn đứng thì bấm tay" : "Bấm STOP cho sạch"}`, "warning");
-			ui.setStatus("zw", AUTO_STOP ? `⚠ zombie daemon-side — đã tự STOP` : `⚠ zombie daemon-side — bấm STOP`);
+			ui.notify(`zw ⚠ B2: turn ended in-process but daemon still shows "running" (settle wake dropped, #3845). ${AUTO_STOP ? "STOP sent automatically — press manually if the spinner is stuck" : "Press STOP to clean up"}`, "warning");
+			ui.setStatus("zw", AUTO_STOP ? `⚠ zombie daemon-side — auto-stopped` : `⚠ zombie daemon-side — press STOP`);
 		}
 	}
 
@@ -134,7 +134,7 @@ export function wire(pi: ExtensionAPI, opts: WireOptions = {}): () => WatchdogSi
 			detail: ok ? undefined : (err ?? "unknown"),
 		});
 		if (ui) {
-			ui.setStatus("zw", ok ? `zw: đã tự STOP (${reason}) — gõ "tiếp tục" để roll` : `zw: tự STOP thất bại (${reason})${err ? ` — ${err}` : ""}`);
+			ui.setStatus("zw", ok ? `zw: auto-stopped (${reason}) — type "tiếp tục" to resume` : `zw: auto-stop failed (${reason})${err ? ` — ${err}` : ""}`);
 		}
 	}
 
@@ -189,16 +189,16 @@ export function wire(pi: ExtensionAPI, opts: WireOptions = {}): () => WatchdogSi
 		}
 		emitTimeline(
 			sig.code === "tool-stall"
-				? `zw: tool chạy ${fmtDur(sig.idleMs)} chưa xong (có thể bình thường)`
-				: `zw ⚠ Turn im ${fmtDur(sig.idleMs)} — request chết im lặng (#3845)${MODE === "detect" ? '. Hồi phục: STOP + "tiếp tục"' : " (auto bị tắt chờ upstream)"}`,
+				? `zw: tool running ${fmtDur(sig.idleMs)}, not done yet (may be normal)`
+				: `zw ⚠ Turn silent ${fmtDur(sig.idleMs)} — request died silently (#3845)${MODE === "detect" ? '. Recovery: STOP + "tiếp tục"' : " (auto disabled pending upstream)"}`,
 		);
 		if (ui) {
 			if (sig.code === "tool-stall") {
-				ui.notify(`zw: tool chạy ${fmtDur(sig.idleMs)} chưa xong — có thể bình thường (long-run/crawl), cứ để yên`, "info");
+				ui.notify(`zw: tool running ${fmtDur(sig.idleMs)} — may be normal (long-run/crawl), leaving it alone`, "info");
 			} else {
-				const hint = MODE === "auto" ? "auto-recover bị tắt chờ upstream (#3848/#3849)" : 'Bấm STOP rồi gõ "tiếp tục"';
-				ui.notify(`zw ⚠ Turn im ${fmtDur(sig.idleMs)} — request có thể đã chết im lặng (bug #3845). ${hint}`, "warning");
-				ui.setStatus("zw", `⚠ treo ${fmtDur(sig.idleMs)} — STOP + "tiếp tục"`);
+				const hint = MODE === "auto" ? "auto-recover disabled pending upstream (#3848/#3849)" : 'Press STOP then type "tiếp tục"';
+				ui.notify(`zw ⚠ Turn silent ${fmtDur(sig.idleMs)} — request may have died silently (bug #3845). ${hint}`, "warning");
+				ui.setStatus("zw", `⚠ hung ${fmtDur(sig.idleMs)} — STOP + "tiếp tục"`);
 			}
 		}
 		return sig;
@@ -243,15 +243,15 @@ export function wire(pi: ExtensionAPI, opts: WireOptions = {}): () => WatchdogSi
 		handler: async (_args: string, ctx: any) => {
 			const list = readDetections(logPath);
 			const probeLine = lastProbe
-				? `lần thăm dò gần nhất: ${new Date(lastProbe.at).toLocaleTimeString()} → daemon: ${lastProbe.status ?? "?"}${lastProbe.busy ? " (busy!)" : ""}`
-				: "chưa thăm dò lần nào (chưa có turn kết thúc sau khi nạp)";
+				? `last probe: ${new Date(lastProbe.at).toLocaleTimeString()} → daemon: ${lastProbe.status ?? "?"}${lastProbe.busy ? " (busy!)" : ""}`
+				: "no probe yet (no turn finished since load)";
 			if (list.length === 0) {
-				if (ctx?.hasUI) ctx.ui.notify(`zw: chưa phát hiện turn treo nào ✓ (${probeLine})`, "info");
+				if (ctx?.hasUI) ctx.ui.notify(`zw: no hung turns detected ✓ (${probeLine})`, "info");
 				return;
 			}
 			const last = list.slice(-5).map((d) => `${d.ts.slice(0, 19)} ${d.code} idle=${fmtDur(d.idleMs)}`);
 			if (ctx?.hasUI) {
-				ctx.ui.notify(`zw: ${list.length} lần phát hiện. ${probeLine}\nGần nhất:\n${last.join("\n")}`, "info");
+				ctx.ui.notify(`zw: ${list.length} detection(s). ${probeLine}\nLatest:\n${last.join("\n")}`, "info");
 			}
 		},
 	});

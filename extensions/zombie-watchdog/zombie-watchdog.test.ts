@@ -199,7 +199,7 @@ describe("auto-stop (user directive 2026-09-05: zombie-class detections press ST
 			expect(h.calls[0].args).toEqual({ agentId: "agent-self" });
 			const list = readDetections(h.logPath);
 			expect(list.some((d) => d.code === "auto-stop:ok:zombie")).toBe(true);
-			expect(h.ui.statuses.get("zw")).toContain("đã tự STOP");
+			expect(h.ui.statuses.get("zw")).toContain("auto-stopped");
 		} finally {
 			h.handlers.get("session_shutdown")?.();
 			rmSync(h.dir, { recursive: true, force: true });

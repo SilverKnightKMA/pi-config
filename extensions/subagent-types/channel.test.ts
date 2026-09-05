@@ -206,27 +206,27 @@ test("empty queue (child already drained) is a no-op kick", async () => {
 	expect(sent).toBe(0);
 });
 
-// ── Auto-report backstop (2026-09-02): ping-only khi child settle mà quên message_main ──
+// ── Auto-report backstop (2026-09-02): ping-only when a child settles but forgot message_main ──
 import { shouldAutoPing, buildAutoPing } from "./index.ts";
 
-test("shouldAutoPing chỉ cho subagent chưa gọi message_main", () => {
+test("shouldAutoPing only for subagents that have not called message_main", () => {
 	expect(shouldAutoPing("researcher", false, true)).toBe(true);
-	expect(shouldAutoPing("researcher", true, true)).toBe(false);   // đã chủ động báo
-	expect(shouldAutoPing("main", false, true)).toBe(false);          // main không tự ping
-	expect(shouldAutoPing(undefined, false, true)).toBe(false);       // chưa resolve identity
-	expect(shouldAutoPing("worker", false, false)).toBe(false);       // identity chưa chắc
+	expect(shouldAutoPing("researcher", true, true)).toBe(false);   // reported on its own
+	expect(shouldAutoPing("main", false, true)).toBe(false);          // main never pings itself
+	expect(shouldAutoPing(undefined, false, true)).toBe(false);       // identity unresolved
+	expect(shouldAutoPing("worker", false, false)).toBe(false);       // identity not certain
 });
 
-test("buildAutoPing: 1 dòng, có role + agentId + hướng dẫn paseo_activity, KHÔNG chứa payload", () => {
+test("buildAutoPing: one line, role + agentId + paseo_activity hint, NO payload", () => {
 	const t = buildAutoPing("researcher", "01a05f8e", "Đối chiếu case zippo với 780T/500R stock");
 	expect(t).toContain("researcher");
 	expect(t).toContain("01a05f8e");
 	expect(t).toContain("paseo_activity");
 	expect(t.startsWith("[auto-report]")).toBe(true);
-	expect(t.length).toBeLessThan(300); // ping phải ngắn — không nhân bản văn bản con
+	expect(t.length).toBeLessThan(300); // ping must stay short — no duplicating child text
 });
 
-test("buildAutoPing không title vẫn hợp lệ", () => {
+test("buildAutoPing still valid without a title", () => {
 	const t = buildAutoPing("scout", "abc", undefined);
 	expect(t).toContain("scout");
 	expect(t).not.toContain("undefined");
@@ -238,20 +238,20 @@ import { mergeMainBlockedTools } from "./index.ts";
 test("mergeMainBlockedTools: workspace thắng user-wide, user-wide thắng rỗng", () => {
 	expect(mergeMainBlockedTools({ subagentTypes: { mainBlockedTools: ["safe_bash"] } }, { subagentTypes: { mainBlockedTools: ["web_search"] } })).toEqual(["safe_bash"]);
 	expect(mergeMainBlockedTools(null, { subagentTypes: { mainBlockedTools: ["web_search"] } })).toEqual(["web_search"]);
-	expect(mergeMainBlockedTools({ subagentTypes: {} }, { subagentTypes: { mainBlockedTools: ["web_search"] } })).toEqual(["web_search"]); // ws có key rỗng → fallback
+	expect(mergeMainBlockedTools({ subagentTypes: {} }, { subagentTypes: { mainBlockedTools: ["web_search"] } })).toEqual(["web_search"]); // ws with empty key → fallback
 	expect(mergeMainBlockedTools(null, null)).toEqual([]);
 });
 
-test("mergeMainBlockedTools lọc phần tử rác, không vỡ với kiểu sai", () => {
+test("mergeMainBlockedTools filters junk entries, survives wrong types", () => {
 	expect(mergeMainBlockedTools({ subagentTypes: { mainBlockedTools: ["safe_bash", 42, null, "web_fetch"] } }, null)).toEqual(["safe_bash", "web_fetch"]);
 	expect(mergeMainBlockedTools({ subagentTypes: { mainBlockedTools: "not-an-array" } }, null)).toEqual([]);
 });
 
-// ── Kick NACK (2026-09-04): kick rớt phải báo main, không để mục tử tế ──
+// ── Kick NACK (2026-09-04): a failed kick must notify main, never die silently ──
 // Tang vật thật: researcher 3bd7e7ab settle 09-02, kick NAS 09-03 nằm queue
-// vĩnh viễn, nhiệm vụ không bao giờ chạy, main không được báo (case "zippo").
+// forever, the task never runs, main is never told (the "zippo" case).
 
-test("flushKicks send-failure: re-queue + NACK một lần vào queue MAIN", async () => {
+test("flushKicks send-failure: re-queue + one-shot NACK into the MAIN queue", async () => {
 	pushToQueue("kid-dead", { id: "m4", from: "main", fromRole: "main", text: "NAS task", ts: "t" }, kickBase);
 	markKick("kid-dead", false);
 	let fail = 0;
@@ -263,16 +263,16 @@ test("flushKicks send-failure: re-queue + NACK một lần vào queue MAIN", asy
 	});
 	expect(out[0]?.kicked).toBe(false);
 	expect(out[0]?.reason).toContain("NACK");
-	// tin gốc được hoàn lại queue của child
+	// original messages go back to the child queue
 	expect(drainQueue("kid-dead", kickBase)).toHaveLength(1);
-	// NACK vào queue main, chứa agentId + gợi ý xử lý
+	// NACK into the main queue, carries agentId + handling hint
 	const mainQ = drainQueue("main-me", kickBase);
 	expect(mainQ).toHaveLength(1);
 	expect(mainQ[0]?.text).toContain("kid-dead");
 	expect(mainQ[0]?.text).toContain("channel-nack");
-	// kick vẫn pending để flush sau retry
+	// kick stays pending for the retry flush
 	expect(pendingKickIds()).toContain("kid-dead");
-	// flush lần 2 vẫn fail → KHÔNG NACK lần nữa (tránh spam)
+	// second flush still fails → NO second NACK (avoid spam)
 	const out2 = await flushKicks(fakeEp, {
 		base: kickBase,
 		mainAgentId: "main-me",
@@ -283,8 +283,8 @@ test("flushKicks send-failure: re-queue + NACK một lần vào queue MAIN", asy
 	expect(drainQueue("main-me", kickBase)).toHaveLength(0);
 });
 
-test("flushKicks thành công sau khi đã NACK: xóa cờ, lần fail kế tiếp NACK lại", async () => {
-	// kid-dead hết pending (queue bị drain giữa chừng ở test trên) — dựng lại đủ
+test("flushKicks succeeds after a NACK: flag cleared, next failure NACKs again", async () => {
+	// kid-dead has no pending left (queue drained mid-way above) — rebuild it
 	markKick("kid-dead", false);
 	pushToQueue("kid-dead", { id: "m5b", from: "main", fromRole: "main", text: "retry", ts: "t" }, kickBase);
 	const out = await flushKicks(fakeEp, {

@@ -26,7 +26,7 @@ const subIdx = read("subagent-types/index.ts");
 const subChan = read("subagent-types/paseo-channel.ts");
 
 describe("MARKERS.md producer contract v2", () => {
-	test("spec liệt kê đủ 4 marker (2 deprecated + 2 active)", () => {
+	test("spec lists all 4 markers (2 deprecated + 2 active)", () => {
 		expect(documented).toContain("> om: ");
 		expect(documented).toContain("> zw ⚠ ");
 		expect(documented).toContain("[auto-report] ");
@@ -34,32 +34,32 @@ describe("MARKERS.md producer contract v2", () => {
 		expect(spec).toContain("deprecated v2 — history render only");
 	});
 
-	test("B: om sink mặc định không phát custom message (model mù)", () => {
-		// nhánh file phải chạy TRƯỚC nhánh sendMessage và có điều kiện env
+	test("B: om sink emits no custom message by default (model-blind)", () => {
+		// file branch must run BEFORE the sendMessage branch and carry the env condition
 		expect(omSink).toContain('process.env.OM_TIMELINE_EMISSION === "message"');
 		expect(omSink.indexOf("appendOmStatusEvent(runtime")).toBeLessThan(omSink.indexOf('customType: "om-timeline"'));
-		// runtime được truyền vào sink
+		// runtime is passed into the sink
 		expect(omRuntime).toContain("makeTimelineSink(pi, { runtime: this })");
-		// status file module tồn tại với ring giới hạn
+		// status file module exists with a bounded ring
 		expect(omStatus).toContain("RING_LIMIT = 24");
 		expect(omStatus).toContain("om-status.json");
 	});
 
-	test("B: zw emitTimeline mặc định tắt, jsonl vẫn ghi", () => {
+	test("B: zw emitTimeline off by default, jsonl still written", () => {
 		expect(zw).toContain('process.env.ZW_TIMELINE_EMISSION !== "message"');
 		expect(zw.indexOf('ZW_TIMELINE_EMISSION')).toBeLessThan(zw.indexOf('customType: "zw-timeline"'));
 		expect(zw).toContain("appendDetection");
 	});
 
 	test("A: auto-report prefix thật ở emit site", () => {
-		expect(subIdx).toContain("`[auto-report] Subagent ${who} (${agentId}) đã hoàn thành");
+		expect(subIdx).toContain("`[auto-report] Subagent ${who} (${agentId}) finished");
 	});
 
-	test("A: channel-nack prefix thật với agentId + lý do", () => {
-		expect(subChan).toContain("`[channel-nack] Kick tới subagent ${agentId} THẤT BẠI (${errText})");
+	test("A: real channel-nack prefix with agentId + reason", () => {
+		expect(subChan).toContain("`[channel-nack] Kick to subagent ${agentId} FAILED (${errText})");
 	});
 
-	test("không marker mồ côi: mọi documented prefix đều tìm thấy ở nguồn (hoặc escape hatch)", () => {
+	test("no orphan markers: every documented prefix exists at source (or behind escape hatch)", () => {
 		const sources = [omSink, omStatus, omRuntime, zw, subIdx, subChan].join("\n");
 		for (const pfx of documented) {
 			const literal = pfx.split("${")[0].replace(/^> /, "");

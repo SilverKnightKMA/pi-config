@@ -215,7 +215,7 @@ export function shouldAutoPing(role: string | undefined, calledMessageMain: bool
 
 export function buildAutoPing(role: string, agentId: string, title: string | undefined): string {
 	const who = title ? `${role} "${title}"` : role;
-	return `[auto-report] Subagent ${who} (${agentId}) đã hoàn thành và về idle mà không gọi message_main. Dùng paseo_activity(agentId) nếu cần đọc kết quả của nó.`;
+	return `[auto-report] Subagent ${who} (${agentId}) finished and went idle without calling message_main. Use paseo_activity(agentId) if you need its result.`;
 }
 
 /** Identity mapping retained for call sites; .md files now use live names. */
@@ -442,7 +442,7 @@ export default function subagentTypes(pi: ExtensionAPI) {
 			if (active.length !== before.length) {
 				pi.setActiveTools(active);
 				ctx.ui.notify(
-					`subagent-types: main — đã chặn ${before.length - active.length} tool theo cấu hình (${mainBlockedTools.join(", ")}). Cần chạy thì giao cho subagent.`,
+					`subagent-types: main — blocked ${before.length - active.length} tools per config (${mainBlockedTools.join(", ")}). Delegate to a subagent when needed.`,
 					"info",
 				);
 			}
