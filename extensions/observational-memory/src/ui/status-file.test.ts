@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeTimelineSink } from "./timeline-message.ts";
 import { appendOmStatusEvent, omStatusPath, writeOmStatusSnapshot, type OmStatusFile, type PiSnapshotSource } from "./status-file.ts";
+import { runCostPath, writeWorkerCost } from "../spawn/runs.ts";
 import type { Runtime } from "../runtime.ts";
 
 /**
@@ -129,5 +130,39 @@ describe("om timeline sink v2 — file, not messages", () => {
 		} finally {
 			delete process.env.OM_TIMELINE_EMISSION;
 		}
+	});
+});
+
+describe("om status v2.5 — durable cost from .runs (restart-safe)", () => {
+	test("session cost/runs đến từ cost files khi ledger rỗng (sau restart)", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "omv2runs-"));
+		const rt = stubRuntime(dir);
+		mkdirSync(join(rt.memoryRoot, ".runs"), { recursive: true });
+		writeWorkerCost(runCostPath(rt.memoryRoot, "obs-a"), { costUsd: 0.001, role: "observer" });
+		writeWorkerCost(runCostPath(rt.memoryRoot, "obs-b"), { costUsd: 0.002, role: "observer" });
+		writeWorkerCost(runCostPath(rt.memoryRoot, "obs-c"), { costUsd: 0.0009, role: "consolidator" });
+		writeWorkerCost(runCostPath(rt.memoryRoot, "obs-old"), { costUsd: 0.0003 }); // pre-tag file
+
+		// ledger hoàn toàn trống — đúng trạng thái process mới sau restart
+		const pi: PiSnapshotSource = { sessionManager: { getBranch: () => [], getEntries: () => [] } };
+		await writeOmStatusSnapshot(rt, pi);
+		const file = JSON.parse(readFileSync(omStatusPath(rt)!, "utf8")) as OmStatusFile;
+		expect(file.summary?.sessionRuns).toBe(4);
+		expect(Math.abs((file.summary?.sessionCostUsd ?? 0) - 0.0042)).toBeLessThan(1e-9);
+		// dòng session trong lines cũng là số bền
+		expect(file.lines.some((l) => l.includes("session: $0.0042 (4 runs)"))).toBe(true);
+		// role split từ tag trong file (file cũ không tag chỉ cộng vào total)
+		expect(file.lines.some((l) => l.includes("observer") && l.includes("$0.0030 (2 runs)"))).toBe(true);
+		expect(file.lines.some((l) => l.includes("consolidator") && l.includes("$0.0009 (1 runs)"))).toBe(true);
+	});
+
+	test("không có cost files → fallback về ledger như cũ", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "omv2nof-"));
+		const rt = stubRuntime(dir); // không tạo .runs
+		const pi: PiSnapshotSource = { sessionManager: { getBranch: () => [], getEntries: () => [] } };
+		await writeOmStatusSnapshot(rt, pi);
+		const file = JSON.parse(readFileSync(omStatusPath(rt)!, "utf8")) as OmStatusFile;
+		expect(file.summary?.sessionRuns).toBe(0);
+		expect(file.summary?.sessionCostUsd).toBe(0);
 	});
 });

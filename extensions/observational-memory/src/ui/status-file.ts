@@ -11,6 +11,7 @@ import { buildStatusLines } from "../commands/status.js";
 import { foldLedger } from "../ledger/fold.js";
 import { poolTokens } from "../ledger/pool.js";
 import { sumSessionCost, type Entry } from "../ledger/types.js";
+import { sumRunCosts } from "../spawn/runs.js";
 
 /**
  * Minimal pi surface the snapshot needs for real numbers. Optional everywhere:
@@ -142,7 +143,11 @@ async function writeSnapshot(runtime: Runtime, path: string, events: OmStatusEve
 function buildSummary(runtime: Runtime, contextTokens: number | null, allEntries: Entry[]): OmStatusSummary {
 	const cfg = runtime.config;
 	const running = runtime.observersInFlight.size;
-	const { costUsd, runs } = sumSessionCost(allEntries);
+	// Durable truth first: .memory/<sessionId>/.runs/*.cost.json survives restarts;
+	// ledger om.cost entries only live in the process and roll back to 0 on respawn.
+	const disk = sumRunCosts(runtime.memoryRoot);
+	const ledger = sumSessionCost(allEntries);
+	const { costUsd, runs } = disk.total.runs > 0 ? disk.total : ledger;
 	const folded = foldLedger(allEntries);
 	const pool = poolTokens(folded.activeObservations);
 	const verdict =

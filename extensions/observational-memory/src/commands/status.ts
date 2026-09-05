@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { foldLedger, poolTokens, rawTokensSinceObservationCoverage, sumSessionCostByRole, type Entry } from "../ledger/index.js";
 import { listTopics, readJourney } from "../memory/paths.js";
+import { sumRunCosts } from "../spawn/runs.js";
 import { estimateStringTokens } from "../tokens.js";
 import type { Runtime } from "../runtime.js";
 import { renderTimeline } from "../ui/timeline.js";
@@ -11,6 +12,27 @@ import { renderTimeline } from "../ui/timeline.js";
  * front (the one line most reads need), ratios instead of bare numbers, and
  * per-role cost attribution so spend can be traced to observer vs consolidator.
  */
+/**
+ * Cost for display: the durable truth is `.memory/<sessionId>/.runs/*.cost.json`
+ * (workers write them every run); ledger om.cost entries are a process-lifetime
+ * mirror that dies on restart, so they only serve as fallback (fresh install,
+ * tests) and to keep role split alive for runs whose files predate role tagging.
+ */
+function costForDisplay(runtime: Runtime, allEntries: Entry[]): {
+	total: { costUsd: number; runs: number };
+	observer: { costUsd: number; runs: number };
+	consolidator: { costUsd: number; runs: number };
+} {
+	const disk = sumRunCosts(runtime.memoryRoot);
+	const ledger = sumSessionCostByRole(allEntries);
+	if (disk.total.runs === 0) return ledger;
+	return {
+		total: disk.total,
+		observer: disk.observer.runs > 0 ? disk.observer : ledger.observer,
+		consolidator: disk.consolidator.runs > 0 ? disk.consolidator : ledger.consolidator,
+	};
+}
+
 export function buildStatusLines(
 	runtime: Runtime,
 	branch: Entry[],
@@ -24,7 +46,7 @@ export function buildStatusLines(
 	const since = rawTokensSinceObservationCoverage(branch);
 	const topics = listTopics(runtime.memoryRoot);
 	const journey = readJourney(runtime.memoryRoot);
-	const cost = sumSessionCostByRole(allEntries);
+	const cost = costForDisplay(runtime, allEntries);
 
 	const running = runtime.observersInFlight.size;
 	const pct = (v: number, max: number) => `${Math.round((v / max) * 100)}%`;

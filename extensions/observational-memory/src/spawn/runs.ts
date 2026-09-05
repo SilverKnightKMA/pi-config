@@ -8,7 +8,7 @@
  * Worker recordings themselves live in pi's GLOBAL session store, not here (decision 11).
  * `.memory/.runs/` clutter is not GC'd in v1 (accepted).
  */
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 /** What the observer model emits, before the orchestrator re-derives precise timestamp-ids. */
@@ -40,6 +40,9 @@ export function runCostPath(root: string, runId: string): string {
 
 export type WorkerCostResult = {
 	costUsd: number;
+	/** Written since 2026-09-05 (pi v1.2.5): role tag so the durable sum can
+	 *  split observer/consolidator. Older files carry total-only. */
+	role?: "observer" | "consolidator";
 };
 
 export function writeWorkerCost(path: string, cost: WorkerCostResult): void {
@@ -53,10 +56,55 @@ export function readWorkerCost(path: string): WorkerCostResult | undefined {
 		if (!raw || typeof raw !== "object") return undefined;
 		const cost = (raw as { costUsd?: unknown }).costUsd;
 		if (typeof cost !== "number" || !Number.isFinite(cost) || cost < 0) return undefined;
-		return { costUsd: cost };
+		const role = (raw as { role?: unknown }).role;
+		return {
+			costUsd: cost,
+			...(role === "observer" || role === "consolidator" ? { role } : {}),
+		};
 	} catch {
 		return undefined;
 	}
+}
+
+export interface RunCostTotals {
+	total: { costUsd: number; runs: number };
+	observer: { costUsd: number; runs: number };
+	consolidator: { costUsd: number; runs: number };
+}
+
+/**
+ * Durable session-scoped cost truth: sum every .runs/*.cost.json under the
+ * session memory root. The ledger's om.cost entries are a process-lifetime
+ * mirror (lost on restart — the session jsonl files never persist them), so
+ * this is what survives respawns and keeps "session" meaning "chat session".
+ */
+export function sumRunCosts(root: string): RunCostTotals {
+	const totals: RunCostTotals = {
+		total: { costUsd: 0, runs: 0 },
+		observer: { costUsd: 0, runs: 0 },
+		consolidator: { costUsd: 0, runs: 0 },
+	};
+	if (!root) return totals;
+	let files: string[];
+	try {
+		files = readdirSync(join(runsDir(root))).filter((f) => f.endsWith(".cost.json"));
+	} catch {
+		return totals;
+	}
+	for (const f of files) {
+		const cost = readWorkerCost(join(runsDir(root), f));
+		if (!cost) continue;
+		totals.total.costUsd += cost.costUsd;
+		totals.total.runs += 1;
+		if (cost.role === "observer") {
+			totals.observer.costUsd += cost.costUsd;
+			totals.observer.runs += 1;
+		} else if (cost.role === "consolidator") {
+			totals.consolidator.costUsd += cost.costUsd;
+			totals.consolidator.runs += 1;
+		}
+	}
+	return totals;
 }
 
 /** Atomic write (temp + rename) so a reader never sees a half-written file. */

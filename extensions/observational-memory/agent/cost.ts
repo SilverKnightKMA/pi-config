@@ -37,7 +37,11 @@ export function trackWorkerCost(pi: ExtensionAPI): void {
 	// the worker.
 	pi.on("agent_end", async () => {
 		try {
-			writeWorkerCost(costPath, { costUsd });
+			const role = process.env.OM_WORKER;
+			writeWorkerCost(costPath, {
+				costUsd,
+				...(role === "observer" || role === "consolidator" ? { role } : {}),
+			});
 		} catch {
 			// ignore — cost is non-critical telemetry
 		}

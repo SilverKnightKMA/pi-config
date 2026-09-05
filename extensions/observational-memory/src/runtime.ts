@@ -1,5 +1,6 @@
 import { type Config, DEFAULTS, loadConfig } from "./config.js";
 import { foldLedger, poolTokens, rawTokensSinceObservationCoverage, sumSessionCost, type Entry } from "./ledger/index.js";
+import { sumRunCosts } from "./spawn/runs.js";
 import { StatusController } from "./ui/status-controller.js";
 import { makeNullTimelineSink, makeTimelineSink, type SendMessageTarget, type TimelineSink } from "./ui/timeline-message.js";
 
@@ -144,10 +145,13 @@ export class Runtime {
 	/**
 	 * Recompute accumulated session cost for the footer from ALL entries (every branch), so the
 	 * displayed spend never rolls back under /tree. Pass `getEntries()`, not `getBranch()`.
+	 * The durable `.runs` cost files win over the ledger mirror: they survive restarts,
+	 * while om.cost entries only exist inside the live process.
 	 */
 	refreshCost(allEntries: Entry[]): void {
 		if (!this.enabled) return;
-		const { costUsd, runs } = sumSessionCost(allEntries);
+		const disk = sumRunCosts(this.memoryRoot);
+		const { costUsd, runs } = disk.total.runs > 0 ? disk.total : sumSessionCost(allEntries);
 		this.status.setCost(costUsd, runs);
 	}
 
