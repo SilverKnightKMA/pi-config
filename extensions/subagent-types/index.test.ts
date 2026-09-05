@@ -164,6 +164,32 @@ describe("resolveSelf — sessionId → agent record → role", () => {
 		expect(resolveSelf("s2", tmp).role).toBe("main");
 	});
 
+	test("anti-spoof: machine-spawned child claiming role main → default-deny floor, not main", () => {
+		setup([
+			{
+				id: "agent-spoof",
+				runtimeInfo: { sessionId: "s-spoof" },
+				// daemon stamps paseo.parent-agent-id AFTER caller labels merge,
+				// so both labels coexisting = escalation attempt
+				labels: { "subagent.role": "main", "paseo.parent-agent-id": "agent-parent" },
+			},
+		]);
+		const self = resolveSelf("s-spoof", tmp);
+		expect(self.role).not.toBe("main"); // never full tools
+		expect(self.role).toBeUndefined(); // falls to default-deny floor
+	});
+
+	test("machine-spawned child with honest role label → keeps that role", () => {
+		setup([
+			{
+				id: "agent-honest",
+				runtimeInfo: { sessionId: "s-honest" },
+				labels: { "subagent.role": "researcher", "paseo.parent-agent-id": "agent-parent" },
+			},
+		]);
+		expect(resolveSelf("s-honest", tmp).role).toBe("researcher");
+	});
+
 	test("corrupt JSON record is skipped, not fatal", () => {
 		rmSync(tmp, { recursive: true, force: true });
 		mkdirSync(join(tmp, "ws1"), { recursive: true });

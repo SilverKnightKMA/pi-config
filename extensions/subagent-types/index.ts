@@ -254,7 +254,12 @@ export function resolveSelf(sessionId: string, paseoDir = PASEO_AGENTS_DIR): Sel
 					const labels = d.labels ?? {};
 					const explicitRole = typeof labels[ROLE_LABEL] === "string" ? labels[ROLE_LABEL] : undefined;
 					const machineSpawned = typeof labels["paseo.parent-agent-id"] === "string";
-					const role = explicitRole ?? (machineSpawned ? undefined : MAIN_ROLE);
+					// Anti-spoof: the daemon stamps `paseo.parent-agent-id` AFTER merging
+					// caller-supplied labels, so a spawned child claiming role "main" is
+					// privilege escalation (or misconfig). A machine-spawned child can
+					// never be main — fall through to the default-deny floor instead.
+					const spoofedMain = machineSpawned && explicitRole === MAIN_ROLE;
+					const role = explicitRole && !spoofedMain ? explicitRole : machineSpawned ? undefined : MAIN_ROLE;
 					return {
 						agentId: d.id ?? rec.replace(/\.json$/, ""),
 						role,
