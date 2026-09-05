@@ -525,7 +525,7 @@ export async function flushKicks(endpoint: McpEndpoint, deps: KickDeps = {}): Pr
 						id: `${Date.now()}-nack-${agentId.slice(0, 8)}`,
 						from: agentId,
 						fromRole: "system",
-						text: `[channel-nack] Kick tới subagent ${agentId} THẤT BẠI (${errText}). ${msgs.length} tin nhắn vẫn nằm trong queue file của nó — kiểm tra agent-health panel hoặc gửi lại message_subagent.`,
+						text: `[channel-nack] Kick to subagent ${agentId} FAILED (${errText}). ${msgs.length} messages are still parked in its queue file — check the agent-health panel or re-send via message_subagent.`,
 						ts: new Date().toISOString(),
 						kind: "message",
 					},

@@ -32,7 +32,7 @@ function stubRuntime(root: string): Runtime {
 }
 
 describe("om timeline sink v2 — file, not messages", () => {
-	test("sink với runtime: không sendMessage, ghi om-status.json", async () => {
+	test("sink with runtime: no sendMessage, writes om-status.json", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "omv2-"));
 		const rt = stubRuntime(dir);
 		let sent = 0;
@@ -51,7 +51,7 @@ describe("om timeline sink v2 — file, not messages", () => {
 		expect(file.workspace).toBe(dir);
 	});
 
-	test("appendOmStatusEvent: ring giới hạn 24, thứ tự mới nhất cuối", async () => {
+	test("appendOmStatusEvent: ring capped at 24, newest last", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "omv2ring-"));
 		const rt = stubRuntime(dir);
 		for (let i = 0; i < 30; i++) await appendOmStatusEvent(rt, `event ${i}`);
@@ -61,10 +61,10 @@ describe("om timeline sink v2 — file, not messages", () => {
 		expect(file.events.at(-1)?.text).toBe("event 29");
 	});
 
-	test("v2.1: cost theo session (getEntries) + context thật — không còn $0.0000 / context ?", async () => {
+	test("v2.1: session cost from getEntries + real context — no more $0.0000 / context ?", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "omv2ctx-"));
 		const rt = stubRuntime(dir);
-		// branch rỗng (vừa respawn/compact) nhưng ledger đầy: cost entry $1.5 + $2.5, 2 runs
+		// empty branch (fresh respawn/compact) but full ledger: cost entries $1.5 + $2.5, 2 runs
 		const costEntry = (usd: number) => ({
 			type: "custom",
 			customType: "om.cost",
@@ -88,7 +88,7 @@ describe("om timeline sink v2 — file, not messages", () => {
 		expect(file.summary?.verdict).toBe("healthy");
 	});
 
-	test("v2.2: file nằm trong .memory/<sessionId>/ — 2 session không giẫm nhau", async () => {
+	test("v2.2: file lives under .memory/<sessionId>/ — two sessions never stomp each other", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "omv2sess-"));
 		const rtA = stubRuntime(dir);
 		const rtB = { ...rtA, memoryRoot: join(dir, ".memory", "sess-2") } as Runtime;
@@ -98,11 +98,11 @@ describe("om timeline sink v2 — file, not messages", () => {
 		const fileB = JSON.parse(readFileSync(omStatusPath(rtB)!, "utf8")) as OmStatusFile;
 		expect(fileA.sessionId).toBe("sess-1");
 		expect(fileB.sessionId).toBe("sess-2");
-		expect(fileA.events.at(-1)?.text).toBe("from-a"); // b không đè a
+		expect(fileA.events.at(-1)?.text).toBe("from-a"); // b does not overwrite a
 		expect(fileB.events.at(-1)?.text).toBe("from-b");
 	});
 
-	test("v2.1: writeOmStatusSnapshot refresh giữa các event — ring không đổi, lines mới", async () => {
+	test("v2.1: writeOmStatusSnapshot refresh between events — ring unchanged, new lines", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "omv2snap-"));
 		const rt = stubRuntime(dir);
 		await appendOmStatusEvent(rt, "event-a");
@@ -111,12 +111,12 @@ describe("om timeline sink v2 — file, not messages", () => {
 		const pi: PiSnapshotSource = { getContextUsage: () => ({ tokens: 42000 }) };
 		await writeOmStatusSnapshot(rt, pi);
 		const after = JSON.parse(readFileSync(omStatusPath(rt)!, "utf8")) as OmStatusFile;
-		expect(after.events).toHaveLength(before.events.length); // không append event
-		expect(after.generatedAt).not.toBe(before.generatedAt); // nhưng snapshot mới
+		expect(after.events).toHaveLength(before.events.length); // no event appended
+		expect(after.generatedAt).not.toBe(before.generatedAt); // but snapshot is new
 		expect(after.lines.some((l) => l.includes("42,000"))).toBe(true);
 	});
 
-	test("escape hatch: OM_TIMELINE_EMISSION=message giữ kênh cũ", async () => {
+	test("escape hatch: OM_TIMELINE_EMISSION=message keeps the old channel", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "omv2leg-"));
 		const rt = stubRuntime(dir);
 		process.env.OM_TIMELINE_EMISSION = "message";
@@ -134,7 +134,7 @@ describe("om timeline sink v2 — file, not messages", () => {
 });
 
 describe("om status v2.5 — durable cost from .runs (restart-safe)", () => {
-	test("session cost/runs đến từ cost files khi ledger rỗng (sau restart)", async () => {
+	test("session cost/runs come from cost files when the ledger is empty (after restart)", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "omv2runs-"));
 		const rt = stubRuntime(dir);
 		mkdirSync(join(rt.memoryRoot, ".runs"), { recursive: true });
@@ -143,22 +143,22 @@ describe("om status v2.5 — durable cost from .runs (restart-safe)", () => {
 		writeWorkerCost(runCostPath(rt.memoryRoot, "obs-c"), { costUsd: 0.0009, role: "consolidator" });
 		writeWorkerCost(runCostPath(rt.memoryRoot, "obs-old"), { costUsd: 0.0003 }); // pre-tag file
 
-		// ledger hoàn toàn trống — đúng trạng thái process mới sau restart
+		// ledger fully empty — exactly the fresh-process state after a restart
 		const pi: PiSnapshotSource = { sessionManager: { getBranch: () => [], getEntries: () => [] } };
 		await writeOmStatusSnapshot(rt, pi);
 		const file = JSON.parse(readFileSync(omStatusPath(rt)!, "utf8")) as OmStatusFile;
 		expect(file.summary?.sessionRuns).toBe(4);
 		expect(Math.abs((file.summary?.sessionCostUsd ?? 0) - 0.0042)).toBeLessThan(1e-9);
-		// dòng session trong lines cũng là số bền
+		// the session line in lines also carries durable numbers
 		expect(file.lines.some((l) => l.includes("session: $0.0042 (4 runs)"))).toBe(true);
-		// role split từ tag trong file (file cũ không tag chỉ cộng vào total)
+		// role split from the tag in the file (untagged legacy files only add to total)
 		expect(file.lines.some((l) => l.includes("observer") && l.includes("$0.0030 (2 runs)"))).toBe(true);
 		expect(file.lines.some((l) => l.includes("consolidator") && l.includes("$0.0009 (1 runs)"))).toBe(true);
 	});
 
-	test("không có cost files → fallback về ledger như cũ", async () => {
+	test("no cost files → fall back to the ledger as before", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "omv2nof-"));
-		const rt = stubRuntime(dir); // không tạo .runs
+		const rt = stubRuntime(dir); // no .runs created
 		const pi: PiSnapshotSource = { sessionManager: { getBranch: () => [], getEntries: () => [] } };
 		await writeOmStatusSnapshot(rt, pi);
 		const file = JSON.parse(readFileSync(omStatusPath(rt)!, "utf8")) as OmStatusFile;

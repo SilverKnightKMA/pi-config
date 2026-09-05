@@ -63,7 +63,7 @@ describe("takeMessagesFrom — surgical drain", () => {
 
 describe("isAutoReport", () => {
 	test("[auto-report] prefix → true (settle backstop ping)", () => {
-		expect(isAutoReport(msg("c", "[auto-report] Subagent scout đã hoàn thành"))).toBe(true);
+		expect(isAutoReport(msg("c", "[auto-report] Subagent scout finished"))).toBe(true);
 		expect(isAutoReport(msg("c", "  [auto-report] indented"))).toBe(true);
 	});
 	test("real payloads → false", () => {
