@@ -48,7 +48,9 @@ export default function observationalMemory(pi: ExtensionAPI): void {
 	// v2.1: status file snapshot on demand — real session-scoped cost (ledger
 	// getEntries) + live context tokens. Type-erased: PiSnapshotSource is the
 	// structural subset we read.
-	const piSnap = pi as unknown as PiSnapshotSource;
+	// NOTE (2026-09-05 v1.2.6): getContextUsage + sessionManager live on the
+	// per-event ctx (ExtensionContext), NOT on ExtensionAPI. Handlers pass ctx
+	// into writeOmStatusSnapshot; casting pi here made context silently null.
 
 
 	function attachIfEnabled(ctx: any): void {
@@ -77,8 +79,9 @@ export default function observationalMemory(pi: ExtensionAPI): void {
 		runtime.refreshFooterGauges(branch, ctx.getContextUsage?.()?.tokens ?? null);
 		runtime.refreshCost(ctx.sessionManager.getEntries() as Entry[]);
 		// v2.1: seed the panel immediately on respawn — no waiting for the first
-		// turn_end. Cost comes from the full ledger, so it shows session totals.
-		void writeOmStatusSnapshot(runtime, piSnap);
+		// turn_end. Cost comes from the durable .runs files; ctx (not pi) carries
+		// getContextUsage + sessionManager, so numbers are real from the first write.
+		void writeOmStatusSnapshot(runtime, ctx as unknown as PiSnapshotSource);
 	});
 
 	pi.on("session_shutdown", () => {
@@ -129,7 +132,7 @@ export default function observationalMemory(pi: ExtensionAPI): void {
 	// panel is current after EVERY chat turn, not only when OM runs fire.
 	pi.on("turn_end", (_event: unknown, ctx: any) => {
 		runtime.status.updateContext(ctx?.getContextUsage?.()?.tokens ?? null);
-		void writeOmStatusSnapshot(runtime, piSnap);
+		void writeOmStatusSnapshot(runtime, ctx as unknown as PiSnapshotSource);
 	});
 
 // 2026-09-01: .memory write-guard + context policy line (see guard/memory-guard.ts)
