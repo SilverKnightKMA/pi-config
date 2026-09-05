@@ -222,19 +222,25 @@ export default function snip(pi: ExtensionAPI) {
 			writeControlFile();
 			return;
 		}
-		applyState({ active: payload.active, sticky: payload.sticky });
+		// Panel-driven: silent (the panel polls the ack; the turn-end marker
+		// still reports what rode the prompt).
+		applyState({ active: payload.active, sticky: payload.sticky }, { announce: false });
 	}
 
 	function setsEqual(a: string[], b: string[]): boolean {
 		return a.length === b.length && a.every((x) => b.includes(x));
 	}
 
-	/** Core state change: ledger entry + control file + timeline notice. */
-	function applyState(next: SnipState): void {
+	/** Core state change: ledger entry + control file + (optionally) timeline notice.
+	 * announce=false for panel-driven changes and one-shot resets — the panel
+	 * already shows the acked state and the turn-end "applied" marker keeps
+	 * transparency; announcing every click flooded the chat (user report
+	 * 2026-09-05: 27 📝 lines while toggling from the panel). */
+	function applyState(next: SnipState, opts?: { announce?: boolean }): void {
 		state = next;
 		pi.appendEntry(STATE_ENTRY_TYPE, next);
 		writeControlFile();
-		announceActive();
+		if (opts?.announce !== false) announceActive();
 	}
 
 	/** "Loaded up here": timeline message rendered by Paseo (notify drops mid-turn). */
@@ -272,7 +278,11 @@ export default function snip(pi: ExtensionAPI) {
 		if (!existsSync(snippetsDir)) mkdirSync(snippetsDir, { recursive: true });
 
 		// v1.5 plugin bridge: publish current state + watch for plugin requests.
-		sessionId = (ctx.sessionManager.getSessionId?.() as string | undefined) ?? "";
+		// SUBAGENT sessions (header.parentSession set) are excluded — every spawned
+		// scout/worker is its own session and would flood the control dir with
+		// ~150 files, which the panel then lists as chips (user report 2026-09-05).
+		const parent = (ctx.sessionManager.getHeader?.() as { parentSession?: string } | undefined)?.parentSession;
+		sessionId = !parent ? ((ctx.sessionManager.getSessionId?.() as string | undefined) ?? "") : "";
 		if (sessionId) {
 			writeControlFile();
 			try {
@@ -304,8 +314,9 @@ export default function snip(pi: ExtensionAPI) {
 		lastApplied = [...state.active];
 
 		// One-shot mode resets after the first applied message (original behavior).
+		// Silent: the turn-end "Snippets applied" marker is the transparency.
 		if (!state.sticky) {
-			setState({ active: [], sticky: false }, ctx);
+			applyState({ active: [], sticky: false }, { announce: false });
 		}
 		return {
 			action: "transform",
