@@ -37,6 +37,7 @@ const PACKED = [
 	"observational-memory",
 	"quiz",
 	"snip",
+	"sse-probe",
 	"subagent-types",
 	"visual-tools",
 	"web-fetch",

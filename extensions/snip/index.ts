@@ -190,8 +190,9 @@ export default function snip(pi: ExtensionAPI) {
 		const file = controlFilePath(sessionId);
 		try {
 			mkdirSync(dirname(file), { recursive: true });
-			const payload: SnipControlFile = {
+			const payload: SnipControlFile & { cwd?: string } = {
 				v: 1,
+				cwd: process.cwd(),
 				active: state.active,
 				sticky: state.sticky,
 				sentAt: lastSentAtSeen,

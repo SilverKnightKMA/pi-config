@@ -236,7 +236,8 @@ describe("control file bridge (v1.5 plugin <-> engine)", () => {
 	});
 
 	test("parseControlPayload: ack echo round-trips", () => {
-		const p = parseControlPayload(`{"v":1,"active":[],"sticky":false,"sentAt":"t1","ackAt":"t2"}`);
+		const p = parseControlPayload(`{"v":1,"cwd":"/home/coder/workspaces/learn","active":[],"sticky":false,"sentAt":"t1","ackAt":"t2"}`);
+	// cwd rides along (v1.4.9): the plugin scopes picker chips per workspace
 		expect(p!.sentAt).toBe("t1");
 		expect(p!.ackAt).toBe("t2");
 	});
