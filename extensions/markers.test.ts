@@ -51,7 +51,7 @@ describe("MARKERS.md producer contract v2", () => {
 		expect(zw).toContain("appendDetection");
 	});
 
-	test("A: auto-report prefix thật ở emit site", () => {
+	test("A: real auto-report prefix at the emit site", () => {
 		expect(subIdx).toContain("`[auto-report] Subagent ${who} (${agentId}) finished");
 	});
 

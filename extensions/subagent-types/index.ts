@@ -204,7 +204,7 @@ function readSettingsJson(path: string): Record<string, unknown> | null {
  * Auto-report backstop (2026-09-02, user request): the 2026-09-01 fix dropped
  * notifyOnFinish on spawns, which also killed the daemon's automatic
  * "child finished" forwarding. Children that simply conclude (researcher
- * 01a05f8e: 47 min of work, KẾT LUẬN persisted, 0 message_main calls) leave
+ * 01a05f8e: 47 min of work, CONCLUSION persisted, 0 message_main calls) leave
  * the main agent asleep forever. Design: PING-ONLY — wake main with a one-line
  * notice and let main pull the transcript itself (paseo_activity) only when it
  * needs it. No text duplication into main's context.

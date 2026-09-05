@@ -218,7 +218,7 @@ test("shouldAutoPing only for subagents that have not called message_main", () =
 });
 
 test("buildAutoPing: one line, role + agentId + paseo_activity hint, NO payload", () => {
-	const t = buildAutoPing("researcher", "01a05f8e", "Đối chiếu case zippo với 780T/500R stock");
+	const t = buildAutoPing("researcher", "01a05f8e", "Cross-check the zippo case against 780T/500R stock");
 	expect(t).toContain("researcher");
 	expect(t).toContain("01a05f8e");
 	expect(t).toContain("paseo_activity");
@@ -235,7 +235,7 @@ test("buildAutoPing still valid without a title", () => {
 // ── Main-tool restriction (2026-09-02): deny-list cho main agent ──
 import { mergeMainBlockedTools } from "./index.ts";
 
-test("mergeMainBlockedTools: workspace thắng user-wide, user-wide thắng rỗng", () => {
+test("mergeMainBlockedTools: workspace beats user-wide, user-wide beats empty", () => {
 	expect(mergeMainBlockedTools({ subagentTypes: { mainBlockedTools: ["safe_bash"] } }, { subagentTypes: { mainBlockedTools: ["web_search"] } })).toEqual(["safe_bash"]);
 	expect(mergeMainBlockedTools(null, { subagentTypes: { mainBlockedTools: ["web_search"] } })).toEqual(["web_search"]);
 	expect(mergeMainBlockedTools({ subagentTypes: {} }, { subagentTypes: { mainBlockedTools: ["web_search"] } })).toEqual(["web_search"]); // ws with empty key → fallback
@@ -248,7 +248,7 @@ test("mergeMainBlockedTools filters junk entries, survives wrong types", () => {
 });
 
 // ── Kick NACK (2026-09-04): a failed kick must notify main, never die silently ──
-// Tang vật thật: researcher 3bd7e7ab settle 09-02, kick NAS 09-03 nằm queue
+// Real evidence: researcher 3bd7e7ab settled 09-02, the NAS kick from 09-03 sat in its queue
 // forever, the task never runs, main is never told (the "zippo" case).
 
 test("flushKicks send-failure: re-queue + one-shot NACK into the MAIN queue", async () => {
@@ -293,7 +293,7 @@ test("flushKicks succeeds after a NACK: flag cleared, next failure NACKs again",
 		status: async () => ({ ok: true, status: "idle" }),
 	});
 	expect(out[0]?.kicked).toBe(true);
-	// fail mới → NACK mới
+	// new failure → new NACK
 	markKick("kid-dead", false);
 	pushToQueue("kid-dead", { id: "m5", from: "main", fromRole: "main", text: "again", ts: "t" }, kickBase);
 	await flushKicks(fakeEp, {

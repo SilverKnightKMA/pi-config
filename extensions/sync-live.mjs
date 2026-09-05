@@ -2,20 +2,22 @@
 /**
  * sync-live.mjs — idempotent dev → live sync (extensions + skills).
  *
- * Sinh ra sau sự cố 2026-09-04: lệnh cũ `cp extensions/<tên>/{*.ts,tests} …`
- * (a) copy *.test.ts ra cấp 1 live → pi loader nạp như extension → chết
- *     (`bun:test` not found), (b) cp vào dst tồn tại → lồng `x/x/`,
- * (c) không xóa file phẳng v1 khi đưa layout v2 vào → registerTool conflict.
+ * Born from the 2026-09-04 incident: the old `cp extensions/<name>/{*.ts,tests} …`
+ * (a) copied *.test.ts to the live top level → pi loader picked it up as an
+ *     extension → crash (`bun:test` not found), (b) cp into an existing dst
+ *     nested `x/x/`, (c) flat v1 files were not removed when the v2 layout
+ *     landed → registerTool conflict.
  *
- * Quy tắc: mỗi ext là MỘT rsync --delete dir-sang-dir (không lồng, không sót),
- * loại *.test.ts / node_modules / .tmp* khỏi cấp 1. Chạy `bun test` trước,
- * chạy `pi -p` sau — xem extensions/README.md.
+ * Rule: each ext is ONE rsync --delete dir-to-dir (no nesting, no leftovers),
+ * with *.test.ts / node_modules / .tmp* excluded from the top level. Run
+ * `bun test` first, then `pi -p` — see extensions/README.md.
  *
- * Vai trò từ v1.4.0: HOT-LANE giữa 2 tag thôi. Luồng giao chính là managed
- * pack (tag → auto-PR bump pin repo docker → managed-tools:update). Extensions
- * và skills giờ đã nằm trong pack, bản này sync TẤT CẢ entry managed, riêng
- * visual-tools/web-fetch sync code nhưng GIỮ node_modules live (npm install
- * một lần; rsync --delete --exclude=node_modules không đụng tới).
+ * Role since v1.4.0: HOT-LANE between two tags only. The main delivery flow
+ * is the managed pack (tag → auto-PR bumping the pin in the docker repo →
+ * managed-tools:update). Extensions and skills now ship in the pack; this
+ * script syncs EVERY managed entry, while visual-tools/web-fetch sync code
+ * but KEEP live node_modules (installed once; rsync --delete
+ * --exclude=node_modules leaves them alone).
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
@@ -27,8 +29,8 @@ const liveRoot = path.join(homedir(), ".pi/agent/extensions");
 const devSkills = path.join(devRoot, "..", "skills");
 const liveSkills = path.join(homedir(), ".pi/agent/skills");
 
-// Mọi extension dir trong pack v1.4.0+ (md-log là dir, visual-tools/web-fetch
-// node_modules được exclude nên an toàn cho rsync --delete).
+// Every extension dir in the v1.4.0+ pack (md-log is a dir; visual-tools/web-fetch
+// node_modules are excluded, so rsync --delete is safe for them).
 const PACKED = [
 	"ask-user-question",
 	"md-log",
@@ -69,4 +71,4 @@ if (wantSkills) {
 		rsync(path.join(devSkills, name), path.join(liveSkills, name));
 	}
 }
-console.log("[sync] done — chạy bun test (dev) và pi -p \"reply OK\" (loader) để xác minh.");
+console.log('[sync] done — run bun test (dev) and pi -p "reply OK" (loader) to verify.');
