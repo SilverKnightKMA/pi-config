@@ -31,7 +31,10 @@ const RING_LIMIT = 24;
 export function omStatusPath(runtime: Runtime): string | null {
 	if (!runtime.memoryRoot) return null;
 	// memoryRoot = <cwd>/.memory/<sessionId> -> status lives at <cwd>/.memory/om-status.json
-	return join(dirname(dirname(runtime.memoryRoot)), "om-status.json");
+	// one dirname only: memoryRoot is <cwd>/.memory/<sessionId>, the status file
+	// is workspace-level -> <cwd>/.memory/om-status.json (what the om-status
+	// Paseo plugin reads). Two dirnames would drop it in the workspace root.
+	return join(dirname(runtime.memoryRoot), "om-status.json");
 }
 
 async function readRing(path: string): Promise<OmStatusEvent[]> {

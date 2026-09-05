@@ -41,6 +41,7 @@ describe("om timeline sink v2 — file, not messages", () => {
 		await new Promise((r) => setTimeout(r, 80)); // coalesce tick + async write
 		expect(sent).toBe(0);
 		const statusPath = omStatusPath(rt)!;
+		expect(statusPath.endsWith(join(".memory", "om-status.json"))).toBe(true);
 		expect(existsSync(statusPath)).toBe(true);
 		const file = JSON.parse(readFileSync(statusPath, "utf8")) as OmStatusFile;
 		expect(file.schema).toBe(1);
