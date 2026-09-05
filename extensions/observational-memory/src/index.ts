@@ -24,6 +24,7 @@ import { registerObserverTrigger } from "./hooks/observer-trigger.js";
 import { OM_ENABLED, type Entry } from "./ledger/index.js";
 import { ensureSessionMemory } from "./memory/session.js";
 import { Runtime } from "./runtime.js";
+import { writeOmStatusSnapshot, type PiSnapshotSource } from "./ui/status-file.js";
 
 function readGateFromLedger(branch: Entry[]): boolean {
 	// pipeline stays opt-in: only an explicit `on` entry enables it
@@ -44,6 +45,10 @@ function readGateEx(branch: Entry[]): boolean | undefined {
 export default function observationalMemory(pi: ExtensionAPI): void {
 	const runtime = new Runtime();
 	runtime.wireTimeline(pi);
+	// v2.1: status file snapshot on demand — real session-scoped cost (ledger
+	// getEntries) + live context tokens. Type-erased: PiSnapshotSource is the
+	// structural subset we read.
+	const piSnap = pi as unknown as PiSnapshotSource;
 
 
 	function attachIfEnabled(ctx: any): void {
@@ -71,6 +76,9 @@ export default function observationalMemory(pi: ExtensionAPI): void {
 		attachIfEnabled(ctx);
 		runtime.refreshFooterGauges(branch, ctx.getContextUsage?.()?.tokens ?? null);
 		runtime.refreshCost(ctx.sessionManager.getEntries() as Entry[]);
+		// v2.1: seed the panel immediately on respawn — no waiting for the first
+		// turn_end. Cost comes from the full ledger, so it shows session totals.
+		void writeOmStatusSnapshot(runtime, piSnap);
 	});
 
 	pi.on("session_shutdown", () => {
@@ -117,8 +125,11 @@ export default function observationalMemory(pi: ExtensionAPI): void {
 	registerStatusTool(pi, runtime);
 	// 2026-09-01: per-turn context gauge refresh (footer used to go stale between
 	// observer/consolidator events while context grows every turn).
+	// 2026-09-05: the status file refreshes on the same cadence so the Paseo
+	// panel is current after EVERY chat turn, not only when OM runs fire.
 	pi.on("turn_end", (_event: unknown, ctx: any) => {
 		runtime.status.updateContext(ctx?.getContextUsage?.()?.tokens ?? null);
+		void writeOmStatusSnapshot(runtime, piSnap);
 	});
 
 // 2026-09-01: .memory write-guard + context policy line (see guard/memory-guard.ts)

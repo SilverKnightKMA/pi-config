@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeTimelineSink } from "./timeline-message.ts";
-import { appendOmStatusEvent, omStatusPath, type OmStatusFile } from "./status-file.ts";
+import { appendOmStatusEvent, omStatusPath, writeOmStatusSnapshot, type OmStatusFile, type PiSnapshotSource } from "./status-file.ts";
 import type { Runtime } from "../runtime.ts";
 
 /**
@@ -58,6 +58,43 @@ describe("om timeline sink v2 — file, not messages", () => {
 		expect(file.events).toHaveLength(24);
 		expect(file.events[0]?.text).toBe("event 6");
 		expect(file.events.at(-1)?.text).toBe("event 29");
+	});
+
+	test("v2.1: cost theo session (getEntries) + context thật — không còn $0.0000 / context ?", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "omv2ctx-"));
+		const rt = stubRuntime(dir);
+		// branch rỗng (vừa respawn/compact) nhưng ledger đầy: cost entry $1.5 + $2.5, 2 runs
+		const costEntry = (usd: number) => ({
+			type: "custom",
+			customType: "om.cost",
+			data: { costUsd: usd, role: "observer" },
+		});
+		const pi: PiSnapshotSource = {
+			sessionManager: { getBranch: () => [], getEntries: () => [costEntry(1.5), costEntry(2.5)] },
+			getContextUsage: () => ({ tokens: 123456 }),
+		};
+		await appendOmStatusEvent(rt, "om: observer done", pi);
+		const file = JSON.parse(readFileSync(omStatusPath(rt)!, "utf8")) as OmStatusFile;
+		const ctxLine = file.lines.find((l) => l.trim().startsWith("context:"))!;
+		expect(ctxLine).toContain("123,456");
+		expect(ctxLine).not.toContain("?");
+		const sessionLine = file.lines.find((l) => l.trim().startsWith("session:"))!;
+		expect(sessionLine).toContain("4.0000");
+		expect(sessionLine).toContain("(2 runs)");
+	});
+
+	test("v2.1: writeOmStatusSnapshot refresh giữa các event — ring không đổi, lines mới", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "omv2snap-"));
+		const rt = stubRuntime(dir);
+		await appendOmStatusEvent(rt, "event-a");
+		const before = JSON.parse(readFileSync(omStatusPath(rt)!, "utf8")) as OmStatusFile;
+		await new Promise((r) => setTimeout(r, 30));
+		const pi: PiSnapshotSource = { getContextUsage: () => ({ tokens: 42000 }) };
+		await writeOmStatusSnapshot(rt, pi);
+		const after = JSON.parse(readFileSync(omStatusPath(rt)!, "utf8")) as OmStatusFile;
+		expect(after.events).toHaveLength(before.events.length); // không append event
+		expect(after.generatedAt).not.toBe(before.generatedAt); // nhưng snapshot mới
+		expect(after.lines.some((l) => l.includes("42,000"))).toBe(true);
 	});
 
 	test("escape hatch: OM_TIMELINE_EMISSION=message giữ kênh cũ", async () => {

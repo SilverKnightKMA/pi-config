@@ -11,14 +11,20 @@ import { renderTimeline } from "../ui/timeline.js";
  * front (the one line most reads need), ratios instead of bare numbers, and
  * per-role cost attribution so spend can be traced to observer vs consolidator.
  */
-export function buildStatusLines(runtime: Runtime, branch: Entry[], contextTokens: number | null): string[] {
+export function buildStatusLines(
+	runtime: Runtime,
+	branch: Entry[],
+	contextTokens: number | null,
+	/** Full-session entries (every branch) for the cost block. Defaults to `branch`. Cost/runs are session-scoped: a freshly-respawned or compacted branch holds none of them, `getEntries()` keeps the true totals. */
+	allEntries: Entry[] = branch,
+): string[] {
 	const cfg = runtime.config;
 	const folded = foldLedger(branch);
 	const pool = poolTokens(folded.activeObservations);
 	const since = rawTokensSinceObservationCoverage(branch);
 	const topics = listTopics(runtime.memoryRoot);
 	const journey = readJourney(runtime.memoryRoot);
-	const cost = sumSessionCostByRole(branch);
+	const cost = sumSessionCostByRole(allEntries);
 
 	const running = runtime.observersInFlight.size;
 	const pct = (v: number, max: number) => `${Math.round((v / max) * 100)}%`;
@@ -77,7 +83,12 @@ export function registerStatusCommand(pi: ExtensionAPI, runtime: Runtime): void 
 			runtime.ensureConfig(ctx.cwd);
 			const branch = ctx.sessionManager.getBranch() as Entry[];
 			const lines = [
-				...buildStatusLines(runtime, branch, ctx.getContextUsage?.()?.tokens ?? null),
+				...buildStatusLines(
+				runtime,
+				branch,
+					ctx.getContextUsage?.()?.tokens ?? null,
+					(ctx.sessionManager.getEntries?.() as Entry[] | undefined) ?? branch,
+				),
 				"",
 				renderTimeline(branch, runtime.config),
 			];

@@ -41,7 +41,7 @@ function renderWorkerLine(line: WorkerLine): string {
 
 /** The coalescing timeline sink returned by {@link makeTimelineSink}. */
 import type { Runtime } from "../runtime.js";
-import { appendOmStatusEvent } from "./status-file.js";
+import { appendOmStatusEvent, type PiSnapshotSource } from "./status-file.js";
 
 export interface TimelineSink {
 	notify: (message: string, level?: "info" | "warning" | "error") => void;
@@ -67,7 +67,9 @@ export function makeTimelineSink(pi: SendMessageTarget, opts: { coalesce?: boole
 		if (runtime && !legacyMessages) {
 			// v2: display channel = status file (panel polls), model stays blind.
 			// No blockquote wrap here — the panel renders structure itself.
-			void appendOmStatusEvent(runtime, lines.join("\n"));
+			// pi carries the session ledger: cost lines stay session-scoped
+			// (true totals across compaction forks and respawns).
+			void appendOmStatusEvent(runtime, lines.join("\n"), pi as unknown as PiSnapshotSource | undefined);
 			return;
 		}
 		// legacy: markdown blockquote as an in-chat custom message

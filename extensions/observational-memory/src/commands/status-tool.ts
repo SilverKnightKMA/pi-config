@@ -33,7 +33,12 @@ export function registerStatusTool(pi: ExtensionAPI, runtime: Runtime): void {
 			const branch = manager ? manager.getBranch() : [];
 			const contextTokens = (ctx as { getContextUsage?: () => { tokens: number } | undefined } | undefined)?.getContextUsage?.()?.tokens ?? null;
 			const lines = [
-				...buildStatusLines(runtime, branch, contextTokens),
+				...buildStatusLines(
+					runtime,
+					branch,
+					contextTokens,
+					(manager as { getEntries?: () => Entry[] } | undefined)?.getEntries?.() ?? branch,
+				),
 				"",
 				renderTimeline(branch, runtime.config),
 			];
