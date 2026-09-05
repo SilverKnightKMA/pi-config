@@ -1,5 +1,5 @@
 /**
- * Zombie-turn watchdog — DETECT-ONLY (2026-09-01).
+ * Zombie-turn watchdog — DETECT + AUTO-STOP (2026-09-05).
  *
  * Why: Paseo daemon loses turn-completion wakes (getpaseo/paseo#3845 / #3847; fix PRs
  * #3848/#3849 still open, v0.7.1 does not contain them). The request dies silently:
@@ -8,26 +8,29 @@
  * twice on 2026-09-01 (chat workspace: agent 49cb6161 died after its final thinking
  * 15:56; main session died the same way at 23:03 under freshly-restarted code).
  *
- * What this does in "detect" mode (default): watch in-process activity (message
- * streaming, tool executions, prompt events). A turn idle ≥ stallMs with no tool in
- * flight is a suspected zombie → toast + footer status + one JSONL detection entry
- * (evidence base for a future auto mode). Recovery stays MANUAL and safe:
- * STOP, then type "tiếp tục" — everything already persisted survives.
+ * AUTO-STOP (user directive 2026-09-05): on a zombie-class detection the watchdog now
+ * presses STOP itself — daemon MCP `cancel_agent {agentId}` — instead of only asking
+ * the user to. Scope: `zombie`, `zombie-repeat`, `b2-settle-lost` (codes where the
+ * advised manual action was already "press STOP"). `tool-stall` NEVER auto-stops
+ * (long-run tools are legitimate). Cancel is rate-limited to one attempt / 30s and
+ * its outcome lands in the JSONL (auto-stop:ok / auto-stop:err). Recovery typing
+ * "tiếp tục" stays manual. Set ZW_AUTO_STOP=0 to fall back to detect-only.
  *
- * What it deliberately does NOT do: abort or kick the turn itself. A kick while the
- * daemon thinks the turn is running walks straight into the upstream bug family.
- * When #3848/#3849 merge (or our detection log shows a stable signature), flip
- * PI_ZW_MODE=auto and implement recover() below.
+ * What this deliberately still does NOT do: kick a continuation message into the
+ * turn (recover() below stays disabled — a kick while the daemon thinks the turn is
+ * running walks straight into the upstream bug family).
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { TurnWatchdog, SettleWatch, type WatchdogSignal } from "./watchdog-core.js";
-import { findMcpEndpoint, getAgentStatus, isBusy } from "./daemon.js";
+import { findMcpEndpoint, getAgentStatus, isBusy, cancelAgent } from "./daemon.js";
 
 const LOG_PATH = join(homedir(), ".pi", "agent", "zombie-watchdog.jsonl");
 const MODE = (process.env.PI_ZW_MODE ?? "detect") as "detect" | "auto";
+const AUTO_STOP = process.env.ZW_AUTO_STOP !== "0";
+const AUTO_STOP_RETRY_MS = 30_000;
 const CHECK_INTERVAL_MS = 10_000;
 
 export interface Detection {
@@ -36,6 +39,8 @@ export interface Detection {
 	code: string;
 	idleMs: number;
 	agentId?: string;
+	/** auto-stop:err carries the failure reason (daemon answer / transport). */
+	detail?: string;
 }
 
 export function fmtDur(ms: number): string {
@@ -74,6 +79,7 @@ export function wire(pi: ExtensionAPI, opts: WireOptions = {}): () => WatchdogSi
 	let timer: ReturnType<typeof setInterval> | undefined;
 	let settleTimers: ReturnType<typeof setTimeout>[] = [];
 	let lastProbe: { at: number; status: string | undefined; busy: boolean } | null = null;
+	let lastStopAttemptAt = -Infinity;
 
 	function clearSettleTimers(): void {
 		for (const t of settleTimers) clearTimeout(t);
@@ -95,10 +101,40 @@ export function wire(pi: ExtensionAPI, opts: WireOptions = {}): () => WatchdogSi
 		const code = sw.onPoll(Date.now(), busy);
 		if (!code) return;
 		appendDetection({ ts: new Date().toISOString(), sessionFile, code, idleMs: Date.now() - endedAt, agentId: selfAgentId });
-		emitTimeline(`zw ⚠ B2: turn đã xong trong process ${fmtDur(Date.now() - endedAt)} trước nhưng daemon vẫn thấy "running" (settle wake rơi, #3845). Bấm STOP cho sạch`);
+		void autoStop(code, Date.now() - endedAt);
+		emitTimeline(`zw ⚠ B2: turn đã xong trong process ${fmtDur(Date.now() - endedAt)} trước nhưng daemon vẫn thấy "running" (settle wake rơi, #3845). ${AUTO_STOP ? "Đã tự gửi lệnh STOP" : "Bấm STOP cho sạch"}`);
 		if (ui) {
-			ui.notify(`zw ⚠ B2: turn đã xong trong process nhưng daemon vẫn thấy "running" (settle wake bị rơi, #3845). Bấm STOP cho sạch`, "warning");
-			ui.setStatus("zw", `⚠ zombie daemon-side — bấm STOP`);
+			ui.notify(`zw ⚠ B2: turn đã xong trong process nhưng daemon vẫn thấy "running" (settle wake bị rơi, #3845). ${AUTO_STOP ? "Đã tự gửi lệnh STOP — nếu spinner vẫn đứng thì bấm tay" : "Bấm STOP cho sạch"}`, "warning");
+			ui.setStatus("zw", AUTO_STOP ? `⚠ zombie daemon-side — đã tự STOP` : `⚠ zombie daemon-side — bấm STOP`);
+		}
+	}
+
+	async function autoStop(reason: string, idleMs: number): Promise<void> {
+		// Press the STOP button ourselves: daemon cancel_agent clears the phantom
+		// running state (B2) or aborts the silently-dead run (in-turn zombie).
+		if (!AUTO_STOP) return;
+		if (!selfAgentId || !endpoint) return; // not a Paseo-spawned session — nothing to stop
+		if (now() - lastStopAttemptAt < AUTO_STOP_RETRY_MS) return; // rate limit
+		lastStopAttemptAt = now();
+		let ok = false;
+		let err: string | undefined;
+		try {
+			const r = await cancelAgent(endpoint, selfAgentId, opts.fetchImpl ?? fetch);
+			ok = r.ok;
+			err = r.error;
+		} catch (e) {
+			err = e instanceof Error ? e.message : String(e);
+		}
+		appendDetection({
+			ts: new Date().toISOString(),
+			sessionFile,
+			code: ok ? `auto-stop:ok:${reason}` : "auto-stop:err",
+			idleMs,
+			agentId: selfAgentId,
+			detail: ok ? undefined : (err ?? "unknown"),
+		});
+		if (ui) {
+			ui.setStatus("zw", ok ? `zw: đã tự STOP (${reason}) — gõ "tiếp tục" để roll` : `zw: tự STOP thất bại (${reason})${err ? ` — ${err}` : ""}`);
 		}
 	}
 
@@ -147,7 +183,10 @@ export function wire(pi: ExtensionAPI, opts: WireOptions = {}): () => WatchdogSi
 		const sig = wd.tick(now());
 		if (!sig) return null;
 		logDetection(sig);
-		if (sig.code !== "tool-stall" && MODE === "auto") recover(sig);
+		if (sig.code !== "tool-stall") {
+			if (MODE === "auto") recover(sig);
+			void autoStop(sig.code, sig.idleMs);
+		}
 		emitTimeline(
 			sig.code === "tool-stall"
 				? `zw: tool chạy ${fmtDur(sig.idleMs)} chưa xong (có thể bình thường)`

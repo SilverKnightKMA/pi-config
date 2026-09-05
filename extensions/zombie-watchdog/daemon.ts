@@ -129,6 +129,19 @@ export function isBusy(status: string | undefined): boolean {
 	return status === "running" || status === "initializing";
 }
 
+/**
+ * Press the STOP button for an agent: daemon `cancel_agent` aborts the current
+ * run (if any) and returns the session to idle, keeping the chat/history.
+ * Used by the watchdog's AUTO-STOP path (2026-09-05) for zombie-class codes.
+ */
+export async function cancelAgent(
+	endpoint: McpEndpoint,
+	agentId: string,
+	fetchImpl: typeof fetch = fetch,
+): Promise<{ ok: boolean; error?: string }> {
+	return mcpCall(endpoint, "cancel_agent", { agentId }, 15_000, fetchImpl);
+}
+
 function statTime(p: string): number {
 	try {
 		return statSync(p).mtimeMs;

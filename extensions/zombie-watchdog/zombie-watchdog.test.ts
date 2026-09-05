@@ -147,6 +147,107 @@ describe("zombie-watchdog wiring", () => {
 	});
 });
 
+describe("auto-stop (user directive 2026-09-05: zombie-class detections press STOP themselves)", () => {
+	function makeHarness() {
+		const dir = mkdtempSync(join(tmpdir(), "zw-autostop-"));
+		const logPath = join(dir, "log.jsonl");
+		const calls: Array<{ tool: string; args: any }> = [];
+		const fakeFetch = (async (_url: any, init: any) => {
+			const body = JSON.parse(init.body);
+			calls.push({ tool: body.params.name, args: body.params.arguments });
+			const sse = `data: {"result":{"content":[{"type":"text","text":"{\\"ok\\":true}"}]}}\n\n`;
+			return new Response(sse, { status: 200 });
+		}) as unknown as typeof fetch;
+		let fakeNow = 1_000_000;
+		const handlers = new Map<string, (e?: unknown, ctx?: unknown) => void>();
+		const ui = {
+			statuses: new Map<string, string | undefined>(),
+			notify() {},
+			setStatus(key: string, text: string | undefined) {
+				this.statuses.set(key, text);
+			},
+		};
+		const pi = {
+			on(ev: string, h: any) {
+				handlers.set(ev, h as never);
+			},
+			registerCommand() {},
+			sendMessage() {},
+		} as never;
+		const endpoint = { url: "http://daemon", token: "t" };
+		const tick = wire(pi, {
+			now: () => fakeNow,
+			logPath,
+			selfAgentId: "agent-self",
+			endpoint,
+			fetchImpl: fakeFetch as typeof fetch,
+		});
+		return { dir, logPath, calls, handlers, ui, tick, advance: (ms: number) => (fakeNow += ms) };
+	}
+
+	it("in-turn zombie fires cancel_agent for SELF once (rate-limited)", async () => {
+		const h = makeHarness();
+		try {
+			h.handlers.get("session_start")!(undefined, { hasUI: true, ui: h.ui, sessionFile: "/tmp/s.jsonl" });
+			h.handlers.get("turn_start")!();
+			h.handlers.get("message_start")!();
+			h.advance(130_000);
+			const sig = h.tick();
+			expect(sig?.code).toBe("zombie");
+			await new Promise((r) => setTimeout(r, 5));
+			expect(h.calls.filter((c) => c.tool === "cancel_agent").length).toBe(1);
+			expect(h.calls[0].args).toEqual({ agentId: "agent-self" });
+			const list = readDetections(h.logPath);
+			expect(list.some((d) => d.code === "auto-stop:ok:zombie")).toBe(true);
+			expect(h.ui.statuses.get("zw")).toContain("đã tự STOP");
+		} finally {
+			h.handlers.get("session_shutdown")?.();
+			rmSync(h.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("tool-stall NEVER auto-stops (long-run tools are legitimate)", async () => {
+		const h = makeHarness();
+		try {
+			h.handlers.get("session_start")!(undefined, { hasUI: true, ui: h.ui });
+			h.handlers.get("turn_start")!();
+			h.handlers.get("tool_execution_start")!();
+			h.advance(601_000);
+			expect(h.tick()?.code).toBe("tool-stall");
+			await new Promise((r) => setTimeout(r, 5));
+			expect(h.calls.filter((c) => c.tool === "cancel_agent").length).toBe(0);
+		} finally {
+			h.handlers.get("session_shutdown")?.();
+			rmSync(h.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("no endpoint/selfAgentId (plain pi run) → detection only, no cancel", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "zw-nostop-"));
+		const logPath = join(dir, "log.jsonl");
+		let fakeNow = 1_000_000;
+		const handlers = new Map<string, (e?: unknown, ctx?: unknown) => void>();
+		const pi = { on(ev: string, hh: any) { handlers.set(ev, hh); }, registerCommand() {}, sendMessage() {} } as never;
+		const tick = wire(pi, { now: () => fakeNow, logPath, selfAgentId: null, endpoint: undefined });
+		try {
+			handlers.get("session_start")!(undefined, { hasUI: true, ui: h0ui() });
+			handlers.get("turn_start")!();
+			handlers.get("message_start")!();
+			fakeNow += 130_000;
+			expect(tick()?.code).toBe("zombie");
+			await new Promise((r) => setTimeout(r, 5));
+			// zombie detection logged, no crash, no daemon call attempted
+			expect(readDetections(logPath)[0].code).toBe("zombie");
+		} finally {
+			handlers.get("session_shutdown")?.();
+			rmSync(dir, { recursive: true, force: true });
+		}
+		function h0ui() {
+			return { notify() {}, setStatus() {} };
+		}
+	});
+});
+
 describe("SettleWatch (B2 daemon-side settle-loss)", () => {
 	it("busy on both checks after turn_end → b2-settle-lost, once", () => {
 		const sw = new SettleWatch({ firstCheckMs: 20_000, secondCheckMs: 45_000 });
