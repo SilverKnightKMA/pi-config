@@ -71,3 +71,19 @@ describe("isAutoReport", () => {
 		expect(isAutoReport(msg("c", "auto-report without brackets"))).toBe(false);
 	});
 });
+
+describe("allowlistFor — wrapper travels with spawn_subagent", () => {
+	test("worker (has spawn_subagent) also gets spawn_paseo_subagent", async () => {
+		const { allowlistFor, loadRoles } = await import("../index.ts");
+		const roles = loadRoles ? loadRoles() : new Map();
+		const allowed = allowlistFor("worker", roles as Map<never, never>);
+		expect(allowed.includes("spawn_subagent")).toBe(true);
+		expect(allowed.includes("spawn_paseo_subagent")).toBe(true);
+	});
+	test("roles without spawn permission never gain either spawn tool", async () => {
+		const { allowlistFor } = await import("../index.ts");
+		const allowed = allowlistFor("scout", new Map());
+		expect(allowed.includes("spawn_paseo_subagent")).toBe(false);
+		expect(allowed.includes("spawn_subagent")).toBe(false);
+	});
+});

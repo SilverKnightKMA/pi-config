@@ -162,7 +162,12 @@ export function allowlistFor(role: string | undefined, roles: Map<string, RoleDe
 	// Channel tools are always available to defined roles (a subagent that
 	// cannot ask its main, or a main that cannot steer its children, defeats
 	// the point of the channel).
-	return [...new Set([...def.tools.map(mapToolName), "message_main", "message_subagent", "ask_question"])];
+	const out = [...new Set([...def.tools.map(mapToolName), "message_main", "message_subagent", "ask_question"])];
+	// The blocking wrapper travels with spawn_subagent (same internal role
+	// gate re-checks spawnableRoles per call, so appending it here grants no
+	// extra spawn power — only the call style).
+	if (out.includes("spawn_subagent")) out.push("spawn_paseo_subagent");
+	return out;
 }
 
 /**
