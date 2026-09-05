@@ -242,6 +242,54 @@ export async function getAgentStatus(endpoint: McpEndpoint, agentId: string): Pr
 	return { ok: true, status: sc.status ?? sc.snapshot?.lastStatus };
 }
 
+// ---------------------------------------------------------------------------
+// Blocking wrapper support (spawn_paseo_subagent, 2026-09-05 user-approved)
+// ---------------------------------------------------------------------------
+
+/** The auto-ping backstop fires when a child settles without message_main;
+ *  such messages say "finished, pull the activity yourself" — not a payload. */
+export function isAutoReport(msg: ChannelMessage): boolean {
+	return msg.text.trimStart().startsWith("[auto-report]");
+}
+
+/** Atomically take ONLY the messages from `sourceAgentId` out of `targetAgentId`'s
+ *  queue; everything else is pushed back so the normal turn-end drain still
+ *  delivers it. Messages pushed between the drain and the re-push survive (they
+ *  append to the fresh queue file). */
+export function takeMessagesFrom(sourceAgentId: string, targetAgentId: string, base?: string): ChannelMessage[] {
+	const all = drainQueue(targetAgentId, base);
+	if (all.length === 0) return [];
+	const mine = all.filter((m) => m.from === sourceAgentId);
+	const rest = all.filter((m) => m.from !== sourceAgentId);
+	if (rest.length > 0) {
+		for (const m of rest) pushToQueue(targetAgentId, m, base);
+	}
+	return mine;
+}
+
+/** Curated activity digest via the daemon MCP — used as the report fallback
+ *  when the child finished without sending a real message_main payload. */
+export async function getActivitySummary(endpoint: McpEndpoint, agentId: string, limit = 30): Promise<string> {
+	const r = await mcpCall(endpoint, "get_agent_activity", { agentId, limit });
+	if (!r.ok) return `(activity unavailable: ${r.error})`;
+	const d = r.data as unknown;
+	if (d && typeof d === "object" && !Array.isArray(d) && typeof (d as { content?: unknown }).content === "string") {
+		return String((d as { content: string }).content).slice(0, 8000);
+	}
+	if (Array.isArray(d)) {
+		const joined = d
+			.map((x) =>
+				x && typeof x === "object" && typeof (x as { text?: unknown }).text === "string"
+				? (x as { text: string }).text
+				: "",
+			)
+			.join("\n")
+			.trim();
+		return joined.slice(0, 8000) || "(empty activity)";
+	}
+	return JSON.stringify(d).slice(0, 2000);
+}
+
 export function isBusy(status: string | undefined): boolean {
 	return status === "running" || status === "initializing";
 }

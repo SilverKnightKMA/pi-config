@@ -41,21 +41,25 @@ import {
 	createAgent,
 	findMcpEndpoint,
 	flushKicks,
-	markKick,
-	pendingKickIds,
+	getActivitySummary,
 	getAgentStatus,
+	isAutoReport,
 	isBusy,
 	listAgents,
+	markKick,
+	pendingKickIds,
 	pushToQueue,
 	runningChildrenOf,
 	sendToMain,
 	drainQueue,
 	renderForPrompt,
+	takeMessagesFrom,
 	waitForReply,
 	registerSubagent,
 	resolveSubagentName,
 	sweepOrphanedSubagents,
 	type ChannelMessage,
+	type McpEndpoint,
 } from "./paseo-channel.ts";
 
 const extensionDir = dirname(fileURLToPath(import.meta.url));
@@ -558,7 +562,8 @@ async function kickOutbound(): Promise<void> {
 		if (allowed.includes("*")) return;
 		const toolName =
 			"toolName" in event && typeof event.toolName === "string" ? event.toolName : undefined;
-		if (toolName && !allowed.includes(toolName) && toolName !== "spawn_subagent") {
+		const SPAWN_TOOLS = ["spawn_subagent", "spawn_paseo_subagent"];
+		if (toolName && !allowed.includes(toolName) && !SPAWN_TOOLS.includes(toolName)) {
 			if (myRole && roles.get(myRole)?.tools.some((t) => mapToolName(t) === toolName)) return;
 			if (!myRole && floorTools().includes(toolName)) return;
 			if (myRole && !roles.get(myRole)) {
@@ -576,7 +581,132 @@ async function kickOutbound(): Promise<void> {
 		return;
 	});
 
+// Shared spawn resolution (spawn_subagent + spawn_paseo_subagent) — single
+// source of truth for model/thinking rules so the blocking variant can never
+// drift from the fire-and-forget one.
+type SpawnConfig =
+	| { kind: "ready"; modelId: string; thinking: string }
+	| { kind: "guided"; text: string }
+	| { kind: "error"; text: string };
+
+function resolveSpawnConfig(
+	params: { role: string; model?: string; thinking?: string },
+	def: RoleDef,
+	ctx: { scopedModels?: readonly { model: { provider: string; id: string; name?: string } }[] },
+): SpawnConfig {
+	const scoped = (ctx.scopedModels ?? []).map((s) => `${s.model.provider}/${s.model.id}`);
+	const names = new Map<string, string>();
+	for (const s of ctx.scopedModels ?? []) {
+		names.set(`${s.model.provider}/${s.model.id}`, s.model.name ?? "");
+	}
+
+	let modelId: string | undefined;
+	if (def.model) {
+		const resolved = resolveModel(def.model, scoped);
+		if (!resolved) {
+			return { kind: "error", text: `Role "${params.role}" pins model "${def.model}" which is not available on this machine (no fallback matched). Refusing to spawn — fix the model: line in agents/${params.role}.md or make the model available.` };
+		}
+		modelId = resolved;
+	} else if (params.model) {
+		if (!scoped.includes(params.model)) {
+			return { kind: "error", text: `Model "${params.model}" is not in the available models list: ${scoped.join(", ")}. Call paseo_list_models to see ids.` };
+		}
+		modelId = params.model;
+	}
+	if (!modelId) {
+		return {
+			kind: "guided",
+			text: [
+				`Role "${params.role}" has no pinned model or thinking. Pick both, then call spawn_subagent AGAIN with the same role/task plus model and thinking parameters — the extension creates the child for you.`,
+				"",
+				`Available models (tags: [T]=reasoning, [V]=vision, [XL]/[L]=large output):`,
+				...scoped.map((id) => `- ${id}${names.get(id) ? `  ${names.get(id)}` : ""}`),
+				"",
+				MODEL_GUIDANCE,
+			].join("\n"),
+		};
+	}
+
+	const providerFamily = "pi";
+	let thinking: string | undefined;
+	if (!parseModelTags(names.get(modelId)).reasoning) {
+		thinking = "off"; // non-reasoning model: off is the only sane value
+	} else if (params.thinking) {
+		if (!thinkingValid(params.thinking, providerFamily)) {
+			return { kind: "error", text: `thinking "${params.thinking}" is not a valid ${providerFamily} level (${THINKING_BY_PROVIDER[providerFamily].join("|")}).` };
+		}
+		thinking = params.thinking;
+	} else if (def.thinking) {
+		if (!thinkingValid(def.thinking, providerFamily)) {
+			return { kind: "error", text: `Role "${params.role}" pins thinking "${def.thinking}" which is not a valid ${providerFamily} level (${THINKING_BY_PROVIDER[providerFamily].join("|")}). Fix agents/${params.role}.md.` };
+		}
+		thinking = def.thinking;
+	} else {
+		return { kind: "error", text: `Role "${params.role}" needs a thinking level. Re-call with the model parameter set, or fix the role's thinking: pin.` };
+	}
+	return { kind: "ready", modelId, thinking };
+}
+
+/** Create the child via the daemon MCP + register its name. Shared tail of
+ *  both spawn tools. The caller never assembles the create payload itself:
+ *  labels must come from this extension or the child's allowlist cannot be
+ *  trusted. */
+async function createChildAgent(
+	params: { role: string; task: string; name?: string },
+	def: RoleDef,
+	cfg: { modelId: string; thinking: string },
+	myAgentIdValue: string | null,
+	endpoint: McpEndpoint,
+): Promise<{ ok: true; agentId?: string; status?: string } | { ok: false; error: string }> {
+	const title = params.name ?? `${params.role}: ${params.task.slice(0, 40)}`;
+	const initialPrompt = `${def.systemPrompt}\n\n---\nTASK:\n${params.task}`;
+	const labels = { [ROLE_LABEL]: params.role, ...(myAgentIdValue ? { "subagent.parent": myAgentIdValue } : {}) };
+	const spawned = await createAgent(
+		{
+			provider: providerStringFor(cfg.modelId, "pi"),
+			title,
+			labels,
+			initialPrompt,
+			thinkingOptionId: cfg.thinking,
+		},
+		endpoint,
+	);
+	if (!spawned.ok) return { ok: false, error: spawned.error ?? "unknown error" };
+	if (params.name && spawned.agentId) {
+		// Name registry: re-address this child by name later
+		// (message_subagent name=..., resume after it finishes).
+		registerSubagent(params.name, {
+			agentId: spawned.agentId,
+			role: params.role,
+			title: params.name,
+			createdAt: new Date().toISOString(),
+		});
+	}
+	return { ok: true, agentId: spawned.agentId, status: spawned.status };
+}
+
 	// The sanctioned spawn path.
+	// ── Cap check shared by both spawn tools ─────────────────────────────
+	async function capRejection(endpoint: McpEndpoint): Promise<string | null> {
+		const cap = SUBAGENT_MAX_CONCURRENT;
+		if (cap <= 0) return null;
+		const running = runningChildrenOf(await listAgents(endpoint, { statuses: ["running"], limit: 200 }), myAgentId ?? "");
+		if (running.length < cap) return null;
+		return `Concurrency cap reached: ${running.length}/${cap} subagents of this parent are already running (${running.map((a) => a.id.slice(0, 8)).join(", ")}). Wait for one to finish (get_agent_activity) before spawning another. Raise SUBAGENT_MAX_CONCURRENT if this is genuinely parallel work.`;
+	}
+
+	function roleGate(params: { role: string }): { def: RoleDef; } | { text: string; spawnable: string[] } {
+		const spawnable = spawnableRoles(myRole, roles);
+		if (!spawnable.includes(params.role)) {
+			return { text: `Role "${params.role}" is not spawnable from role "${myRole ?? "(none)"}". Allowed: ${spawnable.join(", ") || "(none)"}`, spawnable };
+		}
+		const def = roles.get(params.role);
+		if (!def) return { text: `Unknown role "${params.role}"`, spawnable };
+		return { def };
+	}
+
+
+	// Fire-and-forget: returns the id; the report arrives via the channel.
 	pi.registerTool<typeof SpawnParams, SpawnDetails>({
 		name: "spawn_subagent",
 		label: "spawn_subagent",
@@ -591,178 +721,134 @@ async function kickOutbound(): Promise<void> {
 		],
 		parameters: SpawnParams,
 		async execute(_id, params, _signal, _onUpdate, ctx) {
-			const spawnable = spawnableRoles(myRole, roles);
-			if (!spawnable.includes(params.role)) {
-				return {
-					content: [{ type: "text" as const, text: `Role "${params.role}" is not spawnable from role "${myRole ?? "(none)"}". Allowed: ${spawnable.join(", ") || "(none)"}` }],
-					details: { spawnable },
-				};
+			const gate = roleGate(params);
+			if ("text" in gate) return { content: [{ type: "text" as const, text: gate.text }], details: { spawnable: gate.spawnable } };
+
+			const cfg = resolveSpawnConfig(params, gate.def, ctx);
+			if (cfg.kind !== "ready") return { content: [{ type: "text" as const, text: cfg.text }], details: { role: params.role } };
+
+			const endpoint = findMcpEndpoint(myAgentId);
+			if (!endpoint) {
+				return { content: [{ type: "text" as const, text: "Paseo MCP endpoint not found (is this session running under Paseo?). Cannot create the child here." }], details: { role: params.role } };
 			}
-			const def = roles.get(params.role);
-			if (!def) {
-				return { content: [{ type: "text" as const, text: `Unknown role "${params.role}"` }], details: {} };
+			const capped = await capRejection(endpoint);
+			if (capped) return { content: [{ type: "text" as const, text: capped }], details: { role: params.role } };
+
+			const spawned = await createChildAgent(params, gate.def, cfg, myAgentId, endpoint);
+			if (!spawned.ok) {
+				return { content: [{ type: "text" as const, text: `Spawn failed: ${spawned.error}` }], details: { role: params.role, model: cfg.modelId, thinking: cfg.thinking } };
+			}
+			return {
+				content: [
+					{
+						type: "text" as const,
+						text: `Spawned ${params.role} agent ${spawned.agentId} (status: ${spawned.status ?? "running"}). Its result arrives via notification; poll with paseo_get_agent_activity("${spawned.agentId}") when needed.`,
+				},
+				],
+				details: { role: params.role, model: cfg.modelId, thinking: cfg.thinking, agentId: spawned.agentId },
+			};
+		},
+	});
+
+	// Blocking variant (2026-09-05, user-approved): spawns the child, then WAITS
+	// for it to finish and returns the report inline in the tool result. The wait
+	// reads only the parent's OWN channel file (ping-not-payload: no activity
+	// scraping unless the child settled without a real message) and never touches
+	// messages from other children. Soft timeout returns control without killing.
+	const SUBAGENT_WAIT_MS = Number(process.env.SUBAGENT_WAIT_MS ?? 12 * 60_000);
+	const WAIT_POLL_MS = 2000;
+
+	function sleep(ms: number): Promise<void> {
+		return new Promise((r) => setTimeout(r, ms));
+	}
+
+	pi.registerTool<typeof SpawnParams, SpawnDetails>({
+		name: "spawn_paseo_subagent",
+		label: "spawn_paseo_subagent",
+		description:
+			"Blocking variant of spawn_subagent: spawn a role-typed child Paseo agent and WAIT until it finishes, returning its final report inline. Same roles, models and governance as spawn_subagent. Use it when your next step depends on the child's result; the parent turn stays busy while waiting.",
+		promptSnippet:
+			"Use spawn_paseo_subagent when you need the child's result to continue your own work — it blocks and returns the report inline.",
+		promptGuidelines: [
+			"Use spawn_paseo_subagent when the next step needs the child's output; for background work plain spawn_subagent is better.",
+			"task must be self-contained: the child sees no prior conversation.",
+			`Waits up to ${Math.round(SUBAGENT_WAIT_MS / 60000)} min (SUBAGENT_WAIT_MS); on timeout the child keeps running and the result still arrives via the normal channel.`,
+		],
+		parameters: SpawnParams,
+		async execute(_id, params, _signal, _onUpdate, ctx) {
+			const gate = roleGate(params);
+			if ("text" in gate) return { content: [{ type: "text" as const, text: gate.text }], details: { spawnable: gate.spawnable } };
+
+			const cfg = resolveSpawnConfig(params, gate.def, ctx);
+			if (cfg.kind !== "ready") return { content: [{ type: "text" as const, text: cfg.text }], details: { role: params.role } };
+
+			const endpoint = findMcpEndpoint(myAgentId);
+			if (!endpoint) {
+				return { content: [{ type: "text" as const, text: "Paseo MCP endpoint not found (is this session running under Paseo?). Cannot create the child here." }], details: { role: params.role } };
+			}
+			const capped = await capRejection(endpoint);
+			if (capped) return { content: [{ type: "text" as const, text: capped }], details: { role: params.role } };
+
+			const spawned = await createChildAgent(params, gate.def, cfg, myAgentId, endpoint);
+			if (!spawned.ok) {
+				return { content: [{ type: "text" as const, text: `Spawn failed: ${spawned.error}` }], details: { role: params.role, model: cfg.modelId, thinking: cfg.thinking } };
+			}
+			const childId = spawned.agentId;
+			if (!childId) {
+				return { content: [{ type: "text" as const, text: `Spawn returned no agent id (status: ${spawned.status ?? "?"}). Fall back to spawn_subagent + paseo_get_agent_activity.` }], details: { role: params.role } };
 			}
 
-			// ── Model resolution ────────────────────────────────────────────
-			// Pin in .md: strict. Override param is ignored. Unresolvable → refuse.
-			// No pin: optional override param, else the caller picks from the list.
-			const scoped = (ctx.scopedModels ?? []).map((s: { model: { provider: string; id: string } }) => `${s.model.provider}/${s.model.id}`);
-			const names = new Map<string, string>();
-			for (const s of ctx.scopedModels ?? []) {
-				names.set(`${s.model.provider}/${s.model.id}`, s.model.name ?? "");
-			}
-
-			let modelId: string | undefined;
-			let modelChosenBy = "";
-			if (def.model) {
-				const resolved = resolveModel(def.model, scoped);
-				if (!resolved) {
-					return {
-						content: [{ type: "text" as const, text: `Role "${params.role}" pins model "${def.model}" which is not available on this machine (no fallback matched). Refusing to spawn — fix the model: line in agents/${params.role}.md or make the model available.` }],
-						details: { role: params.role },
-					};
-				}
-				modelId = resolved;
-				modelChosenBy = "role pin";
-			} else if (params.model) {
-				if (!scoped.includes(params.model)) {
-					return {
-						content: [{ type: "text" as const, text: `Model "${params.model}" is not in the available models list: ${scoped.join(", ")}. Call paseo_list_models to see ids.` }],
-						details: { role: params.role },
-					};
-				}
-				modelId = params.model;
-				modelChosenBy = "caller override";
-			}
-			// else: no pin, no override → caller must pick (placeholder below).
-
-			// ── Thinking resolution ─────────────────────────────────────────
-			// Always present in the payload. Pin → fixed. No pin → REQUIRED enum
-			// placeholder. Non-reasoning model ([T] absent) → forced "off".
-			const providerFamily = "pi";
-			let thinking: string | undefined;
-			let thinkingFixed = false;
-			if (modelId) {
-				const caps = parseModelTags(names.get(modelId));
-				if (!caps.reasoning) {
-					thinking = "off";
-					thinkingFixed = true; // non-reasoning model: off is the only sane value
-				}
-			}
-			if (!thinkingFixed && params.thinking) {
-			if (!thinkingValid(params.thinking, providerFamily)) {
-				return {
-					content: [{ type: "text" as const, text: `thinking "${params.thinking}" is not a valid ${providerFamily} level (${THINKING_BY_PROVIDER[providerFamily].join("|")}).` }],
-					details: { role: params.role },
-				};
-			}
-			thinking = params.thinking;
-			thinkingFixed = true;
-		}
-		if (!thinkingFixed && def.thinking) {
-				if (!thinkingValid(def.thinking, providerFamily)) {
-					return {
-						content: [{ type: "text" as const, text: `Role "${params.role}" pins thinking "${def.thinking}" which is not a valid ${providerFamily} level (${THINKING_BY_PROVIDER[providerFamily].join("|")}). Fix agents/${params.role}.md.` }],
-						details: { role: params.role },
-					};
-				}
-				thinking = def.thinking;
-				thinkingFixed = true;
-			}
-
-			const title = params.name ?? `${params.role}: ${params.task.slice(0, 40)}`;
-			const initialPrompt = `${def.systemPrompt}\n\n---\nTASK:\n${params.task}`;
-			const labels = { [ROLE_LABEL]: params.role, ...(myAgentId ? { "subagent.parent": myAgentId } : {}) };
-
-			// ── Ready: model known → create the child directly (one call) ────
-			if (modelId) {
-				if (!thinkingFixed || !thinking) {
-					return {
-						content: [{ type: "text" as const, text: `Role "${params.role}" needs a thinking level. Re-call with the model parameter set, or fix the role's thinking: pin.` }],
-						details: { role: params.role },
-					};
-				}
-				const endpoint = findMcpEndpoint(myAgentId);
-				if (!endpoint) {
-					return {
-						content: [{ type: "text" as const, text: "Paseo MCP endpoint not found (is this session running under Paseo?). Cannot create the child here." }],
-						details: { role: params.role },
-					};
-				}
-				// Concurrency cap (2026-09-05, user-approved): the daemon imposes no limit on
-				// concurrent agents, so a looping model could burn credit with dozens of
-				// children. Refuse the spawn once this parent already has MAX running.
-				const cap = SUBAGENT_MAX_CONCURRENT;
-				if (cap > 0) {
-					const running = runningChildrenOf(await listAgents(endpoint, { statuses: ["running"], limit: 200 }), myAgentId ?? "");
-					if (running.length >= cap) {
-						return {
-							content: [
-								{
-									type: "text" as const,
-									text: `Concurrency cap reached: ${running.length}/${cap} subagents of this parent are already running (${running.map((a) => a.id.slice(0, 8)).join(", ")}). Wait for one to finish (get_agent_activity) before spawning another. Raise SUBAGENT_MAX_CONCURRENT if this is genuinely parallel work.`,
-								},
-							],
-							details: { role: params.role },
-						};
+			// Wait loop: drain only THIS child's messages from the parent queue;
+			// everything else is pushed back for the normal turn-end delivery.
+			const collected: ChannelMessage[] = [];
+			const deadline = Date.now() + SUBAGENT_WAIT_MS;
+			let closedTicks = 0;
+			let finished = false;
+			while (Date.now() < deadline) {
+				collected.push(...takeMessagesFrom(childId, myAgentId ?? ""));
+				const st = await getAgentStatus(endpoint, childId);
+				const busy = !st.ok || isBusy(st.status);
+				if (busy) {
+					closedTicks = 0;
+				} else {
+					// Daemon says closed — but the child's settle-time message push can
+					// land a few seconds AFTER the status flip. Grace-drain 2 more ticks.
+					closedTicks += 1;
+					if (closedTicks >= 3) {
+						finished = true;
+					break;
 					}
 				}
-				const spawned = await createAgent(
-					{
-						provider: providerStringFor(modelId, providerFamily),
-						title,
-						labels,
-						initialPrompt,
-						thinkingOptionId: thinking,
-					},
-					endpoint,
-				);
-				if (!spawned.ok) {
-					return {
-						content: [{ type: "text" as const, text: `Spawn failed: ${spawned.error ?? "unknown error"}` }],
-						details: { role: params.role, model: modelId, thinking },
-					};
-				}
-				if (params.name && spawned.agentId) {
-					// Name registry: re-address this child by name later
-					// (message_subagent name=..., resume after it finishes).
-					registerSubagent(params.name, {
-						agentId: spawned.agentId,
-						role: params.role,
-						title: params.name,
-						createdAt: new Date().toISOString(),
-					});
-				}
+				await sleep(WAIT_POLL_MS);
+			}
+			collected.push(...takeMessagesFrom(childId, myAgentId ?? ""));
+
+			const real = collected.filter((m) => !isAutoReport(m));
+			if (real.length > 0) {
 				return {
-					content: [
-						{
-							type: "text" as const,
-							text: `Spawned ${params.role} agent ${spawned.agentId} (status: ${spawned.status ?? "running"}). Its result arrives via notification; poll with paseo_get_agent_activity("${spawned.agentId}") when needed.`,
-						},
-					],
-					details: { role: params.role, model: modelId, thinking, agentId: spawned.agentId },
+					content: [{ type: "text" as const, text: real.map((m) => m.text).join("\n\n") }],
+					details: { role: params.role, model: cfg.modelId, thinking: cfg.thinking, agentId: childId },
 				};
 			}
-
-			// ── No model decided → guided choice, then RE-CALL with the model ──
-		// The caller never assembles the create payload itself: labels must
-		// come from this extension or the child's allowlist cannot be trusted.
-		return {
-			content: [
-				{
-					type: "text" as const,
-					text: [
-						`Role "${params.role}" has no pinned model or thinking. Pick both, then call spawn_subagent AGAIN with the same role/task plus model and thinking parameters — the extension creates the child for you.`,
-						"",
-						`Available models (tags: [T]=reasoning, [V]=vision, [XL]/[L]=large output):`,
-						...scoped.map((id) => `- ${id}${names.get(id) ? `  ${names.get(id)}` : ""}`),
-						"",
-						MODEL_GUIDANCE,
-					].join("\n"),
-				},
-			],
-			details: { role: params.role },
-		};		},
+			if (finished) {
+				// Settled without a real payload (auto-ping only) — pull the curated
+				// activity digest as the report.
+				const summary = await getActivitySummary(endpoint, childId);
+				return {
+					content: [{ type: "text" as const, text: `(child finished without message_main — curated activity follows)\n${summary}` }],
+					details: { role: params.role, model: cfg.modelId, thinking: cfg.thinking, agentId: childId },
+				};
+			}
+			return {
+				content: [
+					{
+						type: "text" as const,
+						text: `Child ${params.role} agent ${childId} is STILL RUNNING after ${Math.round(SUBAGENT_WAIT_MS / 60000)} min. ${collected.length > 0 ? `Messages so far:\n${collected.map((m) => m.text).join("\n\n")}` : ""}Its report will still arrive via the normal channel when it finishes; poll paseo_get_agent_activity("${childId}") later if needed.`,
+					},
+				],
+				details: { role: params.role, agentId: childId, model: cfg.modelId, thinking: cfg.thinking },
+			};
+		},
 	});
 
 	// ── Two-way channel ──────────────────────────────────────────────────
