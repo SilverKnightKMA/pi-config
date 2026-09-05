@@ -45,13 +45,16 @@ import {
 	pendingKickIds,
 	getAgentStatus,
 	isBusy,
+	listAgents,
 	pushToQueue,
+	runningChildrenOf,
 	sendToMain,
 	drainQueue,
 	renderForPrompt,
 	waitForReply,
 	registerSubagent,
 	resolveSubagentName,
+	sweepOrphanedSubagents,
 	type ChannelMessage,
 } from "./paseo-channel.ts";
 
@@ -62,6 +65,11 @@ const ROLE_LABEL = "subagent.role";
 
 /** Role ids that mean "the interactive main agent" (full toolset). */
 export const MAIN_ROLE = "main";
+
+/** Max concurrently-RUNNING children per parent. 0 disables. Env override:
+ *  SUBAGENT_MAX_CONCURRENT (2026-09-05, user-approved backstop — the daemon
+ *  itself imposes no concurrent-agent limit). */
+export const SUBAGENT_MAX_CONCURRENT = Number(process.env.SUBAGENT_MAX_CONCURRENT ?? 4);
 
 // ---------------------------------------------------------------------------
 // Role definitions (from agents/*.md frontmatter)
@@ -528,6 +536,14 @@ async function kickOutbound(): Promise<void> {
 		// record — if the lookup misses now, before_input retries before any
 		// prompt is processed.
 		applyRole(ctx);
+		// Orphan sweep (main role only, once per process): cancel still-running
+		// subagents whose parent agent is gone. Backstop for the daemon's
+		// archive-cascade (which never runs on kill/crash). Best-effort, async,
+		// never blocks the session.
+		if (myRole === MAIN_ROLE && myAgentId) {
+			const endpoint = findMcpEndpoint(myAgentId);
+			if (endpoint) void sweepOrphanedSubagents(endpoint).catch(() => {});
+		}
 	});
 
 	pi.on("input", (_event, ctx) => {
@@ -672,6 +688,24 @@ async function kickOutbound(): Promise<void> {
 						content: [{ type: "text" as const, text: "Paseo MCP endpoint not found (is this session running under Paseo?). Cannot create the child here." }],
 						details: { role: params.role },
 					};
+				}
+				// Concurrency cap (2026-09-05, user-approved): the daemon imposes no limit on
+				// concurrent agents, so a looping model could burn credit with dozens of
+				// children. Refuse the spawn once this parent already has MAX running.
+				const cap = SUBAGENT_MAX_CONCURRENT;
+				if (cap > 0) {
+					const running = runningChildrenOf(await listAgents(endpoint, { statuses: ["running"], limit: 200 }), myAgentId ?? "");
+					if (running.length >= cap) {
+						return {
+							content: [
+								{
+									type: "text" as const,
+									text: `Concurrency cap reached: ${running.length}/${cap} subagents of this parent are already running (${running.map((a) => a.id.slice(0, 8)).join(", ")}). Wait for one to finish (get_agent_activity) before spawning another. Raise SUBAGENT_MAX_CONCURRENT if this is genuinely parallel work.`,
+								},
+							],
+							details: { role: params.role },
+						};
+					}
 				}
 				const spawned = await createAgent(
 					{

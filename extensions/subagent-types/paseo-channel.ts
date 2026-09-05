@@ -247,6 +247,100 @@ export function isBusy(status: string | undefined): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Concurrency cap + orphan sweep (2026-09-05, user-approved)
+// ---------------------------------------------------------------------------
+
+export interface AgentListItem {
+	id: string;
+	status: string | null;
+	labels: Record<string, string> | null;
+}
+
+/** Pure: unwrap list_agents payloads across the shapes seen on the wire
+ *  ({agents|entries:[…]} or a bare array) into typed items. Bad rows drop. */
+export function parseAgentList(data: unknown): AgentListItem[] {
+	const d = data as Record<string, unknown> | unknown[];
+	const candidate: unknown = Array.isArray(d)
+		? d
+		: d && typeof d === "object"
+			? ((d as { agents?: unknown; entries?: unknown }).agents ?? (d as { entries?: unknown }).entries ?? [])
+			: [];
+	const arr: unknown[] = Array.isArray(candidate) ? candidate : [];
+	const out: AgentListItem[] = [];
+	for (const raw of arr as Array<Record<string, unknown>>) {
+		if (!raw || typeof raw !== "object") continue;
+		const id = raw.id;
+		if (typeof id !== "string" || !id) continue;
+		const status = typeof raw.status === "string" ? raw.status : null;
+		const labels =
+			raw.labels && typeof raw.labels === "object" && !Array.isArray(raw.labels)
+				? (raw.labels as Record<string, string>)
+				: null;
+		out.push({ id, status, labels });
+	}
+	return out;
+}
+
+export async function listAgents(
+	endpoint: McpEndpoint,
+	opts: { statuses?: string[]; includeArchived?: boolean; limit?: number } = {},
+): Promise<AgentListItem[]> {
+	const r = await mcpCall(endpoint, "list_agents", {
+		limit: opts.limit ?? 200,
+		...(opts.statuses ? { statuses: opts.statuses } : {}),
+		...(opts.includeArchived !== undefined ? { includeArchived: opts.includeArchived } : {}),
+	});
+	if (!r.ok) return [];
+	return parseAgentList(r.data);
+}
+
+/** Pure: running children of `parentAgentId`. */
+export function runningChildrenOf(agents: AgentListItem[], parentAgentId: string): AgentListItem[] {
+	return agents.filter(
+		(a) =>
+			a.status === "running" &&
+			a.labels !== null &&
+			(a.labels["subagent.parent"] === parentAgentId ||
+				a.labels["paseo.parent-agent-id"] === parentAgentId),
+	);
+}
+
+/** Pure: ids of still-RUNNING machine-spawned children whose parent agent is
+ *  absent from the active list (killed/crashed, so the daemon cascade never ran).
+ *  Only children carrying BOTH a subagent role and a parent label qualify —
+ *  human agents are never touched. */
+export function orphanedRunningIds(agents: AgentListItem[]): string[] {
+	const alive = new Set(agents.map((a) => a.id));
+	return agents
+		.filter(
+			(a) =>
+				a.status === "running" &&
+				a.labels !== null &&
+				typeof a.labels["subagent.role"] === "string" &&
+				typeof (a.labels["subagent.parent"] ?? a.labels["paseo.parent-agent-id"]) === "string" &&
+				!alive.has(a.labels["subagent.parent"] ?? a.labels["paseo.parent-agent-id"]),
+		)
+		.map((a) => a.id);
+}
+
+/** Cancel orphaned running subagents (graceful cancel — keeps their session).
+ *  Best-effort: never throws, returns what it managed to cancel. */
+export async function sweepOrphanedSubagents(endpoint: McpEndpoint): Promise<string[]> {
+	const cancelled: string[] = [];
+	let orphans: string[];
+	try {
+		orphans = orphanedRunningIds(await listAgents(endpoint, { limit: 200 }));
+	} catch {
+		return [];
+	}
+	for (const id of orphans) {
+		const r = await mcpCall(endpoint, "cancel_agent", { agentId: id });
+		if (r.ok) cancelled.push(id);
+	}
+	return cancelled;
+}
+
+// ---------------------------------------------------------------------------
 // Send paths
 // ---------------------------------------------------------------------------
 
