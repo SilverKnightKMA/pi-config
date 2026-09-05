@@ -1,9 +1,15 @@
 {
   "name": "learn-workspace",
   "private": true,
-  "workspaces": ["extensions/*"],
+  "workspaces": [
+    "extensions/*"
+  ],
   "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.84.4",
+    "@earendil-works/pi-tui": "^0.84.4",
+    "@sinclair/typebox": "^0.34.0",
     "@types/bun": "^1.4.0",
+    "bun-types": "latest",
     "typescript": "^7.0.2"
   }
 }
