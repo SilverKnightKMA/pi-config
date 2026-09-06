@@ -188,7 +188,10 @@ export default function sseProbe(pi: ExtensionAPI) {
 	});
 
 	pi.on("turn_start", (event) => {
-		turnStartedAt = Date.now();
+		// Prefer the event-carried timestamp (authoritative pi clock) over handler
+		// arrival time — two rapid handler calls can land in the same millisecond
+		// and floor the duration to 0 (2026-09-06 red test on v1.4.15).
+		turnStartedAt = typeof event.timestamp === "number" ? event.timestamp : Date.now();
 		if (typeof event.turnIndex === "number") currentTurnIndex = event.turnIndex;
 	});
 

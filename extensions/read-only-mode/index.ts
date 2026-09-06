@@ -194,11 +194,13 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 		if (enabled) applyReadOnlyTools(pi);
 	});
 
-	pi.on("session_switch", async () => {
+	// pi 0.84.4 names these before_switch/before_fork (upstream zz-read-only-mode
+	// used post-hoc session_switch/session_fork from an older pi — divergence).
+	pi.on("session_before_switch", async () => {
 		if (enabled) applyReadOnlyTools(pi);
 	});
 
-	pi.on("session_fork", async () => {
+	pi.on("session_before_fork", async () => {
 		if (enabled) applyReadOnlyTools(pi);
 	});
 }
