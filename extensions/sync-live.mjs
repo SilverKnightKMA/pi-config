@@ -36,6 +36,7 @@ const PACKED = [
 	"md-log",
 	"observational-memory",
 	"quiz",
+	"read-only-mode",
 	"snip",
 	"sse-probe",
 	"subagent-types",
@@ -43,7 +44,7 @@ const PACKED = [
 	"web-fetch",
 	"zombie-watchdog",
 ];
-const SKILLS = ["analyze-sessions", "pdf-reader", "teach", "visualize", "youtube-transcript"];
+const SKILLS = ["analyze-sessions", "pdf-reader", "reddit", "teach", "visualize", "youtube-transcript"];
 
 const args = process.argv.slice(2);
 const wantAll = args.length === 0 || args[0] === "all";
