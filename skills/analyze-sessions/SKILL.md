@@ -62,6 +62,35 @@ Groupings: `total`, `day`, `workspace`, `provider`, `model`, `kind`, `agent`. Wh
 python3 scripts/paseo_cost.py --since 30d --by kind
 ```
 
+### `anomaly_report.py` — deterministic anomaly analysis
+
+Ranked anomaly report over sessions + `~/.pi/agent/sse-probe.jsonl` + `~/.pi/agent/zombie-watchdog.jsonl` + OM worker-run costs. Stdlib only, no model calls.
+
+```bash
+# Markdown report, last 7 days (default window)
+python3 scripts/anomaly_report.py
+
+# Wider window / machine-readable
+python3 scripts/anomaly_report.py --days 30
+python3 scripts/anomaly_report.py --json
+
+# Append act-now findings to the ops notebook (~/.pi/agent/anomaly-notebook.md)
+python3 scripts/anomaly_report.py --record
+
+# Assert the pure statistics functions (robust z, Wilson, episode merge)
+python3 scripts/anomaly_report.py --self-test
+```
+
+Design contracts (enforced in code):
+
+- **Severity tiers**: `act-now` (only findings at most 2 days old with Wilson-supported rate separation, SSE clusters, stale critical sources) vs `trend` (older or weaker) vs `info` (raw counts where the denominator is too small to judge).
+- **Unknown stays unknown**: fewer than 5 baseline points → counts only, never a flag; rates below a 10-event denominator are never reported as rates.
+- **Statistics**: median/MAD robust z (×0.6745) on log-transformed cost/tokens; MAD=0 is an explicit branch; the evaluated point never sits in its own baseline; adjacent flagged hours merge into one episode.
+- **Every metric carries its action** (switch provider, inspect session, check producer) — a metric with no action would not exist.
+- **Attribution localizes, never convicts**: findings name the edge (provider↔agent); fault-side confirmation is human work, recorded via `--record` as UNCONFIRMED notebook lines.
+
+Metrics: stopReason/abort rate per provider×day, empty-stop silent turns (E35 class), session cost outliers (floor $1), completion-token spikes, volume drops, SSE-drop clusters + drop↔abort join, zombie rate + watchdog silence, OM worker cost, source freshness (monitor-of-monitors).
+
 ### `paseo_prompts.py` — dump user prompts for pattern mining
 
 Output is markdown grouped by workspace (`--format jsonl` available). Prompts above `--max-chars` are dropped because they're almost always pasted context, not actual prompting.
