@@ -18,15 +18,15 @@
  * - import scope @earendil-works (our pi package) instead of @mariozechner
  * - TUI status-row/widget updates removed (ctx.ui.setStatus/setWidget have no
  *   surface in the headless daemon; notify kept — harmless)
+ * - NO tool re-registration: our subagent-types extension already re-registers
+ *   read/grep/find/ls as cwd-aware implementations (registerTool name conflict
+ *   broke subagent-types loading on v1.4.16). setActiveTools activates
+ *   whichever implementations are registered.
+ * - session_switch/session_fork do not exist on pi 0.84.4; re-bound to
+ *   session_before_switch/session_before_fork
  * - State is in-memory only and resets when pi restarts (upstream behavior)
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import {
-	createFindTool,
-	createGrepTool,
-	createLsTool,
-	createReadTool,
-} from "@earendil-works/pi-coding-agent";
 
 export const COMMAND_NAME = "read-only";
 export const READ_ONLY_TOOL_NAMES = ["read", "grep", "find", "ls"] as const;
@@ -53,39 +53,8 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 	let enabled = false;
 	let toolsBeforeReadOnly: string[] | undefined;
 
-	// Re-register the read-only tools so cwd follows the per-call ctx.cwd
-	// instead of the process cwd (faithful to upstream).
-	const readTool = createReadTool(process.cwd());
-	pi.registerTool({
-		...readTool,
-		async execute(toolCallId, params, signal, onUpdate, ctx) {
-			return createReadTool(ctx.cwd).execute(toolCallId, params, signal, onUpdate);
-		},
-	});
-
-	const grepTool = createGrepTool(process.cwd());
-	pi.registerTool({
-		...grepTool,
-		async execute(toolCallId, params, signal, onUpdate, ctx) {
-			return createGrepTool(ctx.cwd).execute(toolCallId, params, signal, onUpdate);
-		},
-	});
-
-	const findTool = createFindTool(process.cwd());
-	pi.registerTool({
-		...findTool,
-		async execute(toolCallId, params, signal, onUpdate, ctx) {
-			return createFindTool(ctx.cwd).execute(toolCallId, params, signal, onUpdate);
-		},
-	});
-
-	const lsTool = createLsTool(process.cwd());
-	pi.registerTool({
-		...lsTool,
-		async execute(toolCallId, params, signal, onUpdate, ctx) {
-			return createLsTool(ctx.cwd).execute(toolCallId, params, signal, onUpdate);
-		},
-	});
+	// Re-registering the read-only tools (upstream did this for ctx.cwd) would
+	// collide with subagent-types, which already owns those re-registrations.
 
 	function enableReadOnlyMode(ctx: ExtensionContext): void {
 		if (enabled) {
