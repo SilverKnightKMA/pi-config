@@ -29,6 +29,6 @@
     "bun-types": "latest",
     "typebox": "^1.1.38",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.5"
+    "vitest": "^5.0.0"
   }
 }
