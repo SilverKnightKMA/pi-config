@@ -269,6 +269,10 @@ export default function taskExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
+		// flush pending projection writes before the process exits — otherwise a
+		// fast exit between writeFile and rename orphans the tmp file (observed
+		// live 2026-09-08 during daemon-restart churn).
+		await statusWriteQueue;
 		if (ctx.hasUI) ctx.ui.setWidget("task", undefined);
 	});
 

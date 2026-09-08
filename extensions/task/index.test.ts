@@ -486,3 +486,43 @@ test("wiring: projection failure never breaks the tool", async () => {
 		if (prevHome !== undefined) process.env.HOME = prevHome;
 	}
 });
+
+// ── v1.4.22: shutdown flush + stale-tmp sweep (observed live at daemon restart) ──
+
+test("wiring: session_shutdown flushes the pending projection write", async () => {
+	const tmp = fs.mkdtempSync(join(tmpdir(), "task-flush-"));
+	const prevHome = process.env.HOME;
+	process.env.HOME = tmp;
+	try {
+		const f = fakePi();
+		(f.ctx.sessionManager as { getSessionId: () => string }).getSessionId = () => "flush-session";
+		taskExtension(f.pi as never);
+		await f.handlers.get("session_start")!({}, f.ctx);
+		await f.tool("task_create").execute("c1", { subject: "flush me" }, undefined, undefined, f.ctx);
+		// NO polling: the shutdown handler must await the queue itself
+		await f.handlers.get("session_shutdown")!({}, f.ctx);
+		const file = join(tmp, ".pi", "agent", "task-status", "flush-session.json");
+		const summary = JSON.parse(fs.readFileSync(file, "utf8")) as { total: number };
+		assert.equal(summary.total, 1, "shutdown must land the queued write before exit");
+	} finally {
+		if (prevHome !== undefined) process.env.HOME = prevHome;
+		fs.rmSync(tmp, { recursive: true, force: true });
+	}
+});
+
+test("writeTaskStatus sweeps stale tmps of its own target", async () => {
+	const tmp = fs.mkdtempSync(join(tmpdir(), "task-sweep-"));
+	try {
+		const file = join(tmp, "s1.json");
+		fs.mkdirSync(join(tmp, "sub"), { recursive: false });
+		fs.writeFileSync(`${file}.tmp-deadbeef`, "orphan", "utf8");
+		fs.writeFileSync(join(tmp, "other.json.tmp-keep"), "foreign orphan", "utf8"); // NOT ours — must survive
+		const { writeTaskStatus } = await import("./src/status-file.ts");
+		await writeTaskStatus(file, buildTaskStatus(EMPTY_STATE, "s1"));
+		assert.ok(fs.existsSync(file), "target written");
+		assert.ok(!fs.existsSync(`${file}.tmp-deadbeef`), "own stale tmp swept");
+		assert.ok(fs.existsSync(join(tmp, "other.json.tmp-keep")), "foreign tmps untouched");
+	} finally {
+		fs.rmSync(tmp, { recursive: true, force: true });
+	}
+});

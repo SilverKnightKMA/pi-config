@@ -8,7 +8,7 @@
  * ~/.pi/agent/task-status/<sessionId>.json; written after every commit and
  * after session_start/session_tree replay. Write failures never break tools.
  */
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import { randomUUID as cryptoUuid } from "node:crypto";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -81,9 +81,22 @@ export function buildTaskStatus(state: TaskState, sessionId: string, now = Date.
 	};
 }
 
-/** Atomic write (tmp + rename) — projection only; failures are the caller's warn. */
+/** Atomic write (tmp + rename) — projection only; failures are the caller's warn.
+ * The tmp name must be unique per write: concurrent fire-and-forget writes
+ * sharing one tmp name race (A renames while B is mid-write -> ENOENT).
+ * Stale tmps for THIS target (process died between writeFile and rename) are
+ * swept opportunistically — never other sessions' files. */
 export async function writeTaskStatus(filePath: string, summary: TaskStatusFile): Promise<void> {
-	await mkdir(path.dirname(filePath), { recursive: true });
+	const dir = path.dirname(filePath);
+	await mkdir(dir, { recursive: true });
+	const base = path.basename(filePath);
+	try {
+		for (const f of await readdir(dir)) {
+			if (f.startsWith(`${base}.tmp-`)) await unlink(path.join(dir, f)).catch(() => {});
+		}
+	} catch {
+		// readdir race (dir removed) — sweep is best-effort
+	}
 	const tmp = `${filePath}.tmp-${process.pid}-${cryptoUuid()}`;
 	await writeFile(tmp, JSON.stringify(summary, null, 2) + "\n", "utf8");
 	await rename(tmp, filePath);
