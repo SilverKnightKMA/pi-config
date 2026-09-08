@@ -104,6 +104,11 @@ export default function taskExtension(pi: ExtensionAPI) {
 
 	// ── Tools ────────────────────────────────────────────────────────────
 
+	// details.tasks rides every tool result (model-invisible metadata) so the
+	// Paseo task plugin's timeline transformer can render a snapshot card.
+	const detailsTasks = (s: TaskState) =>
+		s.tasks.map((t) => ({ id: t.id, subject: t.subject, status: t.status }));
+
 	pi.registerTool({
 		name: "task_create",
 		label: "Create task",
@@ -136,7 +141,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 			const warn = result.warnings.length > 0 ? `\nWarnings: ${result.warnings.join(" ")}` : "";
 			return {
 				content: [{ type: "text", text: `Created #${result.task!.id}: ${result.task!.subject}${warn}` }],
-				details: { id: result.task!.id, warnings: result.warnings },
+				details: { id: result.task!.id, warnings: result.warnings, tasks: detailsTasks(result.state) },
 			};
 		},
 	});
@@ -198,6 +203,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 					status: result.task!.status,
 					warnings: result.warnings,
 					ready: unblocked.map((t) => t.id),
+					tasks: detailsTasks(result.state),
 				},
 			};
 		},
@@ -212,7 +218,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 		parameters: Type.Object({}),
 		async execute() {
 			turnsSinceTaskTool = 0;
-			return { content: [{ type: "text", text: snapshot() }], details: { count: state.tasks.length } };
+			return { content: [{ type: "text", text: snapshot() }], details: { count: state.tasks.length, tasks: detailsTasks(state) } };
 		},
 	});
 
