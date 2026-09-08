@@ -5,13 +5,13 @@
     "extensions/*"
   ],
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.84.4",
-    "@earendil-works/pi-tui": "^0.84.4",
+    "@earendil-works/pi-coding-agent": "^0.85.1",
+    "@earendil-works/pi-tui": "^0.85.1",
     "@sinclair/typebox": "^0.34.0",
-    "@types/bun": "^1.4.0",
+    "@types/bun": "^1.4.1",
     "bun-types": "latest",
-    "pi-mcp-adapter": "2.31.0",
-    "pi-web-access": "0.27.0",
+    "pi-mcp-adapter": "2.32.1",
+    "pi-web-access": "0.28.0",
     "typescript": "^7.0.2"
   }
 }
