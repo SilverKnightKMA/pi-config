@@ -29,6 +29,7 @@ import {
 } from "./src/graph.ts";
 import { buildCompletionSweep, buildNudge, classifyTurn, completionSignature, shouldNudge } from "./src/nudge.ts";
 import { buildWidgetLines } from "./src/widget.ts";
+import { buildTaskStatus, taskStatusPath, writeTaskStatus } from "./src/status-file.ts";
 import { EMPTY_STATE, type TaskState, type TaskStatus } from "./src/types.ts";
 
 type UiContext = ExtensionContext;
@@ -40,10 +41,27 @@ export default function taskExtension(pi: ExtensionAPI) {
 	let sweptSignature: string | null = null;
 	let lastTurnTextOnly = false;
 	let lastUiCtx: UiContext | null = null;
+	/** Session whose status projection we write (set at session_start). */
+	let statusSessionId = "";
+	/** Serializes projection writes: session_start's empty write and the next
+	 * commit's write race on rename; last-rename-wins could leave a STALE
+	 * (older) snapshot on disk if writes land out of call order. */
+	let statusWriteQueue: Promise<void> = Promise.resolve();
+
+	/** Read-only file projection (~/.pi/agent/task-status/<sessionId>.json):
+	 * ledger stays single-writer truth; the file is for audit + Paseo panels.
+	 * Fire-and-forget — projection failure never breaks the tools. */
+	function projectStatus(): void {
+		if (!statusSessionId) return;
+		statusWriteQueue = statusWriteQueue
+			.then(() => writeTaskStatus(taskStatusPath(statusSessionId), buildTaskStatus(state, statusSessionId)))
+			.catch((err) => console.warn(`[task] status projection failed: ${err instanceof Error ? err.message : String(err)}`));
+	}
 
 	function commit(ctx: UiContext, next: TaskState): void {
 		state = next;
 		pi.appendEntry(TASK_STATE, next);
+		projectStatus();
 		renderWidget(ctx);
 	}
 
@@ -237,13 +255,16 @@ export default function taskExtension(pi: ExtensionAPI) {
 
 	pi.on("session_start", async (_event, ctx) => {
 		state = replayBranch(ctx.sessionManager.getBranch() as never);
+		statusSessionId = (ctx.sessionManager.getSessionId?.() as string | undefined) ?? "";
 		turnsSinceTaskTool = 0;
 		lastTurnTextOnly = false;
+		projectStatus();
 		renderWidget(ctx);
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
 		state = replayBranch(ctx.sessionManager.getBranch() as never);
+		projectStatus();
 		renderWidget(ctx);
 	});
 

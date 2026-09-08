@@ -7,7 +7,7 @@
  * 2. Wiring tests against a fake pi API (lesson from the sse-probe v1.4.12
  *    regression: pure-function tests miss event/tool-shape contracts).
  */
-import { test } from "bun:test";
+import { describe, test } from "bun:test";
 import assert from "node:assert/strict";
 import {
 	TASK_STATE,
@@ -21,8 +21,12 @@ import {
 } from "./src/graph.ts";
 import { buildCompletionSweep, buildNudge, classifyTurn, completionSignature, shouldNudge } from "./src/nudge.ts";
 import { buildWidgetLines } from "./src/widget.ts";
+import { buildTaskStatus, taskStatusPath } from "./src/status-file.ts";
 import { EMPTY_STATE, type TaskState, type ThemeLike } from "./src/types.ts";
 import taskExtension from "./index.ts";
+import fs from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const theme: ThemeLike = { fg: (_c, t) => t, bold: (t) => t };
 
@@ -291,6 +295,9 @@ function fakePi() {
 		hasUI: false,
 		sessionManager: {
 			getBranch: () => branch,
+			// "" by default: wiring tests must not write real status files;
+			// the projection test flips this on explicitly.
+			getSessionId: () => "",
 		},
 	};
 	return {
@@ -395,4 +402,87 @@ test("wiring: completion sweep fires exactly once per finished list", async () =
 	assert.ok(first, "first context after completion must inject the sweep");
 	const second = (await f.handlers.get("context")!({ messages: [] })) as { messages: unknown[] } | undefined;
 	assert.equal(second, undefined, "sweep must not fire twice for the same list");
+});
+
+// ── status-file projection (v1.4.21: ledger stays truth, file is audit) ──
+
+describe("status-file projection", () => {
+	test("taskStatusPath lands under ~/.pi/agent/task-status/<sessionId>.json", () => {
+		const p = taskStatusPath("abc123");
+		assert.ok(p.endsWith([".pi", "agent", "task-status", "abc123.json"].join("/")), `bad path: ${p}`);
+	});
+
+	test("buildTaskStatus: counts, ready set, reverse links, evidence passthrough", () => {
+		let state = createTask(EMPTY_STATE, "first", "", [], 1).state;
+		state = createTask(state, "second", "", [1], 2).state;
+		state = updateTask(state, 1, { status: "completed", evidence: "bun test green" }, 3).state;
+		const summary = buildTaskStatus(state, "sess-1", 12345);
+		assert.equal(summary.v, 1);
+		assert.equal(summary.sessionId, "sess-1");
+		assert.equal(summary.total, 2);
+		assert.equal(summary.byStatus.completed, 1);
+		assert.equal(summary.byStatus.pending, 1);
+		assert.deepEqual(summary.ready, [2], "blocker completed -> second becomes ready");
+		assert.equal(summary.tasks[0]!.evidence, "bun test green");
+		assert.deepEqual(summary.tasks[1]!.blockedBy, [1]);
+		assert.deepEqual(summary.tasks[0]!.blocks, [2], "reverse link mirrored");
+	});
+
+	test("buildTaskStatus: cancelled blockers do not gate readiness", () => {
+		let state = createTask(EMPTY_STATE, "gone", "", [], 1).state;
+		state = createTask(state, "after", "", [1], 2).state;
+		state = updateTask(state, 1, { status: "cancelled" }, 3).state;
+		const summary = buildTaskStatus(state, "sess-2", 1);
+		assert.deepEqual(summary.ready, [2]);
+		assert.equal(summary.byStatus.cancelled, 1);
+	});
+});
+
+test("wiring: task_create writes the status projection file", async () => {
+	const tmp = fs.mkdtempSync(join(tmpdir(), "task-status-"));
+	const prevHome = process.env.HOME;
+	process.env.HOME = tmp;
+	try {
+		const f = fakePi();
+		(f.ctx.sessionManager as { getSessionId: () => string }).getSessionId = () => "wire-test-session";
+		taskExtension(f.pi as never);
+		await f.handlers.get("session_start")!({}, f.ctx);
+		await f.tool("task_create").execute("c1", { subject: "projection test" }, undefined, undefined, f.ctx);
+		const file = join(tmp, ".pi", "agent", "task-status", "wire-test-session.json");
+		type ParsedSummary = { sessionId: string; total: number; tasks: { subject: string }[] };
+		let summary: ParsedSummary | null = null;
+		for (let i = 0; i < 50 && !summary; i++) {
+			try {
+				const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as ParsedSummary;
+				// session_start writes an empty projection first; wait for the commit
+				if (parsed && parsed.total === 1) summary = parsed;
+			} catch {
+				/* not there yet */
+			}
+			if (!summary) await new Promise((r) => setTimeout(r, 10));
+		}
+		assert.ok(summary, "projection file must appear after commit");
+		assert.equal(summary.sessionId, "wire-test-session");
+		assert.equal(summary.total, 1);
+		assert.equal(summary.tasks[0]!.subject, "projection test");
+	} finally {
+		if (prevHome !== undefined) process.env.HOME = prevHome;
+		fs.rmSync(tmp, { recursive: true, force: true });
+	}
+});
+
+test("wiring: projection failure never breaks the tool", async () => {
+	const prevHome = process.env.HOME;
+	process.env.HOME = "/proc/definitely-not-writable";
+	try {
+		const f = fakePi();
+		taskExtension(f.pi as never);
+		await f.handlers.get("session_start")!({}, f.ctx);
+		const out = (await f.tool("task_create").execute("c1", { subject: "still works" }, undefined, undefined, f.ctx)) as {
+			content: { text: string }[];
+		};
+		assert.match(out.content[0]!.text, /Created #1: still works/);
+	} finally {
+		if (prevHome !== undefined) process.env.HOME = prevHome;
+	}
 });
