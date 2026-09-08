@@ -526,3 +526,24 @@ test("writeTaskStatus sweeps stale tmps of its own target", async () => {
 		fs.rmSync(tmp, { recursive: true, force: true });
 	}
 });
+
+test("wiring: tool results carry details.tasks snapshot for the Paseo transformer", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	await f.handlers.get("session_start")!({}, f.ctx);
+	await f.tool("task_create").execute("c1", { subject: "alpha" }, undefined, undefined, f.ctx);
+	const created = await f.tool("task_create").execute("c2", { subject: "beta", blockedBy: [1] }, undefined, undefined, f.ctx);
+	type Details = { tasks: { id: number; subject: string; status: string }[] };
+	const createdDetails = (created as { details: Details }).details;
+	assert.equal(createdDetails.tasks.length, 2, "create carries full snapshot");
+	assert.equal(createdDetails.tasks[0]!.subject, "alpha");
+	assert.equal(createdDetails.tasks[1]!.status, "pending");
+	const updated = await f
+		.tool("task_update")
+		.execute("u1", { id: 1, status: "completed", evidence: "tests green" }, undefined, undefined, f.ctx);
+	const updatedDetails = (updated as { details: Details }).details;
+	assert.equal(updatedDetails.tasks[0]!.status, "completed", "update carries full snapshot");
+	const listed = await f.tool("task_list").execute("l1", {}, undefined, undefined, f.ctx);
+	const listDetails = (listed as { details: Details }).details;
+	assert.equal(listDetails.tasks.length, 2, "list carries full snapshot");
+});
