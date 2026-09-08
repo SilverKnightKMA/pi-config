@@ -30,6 +30,15 @@ import {
 import { buildCompletionSweep, buildNudge, classifyTurn, completionSignature, shouldNudge } from "./src/nudge.ts";
 import { buildWidgetLines } from "./src/widget.ts";
 import { buildTaskStatus, taskStatusPath, writeTaskStatus } from "./src/status-file.ts";
+import {
+	auditCompletion,
+	checkEvidenceCommands,
+	parseVerify,
+	redGreenCheck,
+	summarizeAudit,
+	type RunLogEntry,
+	type VerifySpec,
+} from "./src/verify.ts";
 import { EMPTY_STATE, type TaskState, type TaskStatus } from "./src/types.ts";
 
 type UiContext = ExtensionContext;
@@ -47,6 +56,51 @@ export default function taskExtension(pi: ExtensionAPI) {
 	 * commit's write race on rename; last-rename-wins could leave a STALE
 	 * (older) snapshot on disk if writes land out of call order. */
 	let statusWriteQueue: Promise<void> = Promise.resolve();
+
+	/** Layer-1 run log: bash tool calls this session really executed (ring, cap
+	 * 200). The extension NEVER executes probe commands — it matches declared
+	 * probes against what the worker ran through its normal bash pipeline, so
+	 * a green probe is proof the command really ran, with no injection surface. */
+	let runLog: RunLogEntry[] = [];
+	const runLogByCall = new Map<string, RunLogEntry>();
+	const BASH_TOOLS = new Set(["bash", "safe_bash"]);
+
+	function extractOutput(result: unknown): string {
+		const r = result as { content?: Array<{ type?: string; text?: unknown }> } | null;
+		if (r && Array.isArray(r.content)) {
+			const text = r.content
+				.map((b) => (typeof b?.text === "string" ? b.text : ""))
+				.join("\n")
+				.trim();
+			if (text) return text.slice(0, 2000);
+		}
+		if (typeof result === "string") return result.slice(0, 2000);
+		try {
+			return JSON.stringify(result).slice(0, 2000);
+		} catch {
+			return "";
+		}
+	}
+
+	pi.on("tool_execution_start", (event) => {
+		const e = event as { toolCallId?: string; toolName?: string; args?: { command?: unknown } };
+		if (!e.toolCallId || !BASH_TOOLS.has(e.toolName ?? "")) return;
+		if (typeof e.args?.command !== "string") return;
+		const entry: RunLogEntry = { tool: e.toolName ?? "", cmd: e.args.command, output: "", ts: Date.now() };
+		runLogByCall.set(e.toolCallId, entry);
+		runLog.push(entry);
+		if (runLog.length > 200) runLog = runLog.slice(-200);
+	});
+
+	pi.on("tool_execution_end", (event) => {
+		const e = event as { toolCallId?: string; result?: unknown };
+		const id = e.toolCallId;
+		if (!id) return;
+		const entry = runLogByCall.get(id);
+		if (!entry) return;
+		entry.output = extractOutput(e.result);
+		runLogByCall.delete(id);
+	});
 
 	/** Read-only file projection (~/.pi/agent/task-status/<sessionId>.json):
 	 * ledger stays single-writer truth; the file is for audit + Paseo panels.
@@ -90,6 +144,8 @@ export default function taskExtension(pi: ExtensionAPI) {
 				t.status,
 				blockers.length > 0 ? `blocked by ${blockers.map((b) => `#${b}`).join(",")}` : "",
 				t.evidence ? "evidence recorded" : "",
+				t.verify ? `verify:${t.verify.lane}${t.verify.probes.length > 0 ? `(${t.verify.probes.length})` : ""}${t.verify.strict ? "+strict" : ""}` : "",
+				t.audit ? `audit:${t.audit.verdict}` : "",
 			]
 				.filter(Boolean)
 				.join(" · ");
@@ -120,27 +176,68 @@ export default function taskExtension(pi: ExtensionAPI) {
 			subject: Type.String({ description: "Short imperative subject" }),
 			description: Type.Optional(Type.String()),
 			blockedBy: Type.Optional(Type.Array(Type.Number())),
+			verify: Type.Optional(
+				Type.Object({
+					lane: Type.Optional(
+						Type.Union([Type.Literal("state"), Type.Literal("judgment")], {
+							description: "state = có lệnh/file tự kiểm được; judgment = chỉ phán được",
+						}),
+					),
+					probes: Type.Optional(
+						Type.Array(
+							Type.Object({
+								pattern: Type.String({
+									description: "Chuỗi phải xuất hiện trong lệnh bash worker THẬT SỰ chạy",
+								}),
+								expect: Type.Optional(
+									Type.String({ description: "Chuỗi phải có trong output thật của lệnh đó" }),
+								),
+							}),
+							{ description: "Red-green: mỗi probe phải ĐỎ lúc tạo (chưa khớp sổ ghi lệnh)" },
+						),
+					),
+					strict: Type.Optional(Type.Boolean()),
+				}),
+			),
 		}),
 		async execute(
 			_id,
-			params: { subject: string; description?: string; blockedBy?: number[] },
+			params: { subject: string; description?: string; blockedBy?: number[]; verify?: unknown },
 			_signal,
 			_onUpdate,
 			ctx,
 		) {
 			turnsSinceTaskTool = 0;
+			let verifySpec: VerifySpec | undefined;
+			if (params.verify !== undefined) {
+				const parsed = parseVerify(params.verify);
+				if (parsed.error || !parsed.spec) throw new Error(`[verify] ${parsed.error}`);
+				verifySpec = parsed.spec;
+				if (verifySpec.probes.length > 0) {
+					const rg = redGreenCheck(verifySpec, runLog);
+					if (!rg.ok) {
+						throw new Error(
+							`[verify] probe không hợp lệ lúc tạo:\n${rg.reasons.join("\n")}\nHãy khai probe mà việc CHƯA làm thì nó ĐỎ (fail-to-pass), ví dụ lệnh kiểm sẽ chạy lúc xong việc.`,
+						);
+					}
+				}
+			}
 			const result = createTask(
 				state,
 				params.subject,
 				params.description ?? "",
 				params.blockedBy ?? [],
 				Date.now(),
+				verifySpec,
 			);
 			if (result.error) throw new Error(result.error);
 			commit(ctx as UiContext, result.state);
 			const warn = result.warnings.length > 0 ? `\nWarnings: ${result.warnings.join(" ")}` : "";
+			const verifyNote = verifySpec
+				? `\nVerify: lane=${verifySpec.lane}${verifySpec.probes.length > 0 ? `, ${verifySpec.probes.length} probe` : ""}${verifySpec.strict ? ", STRICT" : ""} — layer-1 audit sẽ chạy lúc khai completed (probe phải xanh trong sổ ghi lệnh).`
+				: "";
 			return {
-				content: [{ type: "text", text: `Created #${result.task!.id}: ${result.task!.subject}${warn}` }],
+				content: [{ type: "text", text: `Created #${result.task!.id}: ${result.task!.subject}${warn}${verifyNote}` }],
 				details: { id: result.task!.id, warnings: result.warnings, tasks: detailsTasks(result.state) },
 			};
 		},
@@ -171,10 +268,32 @@ export default function taskExtension(pi: ExtensionAPI) {
 			description: Type.Optional(Type.String()),
 			blockedBy: Type.Optional(Type.Array(Type.Number())),
 			evidence: Type.Optional(Type.String({ description: "Required when completing" })),
+			verify: Type.Optional(
+				Type.Object({
+					lane: Type.Optional(Type.Union([Type.Literal("state"), Type.Literal("judgment")])),
+					probes: Type.Optional(
+						Type.Array(
+							Type.Object({
+								pattern: Type.String(),
+								expect: Type.Optional(Type.String()),
+							}),
+						),
+					),
+					strict: Type.Optional(Type.Boolean()),
+				}),
+			),
 		}),
 		async execute(
 			_id,
-			params: { id: number; status?: TaskStatus; subject?: string; description?: string; blockedBy?: number[]; evidence?: string },
+			params: {
+				id: number;
+				status?: TaskStatus;
+				subject?: string;
+				description?: string;
+				blockedBy?: number[];
+				evidence?: string;
+				verify?: unknown;
+			},
 			_signal,
 			_onUpdate,
 			ctx,
@@ -187,17 +306,67 @@ export default function taskExtension(pi: ExtensionAPI) {
 			if (params.blockedBy !== undefined) patch.blockedBy = params.blockedBy;
 			if (params.evidence !== undefined) patch.evidence = params.evidence;
 
+			// Verify-spec amendment: escape hatch khi probe khai sai (chứ không
+			// phải để hạ mức kiểm). Tối đa 2 lần, mỗi lần đếm và ghi vào projection.
+			if (params.verify !== undefined) {
+				const existingTask = state.tasks.find((t) => t.id === params.id);
+				const count = existingTask?.verifyAmendments ?? 0;
+				if (count >= 2) {
+					throw new Error(
+						`[verify] spec của #${params.id} đã amend ${count} lần — chờ user hoặc layer-2 phân xử, không amend thêm.`,
+					);
+				}
+				const parsed = parseVerify(params.verify);
+				if (parsed.error || !parsed.spec) throw new Error(`[verify] ${parsed.error}`);
+				patch.verify = parsed.spec;
+			}
+
+			// Layer-1 completion audit: state-lane task phải mọi probe XANH trong
+			// sổ ghi lệnh; judgment-lane chỉ đối chiếu advisory. Audit gắn vào task
+			// để projection/panel thấy.
+			if (params.status === "completed") {
+				const task = state.tasks.find((t) => t.id === params.id);
+				const spec = patch.verify ?? task?.verify;
+				if (spec && spec.lane === "state" && spec.probes.length > 0) {
+					const audit = auditCompletion(spec, runLog);
+					if (audit.verdict !== "pass") {
+						throw new Error(
+							`[verify] #${params.id} CHƯA qua kiểm chứng layer-1:\n${summarizeAudit(audit)}\nLàm xong việc rồi chạy lệnh kiểm (qua bash thật, để sổ ghi có bằng chứng) rồi khai completed lại; nếu probe khai sai thì amend verify (tối đa 2 lần).`,
+						);
+					}
+					patch.audit = { at: Date.now(), verdict: "pass", summary: summarizeAudit(audit) };
+				} else if (spec && spec.lane === "judgment") {
+					const claims = checkEvidenceCommands(patch.evidence ?? task?.evidence ?? "", runLog);
+					const unfound = claims.filter((c) => !c.found);
+					const note =
+						claims.length === 0
+							? "lane=judgment — evidence không có lệnh backtick nào để đối chiếu (layer-2 sẽ phán sau)"
+							: unfound.length > 0
+								? `lane=judgment — cảnh báo: ${unfound.map((c) => `"${c.claim}"`).join(", ")} không thấy trong sổ ghi lệnh (layer-2 sẽ phán)`
+								: "lane=judgment — mọi lệnh evidence đều có trong sổ ghi";
+					patch.audit = { at: Date.now(), verdict: "pass-judgment", summary: note };
+				}
+			}
+
 			const result = updateTask(state, params.id, patch, Date.now());
 			if (result.error) throw new Error(result.error);
 			const unblocked = newlyReady(state, result.state);
 			commit(ctx as UiContext, result.state);
 			const warn = result.warnings.length > 0 ? `\nWarnings: ${result.warnings.join(" ")}` : "";
+			const auditNote =
+				params.status === "completed" && result.task!.audit
+					? `\nAudit: ${result.task!.audit.summary.replace(/\n/g, "; ")}`
+					: "";
+			const strictNote =
+				params.status === "completed" && result.task!.verify?.strict
+					? "\n(STRICT task — layer-2 verifier chưa build; hiện completion dựa trên layer-1 audit)"
+					: "";
 			const ready =
 				unblocked.length > 0
 					? `\nNow ready (no open blockers, safe to parallelize): ${unblocked.map((t) => `#${t.id} ${t.subject}`).join(", ")}`
 					: "";
 			return {
-				content: [{ type: "text", text: `#${result.task!.id} → ${result.task!.status}${warn}${ready}` }],
+				content: [{ type: "text", text: `#${result.task!.id} → ${result.task!.status}${warn}${auditNote}${strictNote}${ready}` }],
 				details: {
 					id: result.task!.id,
 					status: result.task!.status,
@@ -264,6 +433,8 @@ export default function taskExtension(pi: ExtensionAPI) {
 		statusSessionId = (ctx.sessionManager.getSessionId?.() as string | undefined) ?? "";
 		turnsSinceTaskTool = 0;
 		lastTurnTextOnly = false;
+		runLog = [];
+		runLogByCall.clear();
 		projectStatus();
 		renderWidget(ctx);
 	});

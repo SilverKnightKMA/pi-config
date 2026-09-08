@@ -10,6 +10,7 @@
  */
 
 import { isRecord, type BranchEntryLike, type Task, type TaskState, type TaskStatus } from "./types.ts";
+import { sanitizeVerify, type TaskAudit, type VerifySpec } from "./verify.ts";
 
 export const TASK_STATE = "task-state";
 
@@ -112,6 +113,7 @@ export function createTask(
   description: string,
   blockedBy: number[],
   now: number,
+  verify?: VerifySpec,
 ): OpResult {
   const warnings: string[] = [];
   if (!subject.trim()) return { state, task: null, warnings, error: "subject is required" };
@@ -126,6 +128,8 @@ export function createTask(
     blockedBy: sanitized,
     blocks: [],
     evidence: null,
+    verify: verify ?? undefined,
+    verifyAmendments: verify !== undefined ? 0 : undefined,
     createdAt: now,
     updatedAt: now,
   };
@@ -144,6 +148,8 @@ export interface UpdatePatch {
   description?: string;
   blockedBy?: number[];
   evidence?: string;
+  verify?: VerifySpec;
+  audit?: TaskAudit;
 }
 
 export function updateTask(state: TaskState, id: number, patch: UpdatePatch, now: number): OpResult {
@@ -156,6 +162,11 @@ export function updateTask(state: TaskState, id: number, patch: UpdatePatch, now
   if (patch.subject !== undefined && patch.subject.trim()) next.subject = patch.subject.trim();
   if (patch.description !== undefined) next.description = patch.description.trim();
   if (patch.evidence !== undefined) next.evidence = patch.evidence.trim() || null;
+  if (patch.verify !== undefined) {
+    next.verify = patch.verify;
+    next.verifyAmendments = existing.verify !== undefined ? (existing.verifyAmendments ?? 0) + 1 : 0;
+  }
+  if (patch.audit !== undefined) next.audit = patch.audit;
 
   if (patch.blockedBy !== undefined) {
     next.blockedBy = sanitizeBlockers(state, id, patch.blockedBy, warnings);
@@ -210,6 +221,14 @@ function numbers(value: unknown): number[] {
   return Array.isArray(value) ? value.filter((n): n is number => typeof n === "number") : [];
 }
 
+const AUDIT_VERDICTS = new Set(["pass", "fail", "spec-fault", "pass-judgment"]);
+
+function sanitizeAudit(raw: unknown): TaskAudit | undefined {
+  if (!isRecord(raw) || typeof raw.at !== "number" || typeof raw.summary !== "string") return undefined;
+  if (typeof raw.verdict !== "string" || !AUDIT_VERDICTS.has(raw.verdict)) return undefined;
+  return { at: raw.at, verdict: raw.verdict as TaskAudit["verdict"], summary: raw.summary };
+}
+
 /**
  * Rebuild a task state from an untrusted snapshot. A session file written by
  * an older schema — or truncated mid-write — used to reach openBlockers with
@@ -228,6 +247,9 @@ export function sanitizeState(data: Record<string, unknown>): TaskState {
       blockedBy: numbers(item.blockedBy),
       blocks: numbers(item.blocks),
       evidence: typeof item.evidence === "string" ? item.evidence : null,
+      verify: sanitizeVerify(item.verify),
+      audit: sanitizeAudit(item.audit),
+      verifyAmendments: typeof item.verifyAmendments === "number" ? item.verifyAmendments : undefined,
       createdAt: typeof item.createdAt === "number" ? item.createdAt : 0,
       updatedAt: typeof item.updatedAt === "number" ? item.updatedAt : 0,
     });

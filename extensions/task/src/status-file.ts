@@ -32,6 +32,9 @@ export interface TaskStatusFile {
 		blockedBy: number[];
 		blocks: number[];
 		updatedAt: number;
+		verify?: { lane: string; strict: boolean; probes: number };
+		audit?: { verdict: string; summary: string };
+		verifyAmendments?: number;
 	}>;
 }
 
@@ -77,6 +80,11 @@ export function buildTaskStatus(state: TaskState, sessionId: string, now = Date.
 			blockedBy: [...task.blockedBy],
 			blocks: [...task.blocks],
 			updatedAt: task.updatedAt,
+			verify: task.verify
+				? { lane: task.verify.lane, strict: task.verify.strict, probes: task.verify.probes.length }
+				: undefined,
+			audit: task.audit ? { verdict: task.audit.verdict, summary: task.audit.summary } : undefined,
+			verifyAmendments: task.verifyAmendments,
 		})),
 	};
 }

@@ -14,6 +14,8 @@
  * No imports from pi packages: src/ typechecks and runs standalone.
  */
 
+import type { VerifySpec, TaskAudit } from "./verify.ts";
+
 export const TASK_STATUSES = ["pending", "in_progress", "completed", "cancelled"] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
 
@@ -28,6 +30,12 @@ export interface Task {
   blocks: number[];
   /** Required when status becomes completed. */
   evidence: string | null;
+  /** Layer-0 verify spec declared at create (absent = plain task). */
+  verify?: VerifySpec;
+  /** Last layer-1 completion audit (attached on completing a verified task). */
+  audit?: TaskAudit;
+  /** How many times the verify spec was amended after create (cap enforced at tool layer). */
+  verifyAmendments?: number;
   createdAt: number;
   updatedAt: number;
 }

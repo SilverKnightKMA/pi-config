@@ -547,3 +547,163 @@ test("wiring: tool results carry details.tasks snapshot for the Paseo transforme
 	const listDetails = (listed as { details: Details }).details;
 	assert.equal(listDetails.tasks.length, 2, "list carries full snapshot");
 });
+
+// ── Verify layer 0+1 wiring (v1.4.24) ─────────────────────────────────
+
+function fireBash(f: ReturnType<typeof fakePi>, id: string, cmd: string, output: string) {
+	f.handlers.get("tool_execution_start")!({ toolCallId: id, toolName: "bash", args: { command: cmd } }, f.ctx);
+	f.handlers.get("tool_execution_end")!(
+		{ toolCallId: id, result: { content: [{ type: "text", text: output }] }, isError: false },
+		f.ctx,
+	);
+}
+
+test("verify wiring: create records the spec and reports the lane", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	const out = (await f
+		.tool("task_create")
+		.execute("c1", { subject: "bump pin", verify: { lane: "state", probes: [{ pattern: "gh pr view 139", expect: "MERGED" }], strict: true } }, undefined, undefined, f.ctx)) as {
+		content: { text: string }[];
+	};
+	assert.match(out.content[0]!.text, /Verify: lane=state, 1 probe, STRICT/);
+	const data = f.entries.at(-1)!.data as { tasks: { verify: { lane: string; strict: boolean } }[] };
+	assert.equal(data.tasks[0]!.verify.lane, "state");
+	assert.equal(data.tasks[0]!.verify.strict, true);
+});
+
+test("verify wiring: red-green — an already-green probe is refused at create", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	fireBash(f, "t1", "gh pr view 139", "state MERGED");
+	await assert.rejects(
+		f.tool("task_create").execute("c1", { subject: "x", verify: { probes: [{ pattern: "gh pr view 139", expect: "MERGED" }] } }, undefined, undefined, f.ctx),
+		/không phân biệt/,
+	);
+});
+
+test("verify wiring: completion is refused while a probe is red (never ran)", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	await f.tool("task_create").execute("c1", { subject: "x", verify: { probes: [{ pattern: "bun test src/verify" }] } }, undefined, undefined, f.ctx);
+	await assert.rejects(
+		f.tool("task_update").execute("u1", { id: 1, status: "completed", evidence: "tests passed" }, undefined, undefined, f.ctx),
+		/CHƯA qua kiểm chứng/,
+	);
+	const list = (await f.tool("task_list").execute("l1", {}, undefined, undefined, f.ctx)) as { content: { text: string }[] };
+	assert.match(list.content[0]!.text, /in_progress|pending/); // not completed
+	assert.match(list.content[0]!.text, /verify:state\(1\)/);
+});
+
+test("verify wiring: non-bash tool calls never enter the run log", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	await f.tool("task_create").execute("c1", { subject: "x", verify: { probes: [{ pattern: "bun test" }] } }, undefined, undefined, f.ctx);
+	f.handlers
+		.get("tool_execution_start")!({ toolCallId: "r1", toolName: "read", args: { command: "bun test" } }, f.ctx);
+	f.handlers.get("tool_execution_end")!({ toolCallId: "r1", result: { content: [{ type: "text", text: "pass" }] } }, f.ctx);
+	await assert.rejects(
+		f.tool("task_update").execute("u1", { id: 1, status: "completed", evidence: "ran it" }, undefined, undefined, f.ctx),
+		/CHƯA qua kiểm chứng/,
+	);
+});
+
+test("verify wiring: green path — real command in log unlocks completion + audit rides along", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	await f
+		.tool("task_create")
+		.execute("c1", { subject: "merge PR", verify: { probes: [{ pattern: "gh pr view 139", expect: "MERGED" }] } }, undefined, undefined, f.ctx);
+	fireBash(f, "t1", "gh pr view 139 --json state", "…state: MERGED…");
+	const out = (await f
+		.tool("task_update")
+		.execute("u1", { id: 1, status: "completed", evidence: "`gh pr view 139` shows MERGED" }, undefined, undefined, f.ctx)) as {
+		content: { text: string }[];
+	};
+	assert.match(out.content[0]!.text, /Audit: ✓/);
+	const list = (await f.tool("task_list").execute("l1", {}, undefined, undefined, f.ctx)) as { content: { text: string }[] };
+	assert.match(list.content[0]!.text, /audit:pass/);
+});
+
+test("verify wiring: amber shows observed output; amend fixes a wrong probe (cap 2)", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	await f
+		.tool("task_create")
+		.execute("c1", { subject: "check PR", verify: { probes: [{ pattern: "gh pr view 139", expect: "MERGED" }] } }, undefined, undefined, f.ctx);
+	fireBash(f, "t1", "gh pr view 139", "state OPEN");
+	const red = (await f
+		.tool("task_update")
+		.execute("u1", { id: 1, status: "completed", evidence: "PR state checked" }, undefined, undefined, f.ctx)
+		.catch((e: Error) => e)) as Error;
+	assert.match(red.message, /KHÔNG chứa/);
+	assert.match(red.message, /OPEN/);
+
+	// amend 1: probe was wrong (work is done, expect should be OPEN)
+	const amended = await f
+		.tool("task_update")
+		.execute("u2", { id: 1, verify: { probes: [{ pattern: "gh pr view 139", expect: "OPEN" }] } }, undefined, undefined, f.ctx);
+	assert.ok(amended, "first amend allowed");
+	// amend 2: still allowed
+	await f.tool("task_update").execute("u3", { id: 1, verify: { probes: [{ pattern: "gh pr view 139", expect: "OPEN" }] } }, undefined, undefined, f.ctx);
+	// amend 3: capped
+	await assert.rejects(
+		f.tool("task_update").execute("u4", { id: 1, verify: { probes: [{ pattern: "gh pr view 139", expect: "OPEN" }] } }, undefined, undefined, f.ctx),
+		/đã amend 2 lần/,
+	);
+	const done = (await f
+		.tool("task_update")
+		.execute("u5", { id: 1, status: "completed", evidence: "PR OPEN as expected" }, undefined, undefined, f.ctx)) as {
+		content: { text: string }[];
+	};
+	assert.match(done.content[0]!.text, /→ completed/);
+	const data = f.entries.at(-1)!.data as { tasks: { verifyAmendments?: number }[] };
+	assert.equal(data.tasks[0]!.verifyAmendments, 2);
+});
+
+test("verify wiring: judgment lane completes with advisory evidence cross-check", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	await f.tool("task_create").execute("c1", { subject: "write brief", verify: { lane: "judgment" } }, undefined, undefined, f.ctx);
+	const out = (await f
+		.tool("task_update")
+		.execute("u1", { id: 1, status: "completed", evidence: "wrote it, ran `grep -c source brief.md`" }, undefined, undefined, f.ctx)) as {
+		content: { text: string }[];
+	};
+	assert.match(out.content[0]!.text, /cảnh báo/); // backticked cmd not in log → advisory warning
+	const list = (await f.tool("task_list").execute("l1", {}, undefined, undefined, f.ctx)) as { content: { text: string }[] };
+	assert.match(list.content[0]!.text, /audit:pass-judgment/);
+});
+
+test("verify wiring: session_start clears the run log (restart = fresh evidence)", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	await f.tool("task_create").execute("c1", { subject: "A", verify: { probes: [{ pattern: "bun test", expect: "pass" }] } }, undefined, undefined, f.ctx);
+	await f.tool("task_create").execute("c2", { subject: "B", verify: { probes: [{ pattern: "bun test", expect: "pass" }] } }, undefined, undefined, f.ctx);
+	fireBash(f, "t1", "bun test", "388 pass 0 fail");
+	await f.tool("task_update").execute("u1", { id: 1, status: "completed", evidence: "tests green" }, undefined, undefined, f.ctx);
+	// simulate a restart: replay ledger state, run log resets
+	f.setBranch(f.entries.map((e) => ({ type: "custom", customType: e.customType, data: e.data })));
+	await f.handlers.get("session_start")!({}, f.ctx);
+	await assert.rejects(
+		f.tool("task_update").execute("u2", { id: 2, status: "completed", evidence: "same suite" }, undefined, undefined, f.ctx),
+		/CHƯA qua kiểm chứng/,
+	);
+	fireBash(f, "t2", "bun test", "388 pass 0 fail");
+	await f.tool("task_update").execute("u3", { id: 2, status: "completed", evidence: "tests green again" }, undefined, undefined, f.ctx);
+});
+
+test("verify wiring: projection carries verify/audit fields for the Paseo panel", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	await f.tool("task_create").execute("c1", { subject: "x", verify: { probes: [{ pattern: "bun test", expect: "pass" }], strict: true } }, undefined, undefined, f.ctx);
+	fireBash(f, "t1", "bun test", "all pass");
+	await f.tool("task_update").execute("u1", { id: 1, status: "completed", evidence: "suite green" }, undefined, undefined, f.ctx);
+	const data = f.entries.at(-1)!.data as TaskState;
+	const status = buildTaskStatus(data, "sess-verify");
+	assert.equal(status.tasks[0]!.verify!.lane, "state");
+	assert.equal(status.tasks[0]!.verify!.strict, true);
+	assert.equal(status.tasks[0]!.verify!.probes, 1);
+	assert.equal(status.tasks[0]!.audit!.verdict, "pass");
+	assert.match(status.tasks[0]!.audit!.summary, /✓/);
+});
