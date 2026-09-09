@@ -131,7 +131,14 @@ function runJudge(packet: string, cwd: string): Promise<string | null> {
 			"-p",
 			packet,
 		];
-		const proc = spawn(pi.command, argv, { cwd });
+		const proc = spawn(pi.command, argv, {
+			cwd,
+			// stdin MUST be closed: `pi -p` reads stdin when it is an open pipe
+			// and hangs forever waiting for EOF (observed live 2026-09-09 — judge
+			// “unavailable” with 0 bytes of output, while the same argv from a
+			// closed-stdin shell returned in ~2s). stdio ignore = no stdin.
+			stdio: ["ignore", "pipe", "pipe"],
+		});
 		let out = "";
 		const timer = setTimeout(() => {
 			proc.kill("SIGKILL");
