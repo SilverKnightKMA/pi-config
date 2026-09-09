@@ -319,8 +319,15 @@ export default function taskExtension(pi: ExtensionAPI) {
 
 	// details.tasks rides every tool result (model-invisible metadata) so the
 	// Paseo task plugin's timeline transformer can render a snapshot card.
+	// details.changes (create/update only) is the compact prev→next diff the
+	// in-flow card shows by default; the full snapshot stays available but is
+	// collapsed behind the card's expander (user request 2026-09-09).
 	const detailsTasks = (s: TaskState) =>
 		s.tasks.map((t) => ({ id: t.id, subject: t.subject, status: t.status }));
+	const changeFor = (id: number, from: string | null, to: string) => {
+		const t = state.tasks.find((x) => x.id === id);
+		return t ? [{ id, subject: t.subject, from, to }] : [];
+	};
 
 	pi.registerTool({
 		name: "task_create",
@@ -395,7 +402,12 @@ export default function taskExtension(pi: ExtensionAPI) {
 				: "";
 			return {
 				content: [{ type: "text", text: `Created #${result.task!.id}: ${result.task!.subject}${warn}${verifyNote}` }],
-				details: { id: result.task!.id, warnings: result.warnings, tasks: detailsTasks(result.state) },
+				details: {
+					id: result.task!.id,
+					warnings: result.warnings,
+					tasks: detailsTasks(result.state),
+					changes: changeFor(result.task!.id, null, result.task!.status),
+				},
 			};
 		},
 	});
@@ -603,6 +615,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 				}
 			}
 
+			const prevStatus = state.tasks.find((t) => t.id === params.id)?.status ?? null;
 			const result = updateTask(state, params.id, patch, Date.now());
 			if (result.error) throw new Error(result.error);
 			const unblocked = newlyReady(state, result.state);
@@ -611,7 +624,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 			const auditNote = result.task!.audit ? `\nAudit: ${result.task!.audit.summary.replace(/\n/g, "; ")}` : "";
 			const parkedNote =
 				result.task!.status === "parked"
-					? `\nPARKED (dừng chờ user): ${result.task!.appealReason ?? "—"} — mở lại bằng task_update status=in_progress (khi user xử xong).`
+					? `\nPARKED (dừng chờ user): ${result.task!.appealReason ?? "—"} — chỉ USER mở lại được: nút "mở lại (user)" trên panel task (ghi file ~/.pi/agent/task-control/<sessionId>.json) hoặc nói trực tiếp trong chat. Model không thể tự mở.`
 					: "";
 			const strictNote =
 				params.status === "completed" && result.task!.verify?.strict
@@ -625,12 +638,13 @@ export default function taskExtension(pi: ExtensionAPI) {
 				content: [
 					{ type: "text", text: `#${result.task!.id} → ${result.task!.status}${warn}${auditNote}${parkedNote}${strictNote}${ready}` },
 				],
-				details: {
+					details: {
 					id: result.task!.id,
 					status: result.task!.status,
 					warnings: result.warnings,
 					ready: unblocked.map((t) => t.id),
 					tasks: detailsTasks(result.state),
+					changes: changeFor(result.task!.id, prevStatus, result.task!.status),
 				},
 			};
 		},

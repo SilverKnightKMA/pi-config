@@ -340,6 +340,25 @@ test("wiring: task_create commits a task-state ledger entry", async () => {
 	assert.equal(data.tasks[0]!.subject, "port task ext");
 });
 
+test("v1.4.29 wiring: details.changes rides create/update as a compact diff", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	const created = (await f.tool("task_create").execute("c1", { subject: "diff card" }, undefined, undefined, f.ctx)) as {
+		details?: { changes?: { id: number; subject: string; from: string | null; to: string }[] };
+	};
+	assert.deepEqual(created.details?.changes, [{ id: 1, subject: "diff card", from: null, to: "pending" }]);
+
+	const updated = (await f.tool("task_update").execute("u1", { id: 1, status: "in_progress" }, undefined, undefined, f.ctx)) as {
+		details?: { changes?: { id: number; from: string | null; to: string }[] };
+	};
+	assert.deepEqual(updated.details?.changes, [{ id: 1, subject: "diff card", from: "pending", to: "in_progress" }]);
+
+	const listed = (await f.tool("task_list").execute("l1", {}, undefined, undefined, f.ctx)) as {
+		details?: { changes?: unknown };
+	};
+	assert.equal(listed.details?.changes, undefined);
+});
+
 test("wiring: evidence gate surfaces through task_update execute", async () => {
 	const f = fakePi();
 	taskExtension(f.pi as never);
