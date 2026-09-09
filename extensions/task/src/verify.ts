@@ -63,7 +63,7 @@ export interface AuditOutcome {
 
 export interface TaskAudit {
 	at: number;
-	verdict: AuditVerdict | "pass-judgment";
+	verdict: AuditVerdict | "pass-judgment" | "judge-pass" | "judge-fail" | "judge-insufficient";
 	summary: string;
 }
 

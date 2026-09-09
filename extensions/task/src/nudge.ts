@@ -98,7 +98,7 @@ export function buildCompletionSweep(state: TaskState): string {
 export function buildNudge(state: TaskState): string {
   const index = new Map(state.tasks.map((t) => [t.id, t]));
   const open = state.tasks
-    .filter((t) => t.status !== "cancelled" && t.status !== "completed")
+    .filter((t) => t.status !== "cancelled" && t.status !== "completed" && t.status !== "parked")
     .slice(0, MAX_NUDGE_TASKS)
     .map((t) => {
       const blockers = openBlockers(t, index);

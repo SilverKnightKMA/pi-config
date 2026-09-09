@@ -35,6 +35,9 @@ export interface TaskStatusFile {
 		verify?: { lane: string; strict: boolean; probes: number };
 		audit?: { verdict: string; summary: string };
 		verifyAmendments?: number;
+		failStreak?: number;
+		judgeRounds?: number;
+		appealReason?: string;
 	}>;
 }
 
@@ -85,6 +88,9 @@ export function buildTaskStatus(state: TaskState, sessionId: string, now = Date.
 				: undefined,
 			audit: task.audit ? { verdict: task.audit.verdict, summary: task.audit.summary } : undefined,
 			verifyAmendments: task.verifyAmendments,
+			failStreak: task.failStreak,
+			judgeRounds: task.judgeRounds,
+			appealReason: task.appealReason,
 		})),
 	};
 }

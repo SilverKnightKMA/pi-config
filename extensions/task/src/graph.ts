@@ -150,6 +150,9 @@ export interface UpdatePatch {
   evidence?: string;
   verify?: VerifySpec;
   audit?: TaskAudit;
+  failStreak?: number;
+  judgeRounds?: number;
+  appealReason?: string;
 }
 
 export function updateTask(state: TaskState, id: number, patch: UpdatePatch, now: number): OpResult {
@@ -167,6 +170,9 @@ export function updateTask(state: TaskState, id: number, patch: UpdatePatch, now
     next.verifyAmendments = existing.verify !== undefined ? (existing.verifyAmendments ?? 0) + 1 : 0;
   }
   if (patch.audit !== undefined) next.audit = patch.audit;
+  if (patch.failStreak !== undefined) next.failStreak = patch.failStreak;
+  if (patch.judgeRounds !== undefined) next.judgeRounds = patch.judgeRounds;
+  if (patch.appealReason !== undefined) next.appealReason = patch.appealReason;
 
   if (patch.blockedBy !== undefined) {
     next.blockedBy = sanitizeBlockers(state, id, patch.blockedBy, warnings);
@@ -215,13 +221,13 @@ export function replayBranch(entries: BranchEntryLike[]): TaskState {
   return state;
 }
 
-const STATUSES = new Set(["pending", "in_progress", "completed", "cancelled"]);
+const STATUSES = new Set(["pending", "in_progress", "completed", "cancelled", "parked"]);
 
 function numbers(value: unknown): number[] {
   return Array.isArray(value) ? value.filter((n): n is number => typeof n === "number") : [];
 }
 
-const AUDIT_VERDICTS = new Set(["pass", "fail", "spec-fault", "pass-judgment"]);
+const AUDIT_VERDICTS = new Set(["pass", "fail", "spec-fault", "pass-judgment", "judge-pass", "judge-fail", "judge-insufficient"]);
 
 function sanitizeAudit(raw: unknown): TaskAudit | undefined {
   if (!isRecord(raw) || typeof raw.at !== "number" || typeof raw.summary !== "string") return undefined;
@@ -250,6 +256,9 @@ export function sanitizeState(data: Record<string, unknown>): TaskState {
       verify: sanitizeVerify(item.verify),
       audit: sanitizeAudit(item.audit),
       verifyAmendments: typeof item.verifyAmendments === "number" ? item.verifyAmendments : undefined,
+      failStreak: typeof item.failStreak === "number" ? item.failStreak : undefined,
+      judgeRounds: typeof item.judgeRounds === "number" ? item.judgeRounds : undefined,
+      appealReason: typeof item.appealReason === "string" ? item.appealReason : undefined,
       createdAt: typeof item.createdAt === "number" ? item.createdAt : 0,
       updatedAt: typeof item.updatedAt === "number" ? item.updatedAt : 0,
     });

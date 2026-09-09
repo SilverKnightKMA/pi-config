@@ -51,6 +51,8 @@ function renderTask(task: Task, index: Map<number, Task>, theme: ThemeLike): str
       return dim(`✔ ${tag} ${subject}`);
     case "in_progress":
       return theme.fg("warning", `✳ ${tag} `) + theme.bold(subject);
+    case "parked":
+      return theme.fg("warning", `⏸ ${tag} ${subject} (chờ user)`);
     default: {
       const open = openBlockers(task, index);
       if (open.length > 0) {

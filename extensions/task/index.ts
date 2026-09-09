@@ -16,6 +16,8 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
+import { spawn } from "node:child_process";
+import { realpathSync, readFileSync } from "node:fs";
 
 import {
 	TASK_STATE,
@@ -39,9 +41,109 @@ import {
 	type RunLogEntry,
 	type VerifySpec,
 } from "./src/verify.ts";
+import {
+	buildJudgePacket,
+	MAX_JUDGE_ROUNDS,
+	parseJudgeVerdict,
+	pickLogSlice,
+	verdictConsequence,
+	type JudgeProbeView,
+} from "./src/judge.ts";
 import { EMPTY_STATE, type TaskState, type TaskStatus } from "./src/types.ts";
 
 type UiContext = ExtensionContext;
+
+// ── Layer-2 judge runner ─────────────────────────────────────────────
+// Independent LLM verification (design: pify-pending row 9, settled
+// 2026-09-09). Judge model MUST be a different family than the worker's
+// GLM — default fci/deepseek-v4-flash; override: env TASK_JUDGE_MODEL, then
+// settings taskJudgeModel (workspace .pi/settings.json > ~/.pi/agent).
+const DEFAULT_JUDGE_MODEL = "cli-openai/fci/deepseek-v4-flash";
+const JUDGE_TIMEOUT_MS = 60_000;
+
+function readSettingsKey(cwd: string, key: string): string | null {
+	const candidates = [`${cwd}/.pi/settings.json`, `${process.env.HOME || ""}/.pi/agent/settings.json`];
+	for (const p of candidates) {
+		try {
+			const raw = JSON.parse(readFileSync(p, "utf8"));
+			if (raw && typeof raw === "object" && typeof (raw as Record<string, unknown>)[key] === "string") {
+				return (raw as Record<string, string>)[key];
+			}
+		} catch {
+			// absent/unparsable — next candidate
+		}
+	}
+	return null;
+}
+
+function resolveJudgeModel(cwd: string): string {
+	const env = process.env.TASK_JUDGE_MODEL;
+	if (env && env.trim()) return env.trim();
+	return readSettingsKey(cwd, "taskJudgeModel") ?? DEFAULT_JUDGE_MODEL;
+}
+
+/** Same entry-point trick the OM workers use: run pi through the real entry
+ *  file when resolvable, else plain `pi` on PATH. */
+function resolvePiBinary(): { command: string; baseArgs: string[] } {
+	const entry = process.argv[1];
+	if (entry) {
+		try {
+			const realEntry = realpathSync(entry);
+			if (/\.(?:mjs|cjs|js)$/i.test(realEntry)) {
+				return { command: process.execPath, baseArgs: [realEntry] };
+			}
+		} catch {
+			// fall through
+		}
+	}
+	return { command: "pi", baseArgs: [] };
+}
+
+/** Test seam: overrides the subprocess judge (pure wiring tests inject a stub). */
+let judgeRunnerOverride: ((packet: string) => Promise<string | null>) | null = null;
+export function _setJudgeRunnerForTests(fn: ((packet: string) => Promise<string | null>) | null): void {
+	judgeRunnerOverride = fn;
+}
+
+/** Spawn a headless, tool-less, extension-less pi on the judge model with the
+ *  packet as the one prompt. Resolves stdout, or null on any failure/timeout
+ *  (the tool layer treats null as judge-unavailable → fail-closed refusal). */
+function runJudge(packet: string, cwd: string): Promise<string | null> {
+	if (judgeRunnerOverride) return judgeRunnerOverride(packet);
+	return new Promise((resolve) => {
+		let settled = false;
+		const done = (v: string | null) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			resolve(v);
+		};
+		const pi = resolvePiBinary();
+		const argv = [
+			...pi.baseArgs,
+			"--no-extensions",
+			"--no-skills",
+			"--no-prompt-templates",
+			"--no-context-files",
+			"--no-builtin-tools",
+			"--model",
+			resolveJudgeModel(cwd),
+			"-p",
+			packet,
+		];
+		const proc = spawn(pi.command, argv, { cwd });
+		let out = "";
+		const timer = setTimeout(() => {
+			proc.kill("SIGKILL");
+			done(null);
+		}, JUDGE_TIMEOUT_MS);
+		proc.stdout?.on("data", (d: Buffer) => {
+			if (out.length < 100_000) out += d.toString("utf8");
+		});
+		proc.on("error", () => done(null));
+		proc.on("close", (code) => done(code === 0 && out.trim() ? out : null));
+	});
+}
 
 export default function taskExtension(pi: ExtensionAPI) {
 	let state: TaskState = EMPTY_STATE;
@@ -146,6 +248,9 @@ export default function taskExtension(pi: ExtensionAPI) {
 				t.evidence ? "evidence recorded" : "",
 				t.verify ? `verify:${t.verify.lane}${t.verify.probes.length > 0 ? `(${t.verify.probes.length})` : ""}${t.verify.strict ? "+strict" : ""}` : "",
 				t.audit ? `audit:${t.audit.verdict}` : "",
+				t.judgeRounds ? `judge-rounds:${t.judgeRounds}` : "",
+				t.failStreak ? `fail-streak:${t.failStreak}` : "",
+				t.status === "parked" ? `parked:${(t.appealReason ?? "chờ user").slice(0, 60)}` : "",
 			]
 				.filter(Boolean)
 				.join(" · ");
@@ -248,9 +353,11 @@ export default function taskExtension(pi: ExtensionAPI) {
 		label: "Update task",
 		description:
 			"Update a task. Set status=in_progress when starting (blocked tasks refuse), status=completed " +
-			"when done — completion REQUIRES evidence: what you verified (command output, test results, " +
-			"file state). Never mark completed merely because you wrote code. status=cancelled prunes a " +
-			"task that no longer applies.",
+			"when done — completion REQUIRES evidence and passes the verify gates (layer-1 probe audit + " +
+			"layer-2 LLM judge for judgment-lane/strict/spec-fault tasks; a different model family judges " +
+			"by done-check intent, may demote after 2 high-conf fails, ask for more evidence, or park at 3 rounds). " +
+			"Never mark completed merely because you wrote code. appeal=\"reason\" parks a task you dispute for the " +
+			"user; status=parked/cancelled prune/pause a task.",
 		parameters: Type.Object({
 			id: Type.Number(),
 			status: Type.Optional(
@@ -260,6 +367,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 						Type.Literal("in_progress"),
 						Type.Literal("completed"),
 						Type.Literal("cancelled"),
+						Type.Literal("parked"),
 					],
 					{ description: "Task status" },
 				),
@@ -268,6 +376,11 @@ export default function taskExtension(pi: ExtensionAPI) {
 			description: Type.Optional(Type.String()),
 			blockedBy: Type.Optional(Type.Array(Type.Number())),
 			evidence: Type.Optional(Type.String({ description: "Required when completing" })),
+			appeal: Type.Optional(
+				Type.String({
+					escription: "Worker phản đối phán quyết verify/judge → PARK chờ user; nêu lý do cụ thể",
+				}),
+			),
 			verify: Type.Optional(
 				Type.Object({
 					lane: Type.Optional(Type.Union([Type.Literal("state"), Type.Literal("judgment")])),
@@ -293,6 +406,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 				blockedBy?: number[];
 				evidence?: string;
 				verify?: unknown;
+				appeal?: string;
 			},
 			_signal,
 			_onUpdate,
@@ -321,30 +435,102 @@ export default function taskExtension(pi: ExtensionAPI) {
 				patch.verify = parsed.spec;
 			}
 
-			// Layer-1 completion audit: state-lane task phải mọi probe XANH trong
-			// sổ ghi lệnh; judgment-lane chỉ đối chiếu advisory. Audit gắn vào task
-			// để projection/panel thấy.
-			if (params.status === "completed") {
+			// Completion verification (design: pify-pending row 9, settled
+			// 2026-09-09). appeal bất kỳ lúc nào → PARK chờ user (escape valve cho
+			// mọi ngõ cụt, kể cả judge fail-closed). Ngược lại khi completed:
+			// - layer 1 ($0, deterministic): state-lane yêu mọi probe XANH; ĐỎ = lỗi
+			//   worker (từ chối, không cần judge); VÀNG = spec-fault → judge phân xử
+			// - layer 2 (judge, model khác họ GLM): judgment-lane luôn chạy; state-lane
+			//   chạy khi VÀNG hoặc strict. Hệ quả theo verdictConsequence: demote sau
+			//   2 fail-conf-cao liên tiếp, conf thấp → xin thêm evidence, PARK khi đủ
+			//   3 vòng, judge chết → từ chối (fail-closed, không đổi state).
+			if (params.appeal !== undefined) {
+				patch.status = "parked";
+				patch.appealReason = params.appeal.trim().slice(0, 500);
+				patch.failStreak = 0;
+			} else if (params.status === "completed") {
 				const task = state.tasks.find((t) => t.id === params.id);
 				const spec = patch.verify ?? task?.verify;
+				const evidence = patch.evidence ?? task?.evidence ?? "";
+				let judgeNeeded = false;
+				let probeViews: JudgeProbeView[] | undefined;
 				if (spec && spec.lane === "state" && spec.probes.length > 0) {
 					const audit = auditCompletion(spec, runLog);
-					if (audit.verdict !== "pass") {
+					probeViews = audit.results.map((r) => ({
+						pattern: r.pattern,
+						expect: r.expect,
+						status: r.status,
+						observed: r.observed,
+					}));
+					if (audit.verdict === "fail") {
 						throw new Error(
 							`[verify] #${params.id} CHƯA qua kiểm chứng layer-1:\n${summarizeAudit(audit)}\nLàm xong việc rồi chạy lệnh kiểm (qua bash thật, để sổ ghi có bằng chứng) rồi khai completed lại; nếu probe khai sai thì amend verify (tối đa 2 lần).`,
 						);
 					}
-					patch.audit = { at: Date.now(), verdict: "pass", summary: summarizeAudit(audit) };
-				} else if (spec && spec.lane === "judgment") {
-					const claims = checkEvidenceCommands(patch.evidence ?? task?.evidence ?? "", runLog);
-					const unfound = claims.filter((c) => !c.found);
-					const note =
-						claims.length === 0
-							? "lane=judgment — evidence không có lệnh backtick nào để đối chiếu (layer-2 sẽ phán sau)"
-							: unfound.length > 0
-								? `lane=judgment — cảnh báo: ${unfound.map((c) => `"${c.claim}"`).join(", ")} không thấy trong sổ ghi lệnh (layer-2 sẽ phán)`
-								: "lane=judgment — mọi lệnh evidence đều có trong sổ ghi";
-					patch.audit = { at: Date.now(), verdict: "pass-judgment", summary: note };
+					if (audit.verdict === "pass" && !spec.strict) {
+						patch.audit = { at: Date.now(), verdict: "pass", summary: summarizeAudit(audit) };
+					} else {
+						// VÀNG (spec-fault) hoặc strict-green → layer-2 phán
+						judgeNeeded = true;
+					}
+				} else if (spec) {
+					// lane=judgment (hoặc state không probe — floor ép thành judgment)
+					judgeNeeded = true;
+				}
+
+				if (judgeNeeded) {
+					const roundsUsed = task?.judgeRounds ?? 0;
+					if (roundsUsed >= MAX_JUDGE_ROUNDS) {
+						// đủ vòng phán rồi — park ngay, không tốn thêm judge call
+						patch.status = "parked";
+						patch.appealReason = `judge cap: đã ${roundsUsed} vòng phán chưa hoàn thành`;
+					} else {
+						const logSlice = pickLogSlice(
+							runLog.map((e) => ({ cmd: e.cmd, output: e.output })),
+							probeViews ?? [],
+							evidence,
+						);
+						const packet = buildJudgePacket(
+							{
+								subject: patch.subject ?? task?.subject ?? "",
+								doneCheck: patch.description ?? task?.description ?? "",
+								evidence,
+								lane: spec?.lane ?? "judgment",
+								probes: probeViews,
+							},
+							logSlice,
+						);
+						const cwd = ((ctx as { cwd?: string }).cwd ?? process.cwd()) as string;
+						const raw = await runJudge(packet, cwd);
+						const verdict = raw !== null ? parseJudgeVerdict(raw, logSlice.length) : null;
+						const conseq = verdictConsequence(verdict, {
+							failStreak: task?.failStreak ?? 0,
+							judgeRounds: roundsUsed,
+						});
+						if (conseq.action === "refuse-unavailable") {
+							// fail-closed: không đổi state, không tốn vòng
+							throw new Error(conseq.message);
+						}
+						patch.judgeRounds = conseq.judgeRounds;
+						patch.failStreak = conseq.failStreak;
+						if (conseq.action === "complete") {
+							patch.audit = { at: Date.now(), verdict: "judge-pass", summary: conseq.message };
+						} else if (conseq.action === "demote") {
+							patch.status = "in_progress";
+							patch.audit = { at: Date.now(), verdict: "judge-fail", summary: conseq.message };
+						} else if (conseq.action === "park-cap") {
+							patch.status = "parked";
+							patch.appealReason = conseq.message.slice(0, 500);
+							patch.audit = { at: Date.now(), verdict: "judge-insufficient", summary: conseq.message };
+						} else if (conseq.action === "need-evidence") {
+							patch.status = task?.status ?? "pending"; // không hoàn thành — giữ nguyên trạng thái
+							patch.audit = { at: Date.now(), verdict: "judge-insufficient", summary: conseq.message };
+						} else {
+							// fail-streak: refused, chưa demote — giữ trạng thái, đếm streak
+							patch.status = task?.status ?? "pending";
+							patch.audit = { at: Date.now(), verdict: "judge-fail", summary: conseq.message };
+						}
+					}
 				}
 			}
 
@@ -353,20 +539,23 @@ export default function taskExtension(pi: ExtensionAPI) {
 			const unblocked = newlyReady(state, result.state);
 			commit(ctx as UiContext, result.state);
 			const warn = result.warnings.length > 0 ? `\nWarnings: ${result.warnings.join(" ")}` : "";
-			const auditNote =
-				params.status === "completed" && result.task!.audit
-					? `\nAudit: ${result.task!.audit.summary.replace(/\n/g, "; ")}`
+			const auditNote = result.task!.audit ? `\nAudit: ${result.task!.audit.summary.replace(/\n/g, "; ")}` : "";
+			const parkedNote =
+				result.task!.status === "parked"
+					? `\nPARKED (dừng chờ user): ${result.task!.appealReason ?? "—"} — mở lại bằng task_update status=in_progress (khi user xử xong).`
 					: "";
 			const strictNote =
 				params.status === "completed" && result.task!.verify?.strict
-					? "\n(STRICT task — layer-2 verifier chưa build; hiện completion dựa trên layer-1 audit)"
+					? "\n(STRICT task — layer-2 judge đã phán theo audit ở trên)"
 					: "";
 			const ready =
 				unblocked.length > 0
 					? `\nNow ready (no open blockers, safe to parallelize): ${unblocked.map((t) => `#${t.id} ${t.subject}`).join(", ")}`
 					: "";
 			return {
-				content: [{ type: "text", text: `#${result.task!.id} → ${result.task!.status}${warn}${auditNote}${strictNote}${ready}` }],
+				content: [
+					{ type: "text", text: `#${result.task!.id} → ${result.task!.status}${warn}${auditNote}${parkedNote}${strictNote}${ready}` },
+				],
 				details: {
 					id: result.task!.id,
 					status: result.task!.status,

@@ -16,7 +16,7 @@
 
 import type { VerifySpec, TaskAudit } from "./verify.ts";
 
-export const TASK_STATUSES = ["pending", "in_progress", "completed", "cancelled"] as const;
+export const TASK_STATUSES = ["pending", "in_progress", "completed", "cancelled", "parked"] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
 
 export interface Task {
@@ -36,6 +36,12 @@ export interface Task {
   audit?: TaskAudit;
   /** How many times the verify spec was amended after create (cap enforced at tool layer). */
   verifyAmendments?: number;
+  /** Layer-2: consecutive high-confidence judge fails (demote at 2). */
+  failStreak?: number;
+  /** Layer-2: total judge rounds this task has consumed (cap 3 → park). */
+  judgeRounds?: number;
+  /** Set when the task was parked via appeal or the round cap — why it waits for the user. */
+  appealReason?: string;
   createdAt: number;
   updatedAt: number;
 }

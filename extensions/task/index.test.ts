@@ -625,54 +625,68 @@ test("verify wiring: green path — real command in log unlocks completion + aud
 	assert.match(list.content[0]!.text, /audit:pass/);
 });
 
-test("verify wiring: amber shows observed output; amend fixes a wrong probe (cap 2)", async () => {
-	const f = fakePi();
-	taskExtension(f.pi as never);
-	await f
-		.tool("task_create")
-		.execute("c1", { subject: "check PR", verify: { probes: [{ pattern: "gh pr view 139", expect: "MERGED" }] } }, undefined, undefined, f.ctx);
-	fireBash(f, "t1", "gh pr view 139", "state OPEN");
-	const red = (await f
-		.tool("task_update")
-		.execute("u1", { id: 1, status: "completed", evidence: "PR state checked" }, undefined, undefined, f.ctx)
-		.catch((e: Error) => e)) as Error;
-	assert.match(red.message, /KHÔNG chứa/);
-	assert.match(red.message, /OPEN/);
+test("verify wiring: amber escalates to judge with observed output; amend fixes a wrong probe (cap 2)", async () => {
+	const calls = stubJudge(JSON.stringify({ verdict: "insufficient_evidence", confidence: "low", reason: "chưa thấy", cited_log_ids: [] }));
+	try {
+		const f = fakePi();
+		taskExtension(f.pi as never);
+		await f
+			.tool("task_create")
+			.execute("c1", { subject: "check PR", verify: { probes: [{ pattern: "gh pr view 139", expect: "MERGED" }] } }, undefined, undefined, f.ctx);
+		fireBash(f, "t1", "gh pr view 139", "state OPEN");
+		// amber (ran, expect lệch) → layer-2 phán; judge xin thêm evidence → chưa hoàn thành
+		const r1 = (await f
+			.tool("task_update")
+			.execute("u1", { id: 1, status: "completed", evidence: "PR state checked" }, undefined, undefined, f.ctx)) as {
+			content: { text: string }[];
+		};
+		assert.match(r1.content[0]!.text, /chưa đủ bằng chứng/);
+		assert.equal(calls.length, 1);
+		assert.match(calls[0]!, /\[amber\]/); // observed output thật rides the judge packet
+		assert.match(calls[0]!, /OPEN/);
 
-	// amend 1: probe was wrong (work is done, expect should be OPEN)
-	const amended = await f
-		.tool("task_update")
-		.execute("u2", { id: 1, verify: { probes: [{ pattern: "gh pr view 139", expect: "OPEN" }] } }, undefined, undefined, f.ctx);
-	assert.ok(amended, "first amend allowed");
-	// amend 2: still allowed
-	await f.tool("task_update").execute("u3", { id: 1, verify: { probes: [{ pattern: "gh pr view 139", expect: "OPEN" }] } }, undefined, undefined, f.ctx);
-	// amend 3: capped
-	await assert.rejects(
-		f.tool("task_update").execute("u4", { id: 1, verify: { probes: [{ pattern: "gh pr view 139", expect: "OPEN" }] } }, undefined, undefined, f.ctx),
-		/đã amend 2 lần/,
-	);
-	const done = (await f
-		.tool("task_update")
-		.execute("u5", { id: 1, status: "completed", evidence: "PR OPEN as expected" }, undefined, undefined, f.ctx)) as {
-		content: { text: string }[];
-	};
-	assert.match(done.content[0]!.text, /→ completed/);
-	const data = f.entries.at(-1)!.data as { tasks: { verifyAmendments?: number }[] };
-	assert.equal(data.tasks[0]!.verifyAmendments, 2);
+		// amend 1: probe was wrong (work is done, expect should be OPEN)
+		await f
+			.tool("task_update")
+			.execute("u2", { id: 1, verify: { probes: [{ pattern: "gh pr view 139", expect: "OPEN" }] } }, undefined, undefined, f.ctx);
+		// amend 2: still allowed
+		await f.tool("task_update").execute("u3", { id: 1, verify: { probes: [{ pattern: "gh pr view 139", expect: "OPEN" }] } }, undefined, undefined, f.ctx);
+		// amend 3: capped
+		await assert.rejects(
+			f.tool("task_update").execute("u4", { id: 1, verify: { probes: [{ pattern: "gh pr view 139", expect: "OPEN" }] } }, undefined, undefined, f.ctx),
+			/đã amend 2 lần/,
+		);
+		const done = (await f
+			.tool("task_update")
+			.execute("u5", { id: 1, status: "completed", evidence: "PR OPEN as expected" }, undefined, undefined, f.ctx)) as {
+			content: { text: string }[];
+		};
+		assert.match(done.content[0]!.text, /→ completed/);
+		const data = f.entries.at(-1)!.data as { tasks: { verifyAmendments?: number }[] };
+		assert.equal(data.tasks[0]!.verifyAmendments, 2);
+	} finally {
+		_setJudgeRunnerForTests(null);
+	}
 });
 
-test("verify wiring: judgment lane completes with advisory evidence cross-check", async () => {
-	const f = fakePi();
-	taskExtension(f.pi as never);
-	await f.tool("task_create").execute("c1", { subject: "write brief", verify: { lane: "judgment" } }, undefined, undefined, f.ctx);
-	const out = (await f
-		.tool("task_update")
-		.execute("u1", { id: 1, status: "completed", evidence: "wrote it, ran `grep -c source brief.md`" }, undefined, undefined, f.ctx)) as {
-		content: { text: string }[];
-	};
-	assert.match(out.content[0]!.text, /cảnh báo/); // backticked cmd not in log → advisory warning
-	const list = (await f.tool("task_list").execute("l1", {}, undefined, undefined, f.ctx)) as { content: { text: string }[] };
-	assert.match(list.content[0]!.text, /audit:pass-judgment/);
+test("verify wiring: judgment lane completes via the judge; advisory claims ride the packet", async () => {
+	const calls = stubJudge(JSON.stringify({ verdict: "pass", confidence: "high", reason: "brief đạt done-check", cited_log_ids: [] }));
+	try {
+		const f = fakePi();
+		taskExtension(f.pi as never);
+		await f.tool("task_create").execute("c1", { subject: "write brief", verify: { lane: "judgment" } }, undefined, undefined, f.ctx);
+		const out = (await f
+			.tool("task_update")
+			.execute("u1", { id: 1, status: "completed", evidence: "wrote it, ran `grep -c source brief.md`" }, undefined, undefined, f.ctx)) as {
+			content: { text: string }[];
+		};
+		assert.match(out.content[0]!.text, /judge: PASS/);
+		const list = (await f.tool("task_list").execute("l1", {}, undefined, undefined, f.ctx)) as { content: { text: string }[] };
+		assert.match(list.content[0]!.text, /audit:judge-pass/);
+		assert.match(calls[0]!, /grep -c source brief.md/); // backticked claim rides the judge packet
+	} finally {
+		_setJudgeRunnerForTests(null);
+	}
 });
 
 test("verify wiring: session_start clears the run log (restart = fresh evidence)", async () => {
@@ -694,16 +708,252 @@ test("verify wiring: session_start clears the run log (restart = fresh evidence)
 });
 
 test("verify wiring: projection carries verify/audit fields for the Paseo panel", async () => {
-	const f = fakePi();
-	taskExtension(f.pi as never);
-	await f.tool("task_create").execute("c1", { subject: "x", verify: { probes: [{ pattern: "bun test", expect: "pass" }], strict: true } }, undefined, undefined, f.ctx);
-	fireBash(f, "t1", "bun test", "all pass");
-	await f.tool("task_update").execute("u1", { id: 1, status: "completed", evidence: "suite green" }, undefined, undefined, f.ctx);
-	const data = f.entries.at(-1)!.data as TaskState;
-	const status = buildTaskStatus(data, "sess-verify");
-	assert.equal(status.tasks[0]!.verify!.lane, "state");
-	assert.equal(status.tasks[0]!.verify!.strict, true);
-	assert.equal(status.tasks[0]!.verify!.probes, 1);
-	assert.equal(status.tasks[0]!.audit!.verdict, "pass");
-	assert.match(status.tasks[0]!.audit!.summary, /✓/);
+	stubJudge(JSON.stringify({ verdict: "pass", confidence: "high", reason: "ok", cited_log_ids: [] }));
+	try {
+		const f = fakePi();
+		taskExtension(f.pi as never);
+		await f.tool("task_create").execute("c1", { subject: "x", verify: { probes: [{ pattern: "bun test", expect: "pass" }], strict: true } }, undefined, undefined, f.ctx);
+		fireBash(f, "t1", "bun test", "all pass");
+		await f.tool("task_update").execute("u1", { id: 1, status: "completed", evidence: "suite green" }, undefined, undefined, f.ctx);
+		const data = f.entries.at(-1)!.data as TaskState;
+		const status = buildTaskStatus(data, "sess-verify");
+		assert.equal(status.tasks[0]!.verify!.lane, "state");
+		assert.equal(status.tasks[0]!.verify!.strict, true);
+		assert.equal(status.tasks[0]!.verify!.probes, 1);
+		assert.equal(status.tasks[0]!.audit!.verdict, "judge-pass"); // strict ép layer-2
+		assert.match(status.tasks[0]!.audit!.summary, /judge: PASS/);
+	} finally {
+		_setJudgeRunnerForTests(null);
+	}
+});
+
+// ── Verify layer 2 wiring (v1.4.26) — judge stub via _setJudgeRunnerForTests ──
+
+import { _setJudgeRunnerForTests } from "./index.ts";
+import { MAX_JUDGE_ROUNDS } from "./src/judge.ts";
+
+function stubJudge(reply: string | null) {
+	const calls: string[] = [];
+	_setJudgeRunnerForTests(async (packet: string) => {
+		calls.push(packet);
+		return reply;
+	});
+	return calls;
+}
+
+function failJson(v: Partial<{ verdict: string; confidence: string; reason: string }> = {}): string {
+	return JSON.stringify({ verdict: "fail", confidence: "high", reason: "not done", cited_log_ids: [], ...v });
+}
+
+test("layer2 wiring: judgment-lane completion goes through the judge (pass → completed)", async () => {
+	const calls = stubJudge(JSON.stringify({ verdict: "pass", confidence: "high", reason: "log ủng hộ", cited_log_ids: [] }));
+	try {
+		const f = fakePi();
+		taskExtension(f.pi as never);
+		await f.tool("task_create").execute("c1", { subject: "viết brief", verify: { lane: "judgment" } }, undefined, undefined, f.ctx);
+		const out = (await f
+			.tool("task_update")
+			.execute("u1", { id: 1, status: "completed", evidence: "brief 8 câu, trích nguồn" }, undefined, undefined, f.ctx)) as {
+			content: { text: string }[];
+		};
+		assert.match(out.content[0]!.text, /completed/);
+		assert.match(out.content[0]!.text, /judge: PASS/);
+		assert.equal(calls.length, 1);
+		assert.match(calls[0]!, /done-check/); // packet shape rode through
+	} finally {
+		_setJudgeRunnerForTests(null);
+	}
+});
+
+test("layer2 wiring: fail-closed — judge unavailable refuses completion, no round spent", async () => {
+	stubJudge(null);
+	try {
+		const f = fakePi();
+		taskExtension(f.pi as never);
+		await f.tool("task_create").execute("c1", { subject: "viết brief", verify: { lane: "judgment" } }, undefined, undefined, f.ctx);
+		await assert.rejects(
+			f.tool("task_update").execute("u1", { id: 1, status: "completed", evidence: "xong" }, undefined, undefined, f.ctx),
+			/fail-closed/,
+		);
+		const list = (await f.tool("task_list").execute("l1", {}, undefined, undefined, f.ctx)) as { content: { text: string }[] };
+		assert.match(list.content[0]!.text, /pending/); // chưa in_progress, chưa judge-rounds
+		assert.doesNotMatch(list.content[0]!.text, /judge-rounds/);
+	} finally {
+		_setJudgeRunnerForTests(null);
+	}
+});
+
+test("layer2 wiring: 2 consecutive high-conf fails demote to in_progress with reason", async () => {
+	stubJudge(failJson());
+	try {
+		const f = fakePi();
+		taskExtension(f.pi as never);
+		await f.tool("task_create").execute("c1", { subject: "viết brief", verify: { lane: "judgment" } }, undefined, undefined, f.ctx);
+		// vòng 1: fail cao → refused (fail-streak 1), chưa demote
+		const r1 = (await f
+			.tool("task_update")
+			.execute("u1", { id: 1, status: "completed", evidence: "draft" }, undefined, undefined, f.ctx)) as {
+			content: { text: string }[];
+		};
+		assert.match(r1.content[0]!.text, /1\/2/);
+		assert.match(r1.content[0]!.text, /pending/);
+		// vòng 2: fail cao nữa → demote in_progress, streak reset
+		const r2 = (await f
+			.tool("task_update")
+			.execute("u2", { id: 1, status: "completed", evidence: "draft v2" }, undefined, undefined, f.ctx)) as {
+			content: { text: string }[];
+		};
+		assert.match(r2.content[0]!.text, /in_progress/);
+		assert.match(r2.content[0]!.text, /demote/);
+		const list = (await f.tool("task_list").execute("l1", {}, undefined, undefined, f.ctx)) as { content: { text: string }[] };
+		assert.doesNotMatch(list.content[0]!.text, /fail-streak/); // reset sau demote
+	} finally {
+		_setJudgeRunnerForTests(null);
+	}
+});
+
+test("layer2 wiring: low-conf fail asks for evidence without demotion", async () => {
+	stubJudge(failJson({ confidence: "low" }));
+	try {
+		const f = fakePi();
+		taskExtension(f.pi as never);
+		await f.tool("task_create").execute("c1", { subject: "viết brief", verify: { lane: "judgment" } }, undefined, undefined, f.ctx);
+		const out = (await f
+			.tool("task_update")
+			.execute("u1", { id: 1, status: "completed", evidence: "draft" }, undefined, undefined, f.ctx)) as {
+			content: { text: string }[];
+		};
+		assert.match(out.content[0]!.text, /không demote/);
+		assert.match(out.content[0]!.text, /pending/);
+	} finally {
+		_setJudgeRunnerForTests(null);
+	}
+});
+
+test("layer2 wiring: amber state-lane escalates to judge; judge pass overrides the probe", async () => {
+	const calls = stubJudge(JSON.stringify({ verdict: "pass", confidence: "medium", reason: "probe spec sai — việc đã xong", cited_log_ids: [0] }));
+	try {
+		const f = fakePi();
+		taskExtension(f.pi as never);
+		await f
+			.tool("task_create")
+			.execute("c1", { subject: "bump", verify: { lane: "state", probes: [{ pattern: "cat out.txt", expect: "V1" }] } }, undefined, undefined, f.ctx);
+		fireBash(f, "t1", "cat out.txt", "V2"); // chạy nhưng expect lệch → amber
+		const out = (await f
+			.tool("task_update")
+			.execute("u1", { id: 1, status: "completed", evidence: "output V2" }, undefined, undefined, f.ctx)) as {
+			content: { text: string }[];
+		};
+		assert.match(out.content[0]!.text, /completed/);
+		assert.match(out.content[0]!.text, /judge: PASS/);
+		assert.equal(calls.length, 1);
+		assert.match(calls[0]!, /\[amber\]/); // packet mang kết quả probe amber
+	} finally {
+		_setJudgeRunnerForTests(null);
+	}
+});
+
+test("layer2 wiring: red state-lane still refuses WITHOUT calling the judge", async () => {
+	const calls = stubJudge(JSON.stringify({ verdict: "pass", confidence: "high", reason: "?", cited_log_ids: [] }));
+	try {
+		const f = fakePi();
+		taskExtension(f.pi as never);
+		await f
+			.tool("task_create")
+			.execute("c1", { subject: "bump", verify: { lane: "state", probes: [{ pattern: "cat out.txt", expect: "V1" }] } }, undefined, undefined, f.ctx);
+		await assert.rejects(
+			f.tool("task_update").execute("u1", { id: 1, status: "completed", evidence: "xong" }, undefined, undefined, f.ctx),
+			/CHƯA qua kiểm chứng layer-1/,
+		);
+		assert.equal(calls.length, 0); // worker-fault: judge không tốn tiền
+	} finally {
+		_setJudgeRunnerForTests(null);
+	}
+});
+
+test("layer2 wiring: strict forces the judge even when layer-1 is all green", async () => {
+	const calls = stubJudge(JSON.stringify({ verdict: "pass", confidence: "high", reason: "ok", cited_log_ids: [0] }));
+	try {
+		const f = fakePi();
+		taskExtension(f.pi as never);
+		await f
+			.tool("task_create")
+			.execute("c1", { subject: "bump", verify: { lane: "state", probes: [{ pattern: "cat out.txt", expect: "V1" }], strict: true } }, undefined, undefined, f.ctx);
+		fireBash(f, "t1", "cat out.txt", "V1");
+		const out = (await f
+			.tool("task_update")
+			.execute("u1", { id: 1, status: "completed", evidence: "green" }, undefined, undefined, f.ctx)) as {
+			content: { text: string }[];
+		};
+		assert.match(out.content[0]!.text, /judge: PASS/);
+		assert.equal(calls.length, 1);
+	} finally {
+		_setJudgeRunnerForTests(null);
+	}
+});
+
+test("layer2 wiring: appeal parks the task with the reason — no judge call", async () => {
+	const calls = stubJudge(JSON.stringify({ verdict: "pass", confidence: "high", reason: "?", cited_log_ids: [] }));
+	try {
+		const f = fakePi();
+		taskExtension(f.pi as never);
+		await f.tool("task_create").execute("c1", { subject: "viết brief", verify: { lane: "judgment" } }, undefined, undefined, f.ctx);
+		const out = (await f
+			.tool("task_update")
+			.execute("u1", { id: 1, appeal: "judge phán sai — output thật đã đạt done-check" }, undefined, undefined, f.ctx)) as {
+			content: { text: string }[];
+		};
+		assert.match(out.content[0]!.text, /parked/);
+		assert.match(out.content[0]!.text, /PARKED/);
+		assert.equal(calls.length, 0);
+		const list = (await f.tool("task_list").execute("l1", {}, undefined, undefined, f.ctx)) as { content: { text: string }[] };
+		assert.match(list.content[0]!.text, /judge phán sai/);
+		// mở lại được sau khi user xử lý
+		const back = (await f
+			.tool("task_update")
+			.execute("u2", { id: 1, status: "in_progress" }, undefined, undefined, f.ctx)) as { content: { text: string }[] };
+		assert.match(back.content[0]!.text, /in_progress/);
+	} finally {
+		_setJudgeRunnerForTests(null);
+	}
+});
+
+test("layer2 wiring: 3rd round refusal parks instead of judging a 4th time", async () => {
+	stubJudge(failJson({ confidence: "low" })); // mỗi vòng chỉ need-evidence
+	try {
+		const f = fakePi();
+		taskExtension(f.pi as never);
+		await f.tool("task_create").execute("c1", { subject: "viết brief", verify: { lane: "judgment" } }, undefined, undefined, f.ctx);
+		for (let i = 0; i < MAX_JUDGE_ROUNDS - 1; i++) {
+			await f.tool("task_update").execute(`u${i}`, { id: 1, status: "completed", evidence: `draft ${i}` }, undefined, undefined, f.ctx);
+		}
+		const out = (await f
+			.tool("task_update")
+			.execute("u3", { id: 1, status: "completed", evidence: "draft 3" }, undefined, undefined, f.ctx)) as {
+			content: { text: string }[];
+		};
+		assert.match(out.content[0]!.text, /parked/);
+		const list = (await f.tool("task_list").execute("l1", {}, undefined, undefined, f.ctx)) as { content: { text: string }[] };
+		assert.match(list.content[0]!.text, /judge-rounds:3/);
+	} finally {
+		_setJudgeRunnerForTests(null);
+	}
+});
+
+test("layer2 wiring: projection carries failStreak/judgeRounds/appealReason + parked status", async () => {
+	stubJudge(failJson());
+	try {
+		const f = fakePi();
+		taskExtension(f.pi as never);
+		await f.tool("task_create").execute("c1", { subject: "viết brief", verify: { lane: "judgment" } }, undefined, undefined, f.ctx);
+		await f.tool("task_update").execute("u1", { id: 1, status: "completed", evidence: "d" }, undefined, undefined, f.ctx);
+		await f.tool("task_update").execute("u2", { id: 1, appeal: "không đồng ý phán" }, undefined, undefined, f.ctx);
+		const status = buildTaskStatus(f.entries.at(-1)!.data as TaskState, "");
+		assert.equal(status.tasks[0]!.status, "parked");
+		assert.equal(status.tasks[0]!.failStreak, 0);
+		assert.equal(status.tasks[0]!.judgeRounds, 1);
+		assert.match(status.tasks[0]!.appealReason!, /không đồng ý/);
+	} finally {
+		_setJudgeRunnerForTests(null);
+	}
 });
