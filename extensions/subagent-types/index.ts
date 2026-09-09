@@ -61,6 +61,23 @@ import {
 	type ChannelMessage,
 	type McpEndpoint,
 } from "./paseo-channel.ts";
+import {
+	POOL_DEFAULT_CONCURRENCY,
+	POOL_MAX_CONCURRENCY,
+	POOL_STATE,
+	aggregateReport,
+	finishItem,
+	initPool,
+	markRunning,
+	nextToStart,
+	parsePoolSpec,
+	replayPools,
+	refreshPoolStatus,
+	resumePlan,
+	timeoutRunning,
+	unfinished,
+	type PoolState,
+} from "./pool.ts";
 
 const extensionDir = dirname(fileURLToPath(import.meta.url));
 const agentsDir = join(extensionDir, "agents");
@@ -545,6 +562,17 @@ async function kickOutbound(): Promise<void> {
 		// record — if the lookup misses now, before_input retries before any
 		// prompt is processed.
 		applyRole(ctx);
+		// Pool replay (v1.4.30): unfinished pools survive respawn — full
+		// snapshots in the ledger, last one per pool wins. Children outlive
+		// the parent process, so pool_resume re-checks them by agentId.
+		try {
+			const branch = (ctx as { sessionManager?: { getBranch?: () => unknown[] } }).sessionManager?.getBranch?.();
+			if (Array.isArray(branch)) {
+				for (const [id, st] of replayPools(branch as never)) pools.set(id, st);
+			}
+		} catch {
+			// Replay is best-effort; a fresh session just starts pool-less.
+		}
 		// Orphan sweep (main role only, once per process): cancel still-running
 		// subagents whose parent agent is gone. Backstop for the daemon's
 		// archive-cascade (which never runs on kill/crash). Best-effort, async,
@@ -1007,6 +1035,189 @@ ${reply.text}` }],
 		description: "Verify subagent-types extension is loaded",
 		handler: async (_args, ctx) => {
 			ctx.ui.notify(`subagent-types active — role=${myRole ?? "(none)"}, roles=[${[...roles.keys()].join(", ")}]`, "info");
+		},
+	});
+
+	// ── spawn_pool: bounded parallel fan-out on the sanctioned path (v1.4.30)
+	// Borrowed from @pify/swarm (worker-pool cap 4, aggregated report) and
+	// @pify/workflow (per-item status + resume), per the 2026-09-09 eval.
+	// Children go through the SAME createChildAgent/MCP path as
+	// spawn_subagent: Paseo-visible, role-gated, channel-reported. Read-mostly
+	// roles only — single-writer work stays sequential (pool.ts gate).
+	const SUBAGENT_POOL_EXTRA_ROLES = new Set(
+		(process.env.SUBAGENT_POOL_EXTRA_ROLES ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+	);
+	const pools = new Map<string, PoolState>();
+
+	function persistPool(state: PoolState): void {
+		refreshPoolStatus(state);
+		pools.set(state.poolId, state);
+		try {
+			pi.appendEntry(POOL_STATE, JSON.parse(JSON.stringify(state)) as never);
+		} catch {
+			// Ledger failures never break the pool itself.
+		}
+	}
+
+	/** Wait for ONE child to close (grace-drain like spawn_paseo_subagent). */
+	async function awaitChild(
+		endpoint: McpEndpoint,
+		childId: string,
+		deadline: number,
+	): Promise<{ finished: boolean; report: string }> {
+		const collected: ChannelMessage[] = [];
+		let closedTicks = 0;
+		while (Date.now() < deadline) {
+			collected.push(...takeMessagesFrom(childId, myAgentId ?? ""));
+			const st = await getAgentStatus(endpoint, childId);
+			if (!st.ok || isBusy(st.status)) closedTicks = 0;
+			else {
+				closedTicks += 1;
+				if (closedTicks >= 3) break;
+			}
+			if (closedTicks < 3) await sleep(WAIT_POLL_MS);
+		}
+		collected.push(...takeMessagesFrom(childId, myAgentId ?? ""));
+		const real = collected.filter((m) => !isAutoReport(m));
+		if (real.length > 0) return { finished: true, report: real.map((m) => m.text).join("\n\n") };
+		return { finished: false, report: "" };
+	}
+
+	async function runPoolWave(endpoint: McpEndpoint, state: PoolState, deadlineMs: number, ctx: unknown): Promise<void> {
+		const deadline = Date.now() + deadlineMs;
+		while (Date.now() < deadline && unfinished(state)) {
+			// Start what fits within the pool's own concurrency.
+			for (const item of nextToStart(state)) {
+				const def = roles.get(item.role);
+				if (!def) {
+					finishItem(state, item.key, { status: "failed", error: `role "${item.role}" vanished` });
+					persistPool(state);
+					continue;
+				}
+				const cfg = resolveSpawnConfig(item, def, ctx as Parameters<typeof resolveSpawnConfig>[2]);
+				if (cfg.kind !== "ready") {
+					finishItem(state, item.key, { status: "failed", error: cfg.text.slice(0, 300) });
+					persistPool(state);
+					continue;
+				}
+				const spawned = await createChildAgent(item, def, cfg, myAgentId, endpoint);
+				if (!spawned.ok || !spawned.agentId) {
+					finishItem(state, item.key, { status: "failed", error: `spawn failed: ${spawned.ok ? "no agent id" : spawned.error}` });
+					persistPool(state);
+					continue;
+				}
+				markRunning(state, item.key, spawned.agentId);
+				persistPool(state);
+			}
+			// Wait for the first running child to finish, then loop to refill.
+			const running = state.items.filter((i) => i.status === "running");
+			if (running.length === 0) break;
+			const results = await Promise.all(running.map((i) => awaitChild(endpoint, i.agentId!, Math.min(deadline, Date.now() + 60_000))));
+			running.forEach((item, idx) => {
+				if (results[idx].finished) {
+					finishItem(state, item.key, { status: "done", report: results[idx].report || getActivitySummarySafe(item.agentId!) });
+				}
+				// Still busy → stays `running`; the outer loop re-awaits until the
+				// pool deadline sweep decides (timeout) or the child closes.
+				persistPool(state);
+			});
+			if (Date.now() >= deadline) break;
+		}
+	}
+
+	function getActivitySummarySafe(agentId: string): string {
+		return `(child closed without message_main — poll paseo_get_agent_activity("${agentId}") for its curated digest)`;
+	}
+
+	const PoolItemParams = Type.Object({
+		name: Type.Optional(Type.String({ description: "Optional unique name for this item (registry + report label)." })),
+		role: Type.String({ description: "Pool-safe role (read-mostly): scout, researcher…" }),
+		task: Type.String({ description: "Self-contained task — the child sees nothing else." }),
+		model: Type.Optional(Type.String({ description: "Override the role's default model." })),
+		thinking: Type.Optional(Type.String({ description: "Override the role's default thinking level." })),
+		expect: Type.Optional(Type.String({ description: "Deterministic gate: substring the child's report MUST contain, else the item lands gate_failed." })),
+	});
+
+	pi.registerTool({
+		name: "spawn_pool",
+		label: "spawn_pool",
+		description:
+			"Bounded parallel fan-out: spawn 2-12 role-typed children, at most 4 at a time, wait for all, and return ONE aggregated report (per-item status + gate-checked results). Read-mostly roles only (scout/researcher shapes) — write-capable roles stay sequential. Survives respawn: pool_status / pool_resume pick up unfinished items.",
+		promptSnippet:
+			"Use spawn_pool for read-only fan-out (e.g. 3 parallel researchers): one call, capped concurrency, one aggregated report with per-item gates. Sequential single-writer work stays OUT of the pool.",
+		promptGuidelines: [
+			"Pool items must be independent; each task self-contained.",
+			`Optional per-item expect: "report must contain X" — items failing the substring gate come back gate_failed.`,
+			"On timeout the aggregate reports partials; pool_resume(poolId) re-checks running children and spawns queued ones.",
+		],
+		parameters: Type.Object({
+			items: Type.Array(PoolItemParams, { minItems: 2, maxItems: 12, description: "2-12 independent, self-contained tasks." }),
+			concurrency: Type.Optional(Type.Number({ description: `Parallel children at once (1-${POOL_MAX_CONCURRENCY}, default ${POOL_DEFAULT_CONCURRENCY}).` })),
+		}),
+		async execute(_id, params, _signal, _onUpdate, ctx) {
+			const endpoint = findMcpEndpoint(myAgentId);
+			if (!endpoint) {
+				return { content: [{ type: "text" as const, text: "Paseo MCP endpoint not found (is this session running under Paseo?)." }], details: {} };
+			}
+			const parsed = parsePoolSpec(params, roles, SUBAGENT_POOL_EXTRA_ROLES);
+			if (!parsed.ok) return { content: [{ type: "text" as const, text: parsed.text }], details: {} };
+			const poolId = `pool-${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 6)}`;
+			const state = initPool(poolId, parsed.items, parsed.concurrency);
+			persistPool(state);
+			await runPoolWave(endpoint, state, SUBAGENT_WAIT_MS, ctx);
+			if (unfinished(state)) {
+				timeoutRunning(state);
+				persistPool(state);
+			}
+			return {
+				content: [{ type: "text" as const, text: aggregateReport(state) }],
+				details: { poolId, done: state.items.filter((i) => i.status === "done").length, total: state.items.length },
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "pool_status",
+		label: "pool_status",
+		description: "List this session's spawn_pools and their per-item states (pending/running/done/failed/gate_failed/timeout).",
+		parameters: Type.Object({}),
+		async execute() {
+			if (pools.size === 0) return { content: [{ type: "text" as const, text: "No pools in this session yet." }], details: {} };
+			const lines = [...pools.values()].map((st) => aggregateReport(st));
+			return { content: [{ type: "text" as const, text: lines.join("\n\n———\n\n") }], details: {} };
+		},
+	});
+
+	pi.registerTool({
+		name: "pool_resume",
+		label: "pool_resume",
+		description:
+			"Continue an unfinished pool: re-check running/timed-out children (drain their reports), spawn queued items, return the refreshed aggregate. Safe to call repeatedly; survives respawn via the session ledger.",
+		parameters: Type.Object({
+			poolId: Type.String({ description: "Pool id from spawn_pool / pool_status." }),
+		}),
+		async execute(_id, params, _signal, _onUpdate, ctx) {
+			const state = pools.get(params.poolId);
+			if (!state) return { content: [{ type: "text" as const, text: `No pool "${params.poolId}" on record — pool_status lists the live ones.` }], details: {} };
+			const endpoint = findMcpEndpoint(myAgentId);
+			if (!endpoint) return { content: [{ type: "text" as const, text: "Paseo MCP endpoint not found." }], details: {} };
+			const plan = resumePlan(state);
+			// Timed-out children get one re-check window before a new wave.
+			for (const item of plan.recheck) {
+				const r = await awaitChild(endpoint, item.agentId!, Date.now() + 90_000);
+				if (r.finished) finishItem(state, item.key, { status: "done", report: r.report || getActivitySummarySafe(item.agentId!) });
+				persistPool(state);
+			}
+			// Timeouts that stayed busy return to running for the wave.
+			for (const item of state.items) {
+				if (item.status === "timeout") item.status = "running";
+			}
+			if (plan.spawn.length > 0 || unfinished(state)) await runPoolWave(endpoint, state, SUBAGENT_WAIT_MS, ctx);
+			if (unfinished(state)) {
+				timeoutRunning(state);
+				persistPool(state);
+			}
+			return { content: [{ type: "text" as const, text: aggregateReport(state) }], details: { poolId: params.poolId } };
 		},
 	});
 }
