@@ -17,7 +17,8 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { spawn } from "node:child_process";
-import { realpathSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, renameSync, watch, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 import {
 	TASK_STATE,
@@ -49,6 +50,7 @@ import {
 	verdictConsequence,
 	type JudgeProbeView,
 } from "./src/judge.ts";
+import { ackPayload, applyControlAction, controlFilePath, parseControlPayload } from "./src/control.ts";
 import { EMPTY_STATE, type TaskState, type TaskStatus } from "./src/types.ts";
 
 type UiContext = ExtensionContext;
@@ -173,6 +175,49 @@ export default function taskExtension(pi: ExtensionAPI) {
 	let runLog: RunLogEntry[] = [];
 	const runLogByCall = new Map<string, RunLogEntry>();
 	const BASH_TOOLS = new Set(["bash", "safe_bash"]);
+
+	/** Session whose control file this process watches (set at session_start). */
+	let controlSessionId = "";
+	/** sentAt of the last control payload applied (self-write ack dedupe). */
+	let lastControlSentAt: string | undefined;
+	let controlDebounce: ReturnType<typeof setTimeout> | undefined;
+
+	/** Ack the applied control payload so the panel can confirm the engine is live. */
+	function ackControlFile(payload: ReturnType<typeof parseControlPayload>): void {
+		if (!controlSessionId || !payload) return;
+		try {
+			const file = controlFilePath(controlSessionId);
+			mkdirSync(dirname(file), { recursive: true });
+			const tmp = `${file}.tmp-${process.pid}`;
+			writeFileSync(tmp, ackPayload(payload, new Date().toISOString()), "utf8");
+			renameSync(tmp, file);
+		} catch {
+			// best-effort ack
+		}
+	}
+
+	/** Apply a plugin/user action from the control file (watch callback). */
+	function consumeControlFile(): void {
+		if (!controlSessionId) return;
+		let payload: ReturnType<typeof parseControlPayload> = null;
+		try {
+			payload = parseControlPayload(readFileSync(controlFilePath(controlSessionId), "utf8"));
+		} catch {
+			return; // unreadable — nothing to apply
+		}
+		if (!payload) return;
+		if (payload.sentAt && payload.sentAt === lastControlSentAt) return; // our own ack echo
+		lastControlSentAt = payload.sentAt ?? `no-sentAt-${Date.now()}`;
+		const result = applyControlAction(state, payload, Date.now());
+		if (result.applied) {
+			// engine-side commit: no ctx here, projection + widget refresh via stored ctx
+			state = result.state;
+			pi.appendEntry(TASK_STATE, state);
+			projectStatus();
+			renderWidget();
+		}
+		ackControlFile(payload);
+	}
 
 	function extractOutput(result: unknown): string {
 		const r = result as { content?: Array<{ type?: string; text?: unknown }> } | null;
@@ -427,6 +472,18 @@ export default function taskExtension(pi: ExtensionAPI) {
 			if (params.blockedBy !== undefined) patch.blockedBy = params.blockedBy;
 			if (params.evidence !== undefined) patch.evidence = params.evidence;
 
+			// PARK là một chiều với model (v1.4.28): được đưa VÀO park (appeal/cap)
+			// nhưng không tự ra khỏi — worker tự un-park = bypass toàn bộ phán quyết
+			// (user report 2026-09-09). Cửa ra duy nhất: nút panel (user) → control
+			// file → consumeControlFile ở trên. Cancel task đang chờ user cũng chặn
+			// (hủy = giấu tranh chấp).
+			const existingForLock = state.tasks.find((t) => t.id === params.id);
+			if (existingForLock?.status === "parked" && params.status !== undefined && params.status !== "parked") {
+				throw new Error(
+					`[task] #${params.id} đang PARKED (dừng chờ user) — model không tự mở lại/hủy được. User bấm "mở lại" trên task panel (control-file bridge), hoặc user nói trực tiếp trong chat.`,
+				);
+			}
+
 			// Verify-spec amendment: escape hatch khi probe khai sai (chứ không
 			// phải để hạ mức kiểm). Tối đa 2 lần, mỗi lần đếm và ghi vào projection.
 			if (params.verify !== undefined) {
@@ -439,6 +496,11 @@ export default function taskExtension(pi: ExtensionAPI) {
 				}
 				const parsed = parseVerify(params.verify);
 				if (parsed.error || !parsed.spec) throw new Error(`[verify] ${parsed.error}`);
+				// strict v2 (user chốt 03:38): nâng strict ai cũng được, HẠ chỉ user —
+				// amendment không được dùng để tắt strict của task đang có
+				if (existingTask?.verify?.strict === true && parsed.spec.strict !== true) {
+					parsed.spec.strict = true;
+				}
 				patch.verify = parsed.spec;
 			}
 
@@ -631,6 +693,31 @@ export default function taskExtension(pi: ExtensionAPI) {
 		lastTurnTextOnly = false;
 		runLog = [];
 		runLogByCall.clear();
+
+		// v1.4.28 control bridge: user-only actions (unpark / strict) từ Paseo
+		// panel. Chỉ main chat watch (giống snip) — worker session không có file.
+		const parent = (ctx.sessionManager.getHeader?.() as { parentSession?: string } | undefined)?.parentSession;
+		controlSessionId = !parent && statusSessionId ? statusSessionId : "";
+		lastControlSentAt = undefined;
+		if (controlSessionId) {
+			try {
+				mkdirSync(dirname(controlFilePath(controlSessionId)), { recursive: true });
+			const watcher = watch(dirname(controlFilePath(controlSessionId)), (event, filename) => {
+					if (!filename || !filename.endsWith(`${controlSessionId}.json`)) return;
+					if (controlDebounce) clearTimeout(controlDebounce);
+					controlDebounce = setTimeout(() => {
+						controlDebounce = undefined;
+						consumeControlFile();
+					}, 150);
+				});
+				watcher.on("error", () => {
+					// best-effort — tools never depend on the watcher
+				});
+			} catch {
+				// no control dir → no bridge; tools unaffected
+			}
+		}
+
 		projectStatus();
 		renderWidget(ctx);
 	});

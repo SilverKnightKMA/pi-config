@@ -731,6 +731,7 @@ test("verify wiring: projection carries verify/audit fields for the Paseo panel"
 
 import { _setJudgeRunnerForTests } from "./index.ts";
 import { MAX_JUDGE_ROUNDS } from "./src/judge.ts";
+import { applyControlAction } from "./src/control.ts";
 
 function stubJudge(reply: string | null) {
 	const calls: string[] = [];
@@ -908,11 +909,18 @@ test("layer2 wiring: appeal parks the task with the reason — no judge call", a
 		assert.equal(calls.length, 0);
 		const list = (await f.tool("task_list").execute("l1", {}, undefined, undefined, f.ctx)) as { content: { text: string }[] };
 		assert.match(list.content[0]!.text, /judge phán sai/);
-		// mở lại được sau khi user xử lý
-		const back = (await f
-			.tool("task_update")
-			.execute("u2", { id: 1, status: "in_progress" }, undefined, undefined, f.ctx)) as { content: { text: string }[] };
-		assert.match(back.content[0]!.text, /in_progress/);
+		// model KHÔNG tự mở lại được (v1.4.28 one-way park)
+		await assert.rejects(
+			f.tool("task_update").execute("u2", { id: 1, status: "in_progress" }, undefined, undefined, f.ctx),
+			/không tự mở lại/,
+		);
+		// mở lại chỉ qua user surface (control bridge)
+		const back = applyControlAction(
+			((f.entries.at(-1) as { data: unknown }).data as TaskState),
+			{ v: 1, action: "unpark", id: 1 },
+			Date.now(),
+		);
+		assert.equal(back.state.tasks[0]!.status, "in_progress");
 	} finally {
 		_setJudgeRunnerForTests(null);
 	}
@@ -956,4 +964,67 @@ test("layer2 wiring: projection carries failStreak/judgeRounds/appealReason + pa
 	} finally {
 		_setJudgeRunnerForTests(null);
 	}
+});
+
+// ── Control bridge wiring (v1.4.28): PARK một chiều + strict v2 ──────────
+
+test("control wiring: model cannot un-park a parked task via task_update", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	await f.tool("task_create").execute("c1", { subject: "việc tranh chấp", verify: { lane: "judgment" } }, undefined, undefined, f.ctx);
+	await f.tool("task_update").execute("u1", { id: 1, appeal: "judge phán sai" }, undefined, undefined, f.ctx);
+	// model tự mở lại → từ chối
+	await assert.rejects(
+		f.tool("task_update").execute("u2", { id: 1, status: "in_progress" }, undefined, undefined, f.ctx),
+		/không tự mở lại/,
+	);
+	// model tự hủy task đang chờ user → cũng chặn (hủy = giấu tranh chấp)
+	await assert.rejects(
+		f.tool("task_update").execute("u3", { id: 1, status: "cancelled" }, undefined, undefined, f.ctx),
+		/không tự mở lại/,
+	);
+	// re-park (đã parked) vẫn vô hại — cho qua
+	const re = (await f.tool("task_update").execute("u4", { id: 1, status: "parked" }, undefined, undefined, f.ctx)) as {
+		content: { text: string }[];
+	};
+	assert.match(re.content[0]!.text, /parked/);
+});
+
+test("control wiring: amendment cannot lower strict; raising still allowed", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	await f
+		.tool("task_create")
+		.execute("c1", { subject: "x", verify: { probes: [{ pattern: "cat a", expect: "A" }], strict: true } }, undefined, undefined, f.ctx);
+	fireBash(f, "t1", "cat a", "A");
+	// amend cố tình bỏ strict → bị ép giữ true
+	const out = (await f
+		.tool("task_update")
+		.execute("u1", { id: 1, verify: { probes: [{ pattern: "cat a", expect: "A" }] } }, undefined, undefined, f.ctx)) as {
+		content: { text: string }[];
+	};
+	const data = f.entries.at(-1)!.data as TaskState;
+	assert.equal(data.tasks[0]!.verify!.strict, true); // không bị hạ
+	// nâng strict trên task chưa strict → được
+	await f.tool("task_create").execute("c2", { subject: "y", verify: { probes: [{ pattern: "cat b", expect: "B" }] } }, undefined, undefined, f.ctx);
+	await f.tool("task_update").execute("u2", { id: 2, verify: { probes: [{ pattern: "cat b", expect: "B" }], strict: true } }, undefined, undefined, f.ctx);
+	const data2 = f.entries.at(-1)!.data as TaskState;
+	assert.equal(data2.tasks[1]!.verify!.strict, true);
+	assert.ok(out, "amend accepted");
+});
+
+test("control wiring: consumeControlFile applies unpark + strict from the user surface", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	// session_start với sessionId rỗng → controlSessionId rỗng; nhưng consume
+	// qua handler vẫn test được bằng cách set HOME tạm + sessionId thật.
+	// Ở đây test logic apply qua applyControlAction đã có pure test; wiring
+	// quan trọng: session_start đăng ký watcher + replay giữ trạng thái parked.
+	await f.tool("task_create").execute("c1", { subject: "s", verify: { lane: "judgment" } }, undefined, undefined, f.ctx);
+	await f.tool("task_update").execute("u1", { id: 1, appeal: "test" }, undefined, undefined, f.ctx);
+	// restart replay: parked sống qua ledger
+	f.setBranch(f.entries.map((e) => ({ type: "custom", customType: e.customType, data: e.data })));
+	await f.handlers.get("session_start")!({}, f.ctx);
+	const list = (await f.tool("task_list").execute("l1", {}, undefined, undefined, f.ctx)) as { content: { text: string }[] };
+	assert.match(list.content[0]!.text, /parked/); // replay giữ parked
 });

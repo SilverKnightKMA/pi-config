@@ -153,6 +153,10 @@ export interface UpdatePatch {
   failStreak?: number;
   judgeRounds?: number;
   appealReason?: string;
+  /** Bridge-only (v1.4.28): set verify.strict without consuming the worker's amendment budget. */
+  strictOverride?: boolean;
+  /** Bridge-only: clear appealReason on unpark (undefined appealReason means "unchanged"). */
+  clearAppeal?: boolean;
 }
 
 export function updateTask(state: TaskState, id: number, patch: UpdatePatch, now: number): OpResult {
@@ -173,6 +177,10 @@ export function updateTask(state: TaskState, id: number, patch: UpdatePatch, now
   if (patch.failStreak !== undefined) next.failStreak = patch.failStreak;
   if (patch.judgeRounds !== undefined) next.judgeRounds = patch.judgeRounds;
   if (patch.appealReason !== undefined) next.appealReason = patch.appealReason;
+  if (patch.clearAppeal === true) next.appealReason = undefined;
+  if (patch.strictOverride !== undefined && next.verify) {
+    next.verify = { ...next.verify, strict: patch.strictOverride };
+  }
 
   if (patch.blockedBy !== undefined) {
     next.blockedBy = sanitizeBlockers(state, id, patch.blockedBy, warnings);
