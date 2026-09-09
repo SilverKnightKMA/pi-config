@@ -335,7 +335,9 @@ export default function taskExtension(pi: ExtensionAPI) {
 		description:
 			"Add a task to the session task list. Use for multi-step work so progress is visible and " +
 			"survives compaction. blockedBy lists ids of tasks that must complete first (cycles and " +
-			"dangling ids are dropped with warnings). Create tasks BEFORE starting the work they describe.",
+			"dangling ids are dropped with warnings). Create tasks BEFORE starting the work they describe. " +
+			"Tasks are OPTIONAL — never create one just to be allowed to work: chat, explanations, " +
+			"quick reads and 1-2 step jobs need no task; a junk task is fake evidence.",
 		parameters: Type.Object({
 			subject: Type.String({ description: "Short imperative subject" }),
 			description: Type.Optional(Type.String()),

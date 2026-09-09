@@ -18,6 +18,14 @@ with dependencies, evidence-gated completion, and stale-list reminders.
 - The user gave several requests at once.
 - Long work where compaction could lose the plan.
 
+## When NOT to track (task is OPTIONAL — never a gate)
+
+- Chat, explanations, teaching, quick questions — no "work" to ledger.
+- 1-2 step jobs; a quick read; a one-file tweak.
+- Never create a task just to be allowed to work: a junk task created
+  for compliance is fake evidence and pollutes the verify signal
+  (same status-as-acceptance class the code-review skill rejects).
+
 Skip it for single-step or trivial edits — the overhead outweighs the value.
 
 ## Discipline
