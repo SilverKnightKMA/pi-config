@@ -163,7 +163,22 @@ export function loadRoles(): Map<string, RoleDef> {
  * coding toolset).
  */
 export function floorTools(): string[] {
-	return ["read", "grep", "find", "ls", "message_main"];
+	// Plan tools (read-only-mode v1.4.31) are self-restricting — entering plan
+	// mode NARROWS the tool set; they grant no write power. pool_status is a
+	// pure read. spawn_pool/pool_resume stay OUT of the floor: unlabelled
+	// headless sessions have no MCP endpoint and must not spawn agents.
+	return [
+		"read",
+		"grep",
+		"find",
+		"ls",
+		"message_main",
+		"enter_plan_mode",
+		"write_plan",
+		"exit_plan_mode",
+		"plan_step_done",
+		"pool_status",
+	];
 }
 
 /** Resolve the active tool allowlist for a role. */
