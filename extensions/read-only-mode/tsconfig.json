@@ -8,10 +8,13 @@
 		"noEmit": true,
 		"types": [
 			"bun-types"
-		]
+		],
+		"allowImportingTsExtensions": true
 	},
 	"include": [
 		"index.ts",
-		"index.test.ts"
+		"plan.ts",
+		"index.test.ts",
+		"plan.test.ts"
 	]
 }
