@@ -35,17 +35,73 @@ export function isMemoryPath(path: string | undefined, cwd: string): boolean {
 	return abs === root || abs.startsWith(root + sep);
 }
 
-const MEMORY_MENTION = /\.memory\b/;
 const MUTATION = /\b(rm|mv|tee|truncate|shred|dd|mkdir|rmdir|chmod|chown|rsync|install)\b|>>|>[ \t>]*\S*\.memory|sed\s+(-[a-zA-Z]*)*i|perl\s+(-[a-zA-Z]*)*i\b|python3?\s+-c|node\s+-e|\bxargs\b/;
 /** cp mutates only when a `.memory` path is the FINAL argument (the destination). */
 const CP_INTO_MEMORY = /\bcp\b[^|;&]*\s\S*\.memory(\/[^\s|;&]*)?\s*$/;
 
+/** True when `t` is a clean path token referencing the memory tree. */
+function isMemoryPathToken(t: string): boolean {
+	return (
+		t === ".memory" ||
+		t === ".memory/" ||
+		t.startsWith(".memory/") ||
+		t.endsWith("/.memory") ||
+		t.includes("/.memory/")
+	);
+}
+
 /**
- * Classify a bash command that mentions `.memory`:
- * "mutate" (block), "read" (allow). Commands not mentioning `.memory` are "none".
+ * v1.4.25: "mention" = a clean PATH TOKEN referencing `.memory`, not the
+ * substring anywhere. The old test false-positived on chained commands where
+ * a legitimate mutation shape elsewhere in the chain (sed -i pkg.json)
+ * combined with the string `.memory` inside a commit message / grep pattern —
+ * two unrelated segments read as one "mutate .memory" verdict. Prose spans
+ * are quoted multi-word strings; quoted spans only count when their FIRST
+ * token is a memory path (so `rm -rf ".memory/foo bar"` still matches), and
+ * nested quotes (python -c "open('.memory/a','w')") are scanned too.
+ */
+export function mentionsMemoryPath(command: string): boolean {
+	const spans: { text: string; quoted: boolean }[] = [];
+	let buf = "";
+	let quote: '"' | "'" | null = null;
+	for (const ch of command) {
+		if (quote) {
+			if (ch === quote) {
+				spans.push({ text: buf, quoted: true });
+				buf = "";
+				quote = null;
+			} else buf += ch;
+		} else if (ch === '"' || ch === "'") {
+			if (buf) spans.push({ text: buf, quoted: false });
+			buf = "";
+			quote = ch;
+		} else buf += ch;
+	}
+	if (buf) spans.push({ text: buf, quoted: false }); // unterminated quote — treat as unquoted (safe)
+
+	for (const s of spans) {
+		if (!s.quoted) {
+			for (const tok of s.text.split(/\s+/)) if (isMemoryPathToken(tok)) return true;
+		} else {
+			const head = s.text.split(/\s+/)[0] ?? "";
+			if (isMemoryPathToken(head)) return true;
+			// nested single/double quotes inside the span (python/node -c strings)
+			const inner = s.text.match(/'[^']*'|"[^"]*"/g) ?? [];
+			for (const m of inner) {
+				const t = m.slice(1, -1).split(/\s+/)[0] ?? "";
+			if (isMemoryPathToken(t)) return true;
+		}
+		}
+	}
+	return false;
+}
+
+/**
+ * Classify a bash command that touches `.memory` via a path token:
+ * "mutate" (block), "read" (allow). Commands with no memory path token are "none".
  */
 export function classifyBashMemoryTouch(command: string): "none" | "read" | "mutate" {
-	if (!MEMORY_MENTION.test(command)) return "none";
+	if (!mentionsMemoryPath(command)) return "none";
 	if (CP_INTO_MEMORY.test(command)) return "mutate";
 	if (MUTATION.test(command)) return "mutate";
 	return "read";
