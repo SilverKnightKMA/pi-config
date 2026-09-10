@@ -1095,6 +1095,15 @@ ${reply.text}` }],
 		collected.push(...takeMessagesFrom(childId, myAgentId ?? ""));
 		const real = collected.filter((m) => !isAutoReport(m));
 		if (real.length > 0) return { finished: true, report: real.map((m) => m.text).join("\n\n") };
+		// Pool children answer in-session (auto-report only) — the 2026-09-10
+		// E2E caught this: a settled child with no channel message was reported
+		// "still running" forever because finished depended on message_main.
+		// Settled (idle/closed) IS finished for the pool; the answer text is the
+		// child's own activity, which the expect gate needs anyway.
+		const settled = await getAgentStatus(endpoint, childId);
+		if (settled.ok && !isBusy(settled.status)) {
+			return { finished: true, report: await getActivitySummary(endpoint, childId, 12) };
+		}
 		return { finished: false, report: "" };
 	}
 
