@@ -19,7 +19,7 @@ import { homedir } from "node:os";
 import { openBlockers, updateTask } from "./graph.ts";
 import type { TaskState } from "./types.ts";
 
-export type TaskControlAction = "unpark" | "strict";
+export type TaskControlAction = "unpark" | "strict" | "reopen";
 
 export interface TaskControlFile {
 	v: 1;
@@ -51,7 +51,7 @@ export function parseControlPayload(raw: string): TaskControlFile | null {
 	if (!data || typeof data !== "object") return null;
 	const d = data as Record<string, unknown>;
 	if (d.v !== 1) return null;
-	if (d.action !== "unpark" && d.action !== "strict") return null;
+	if (d.action !== "unpark" && d.action !== "strict" && d.action !== "reopen") return null;
 	if (typeof d.id !== "number" || !Number.isInteger(d.id) || d.id <= 0) return null;
 	if (d.value !== undefined && typeof d.value !== "boolean") return null;
 	return {
@@ -91,6 +91,25 @@ export function applyControlAction(state: TaskState, payload: TaskControlFile, n
 		);
 		if (result.error) return { state, note: result.error, applied: false };
 		return { state: result.state, note: `#${payload.id} mở lại (${blocked ? "pending — còn blocker" : "in_progress"})`, applied: true };
+	}
+	if (payload.action === "reopen") {
+		// Force reopen (v1.4.35, user request 2026-09-10): user-only button for
+		// tasks the model closed — evidence stays on record; status rolls back
+		// (blocked → pending, else in_progress). Model keeps its own chat-path
+		// reopen via task_update (only PARKED is one-way).
+		if (task.status !== "completed" && task.status !== "cancelled" && task.status !== "parked") {
+			return { state, note: `#${payload.id} đang mở (${task.status}) — không cần reopen`, applied: false };
+		}
+		const index = new Map(state.tasks.map((t) => [t.id, t] as const));
+		const blocked = openBlockers(task, index).length > 0;
+		const result = updateTask(
+			state,
+			payload.id,
+			{ status: blocked ? "pending" : "in_progress", clearAppeal: true },
+			now,
+		);
+		if (result.error) return { state, note: result.error, applied: false };
+		return { state: result.state, note: `#${payload.id} reopen (${blocked ? "pending — còn blocker" : "in_progress"})`, applied: true };
 	}
 	// action === "strict"
 	if (!task.verify) return { state, note: `#${payload.id} không có verify spec`, applied: false };

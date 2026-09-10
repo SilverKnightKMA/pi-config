@@ -22,6 +22,9 @@ describe("control: parseControlPayload", () => {
 		assert.equal(a?.id, 3);
 		const b = parseControlPayload('{"v":1,"action":"strict","id":3,"value":false}');
 		assert.equal(b?.value, false);
+		const c = parseControlPayload('{"v":1,"action":"reopen","id":7}');
+		assert.equal(c?.action, "reopen");
+		assert.equal(c?.id, 7);
 	});
 
 	test("malformed / wrong version / bad ids are rejected", () => {
@@ -38,6 +41,42 @@ describe("control: parseControlPayload", () => {
 		assert.equal(acked.ackAt, "a1");
 		assert.equal(acked.sentAt, "s1");
 		assert.equal(acked.value, true);
+	});
+});
+
+describe("control: applyControlAction — reopen (v1.4.35)", () => {
+	test("reopen rolls a completed task back to in_progress, evidence stays", () => {
+		let state = seeded();
+		const done = updateTask(state, 1, { status: "in_progress" }, 1);
+		state = done.state;
+		const closed = updateTask(state, 1, { status: "completed", evidence: "đã xong (e2e)" }, 2);
+		state = closed.state;
+		const r = applyControlAction(state, { v: 1, action: "reopen", id: 1 }, 3);
+		assert.equal(r.applied, true);
+		const t = r.state.tasks.find((x) => x.id === 1)!;
+		assert.equal(t.status, "in_progress");
+		assert.equal(t.evidence, "đã xong (e2e)");
+	});
+
+	test("reopen of a completed task with a re-opened blocker falls back to pending", () => {
+		const a = createTask(EMPTY_STATE, "blocker", "dc", [], Date.now());
+		let state = a.state;
+		const b = createTask(state, "main", "dc", [1], Date.now());
+		state = b.state;
+		state = updateTask(state, 1, { status: "completed", evidence: "ok1" }, 1).state;
+		state = updateTask(state, 2, { status: "completed", evidence: "ok2" }, 1).state;
+		// blocker được user mở lại → task 2 giờ có blocker mở
+		state = applyControlAction(state, { v: 1, action: "reopen", id: 1 }, 2).state;
+		const r = applyControlAction(state, { v: 1, action: "reopen", id: 2 }, 3);
+		assert.equal(r.applied, true);
+		assert.equal(r.state.tasks.find((x) => x.id === 2)!.status, "pending");
+	});
+
+	test("reopen refuses a task that is already open", () => {
+		const state = seeded();
+		const r = applyControlAction(state, { v: 1, action: "reopen", id: 1 }, 1);
+		assert.equal(r.applied, false);
+		assert.match(r.note, /không cần reopen/);
 	});
 });
 
