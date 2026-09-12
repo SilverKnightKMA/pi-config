@@ -3,7 +3,7 @@
  * Contract: model may park (appeal/cap), only the user surface (control file)
  * may un-park; strict lowering likewise never passes through the model.
  */
-import { describe, test } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { ackPayload, applyControlAction, parseControlPayload } from "./control.ts";
@@ -126,5 +126,32 @@ describe("control: applyControlAction", () => {
 		const r = applyControlAction(state, { v: 1, action: "strict", id: 1, value: true }, 2);
 		assert.equal(r.applied, false);
 		assert.match(r.note, /không có verify spec/);
+	});
+});
+
+// v1.4.37: user mở lại (unpark/reopen) = cấp chu kỳ phán mới — reset counter,
+// không thì cap 3 vòng cũ park lại ngay không gọi judge (live #13 2026-09-12)
+describe("control: un-park/reopen resets the judge cycle", () => {
+	it("unpark resets judgeRounds + failStreak on a capped parked task", () => {
+		const base: TaskState = EMPTY_STATE;
+		const r1 = createTask(base, "capped", "d", [], 1000);
+		const r2 = updateTask(r1.state, 1, { status: "parked", judgeRounds: 3, failStreak: 2 }, 2000);
+		const r3 = applyControlAction(r2.state, { v: 1, action: "unpark", id: 1 }, 3000);
+		const t = r3.state.tasks.find((x) => x.id === 1)!;
+		expect(t.status).toBe("in_progress");
+		expect(t.judgeRounds).toBe(0);
+		expect(t.failStreak).toBe(0);
+		expect(t.appealReason).toBeUndefined();
+	});
+
+	it("reopen of a completed task also resets the cycle", () => {
+		const base: TaskState = EMPTY_STATE;
+		const r1 = createTask(base, "done", "d", [], 1000);
+		const r2 = updateTask(r1.state, 1, { status: "completed", evidence: "e", judgeRounds: 3, failStreak: 0 }, 2000);
+		const r3 = applyControlAction(r2.state, { v: 1, action: "reopen", id: 1 }, 3000);
+		const t = r3.state.tasks.find((x) => x.id === 1)!;
+		expect(t.status).toBe("in_progress");
+		expect(t.judgeRounds).toBe(0);
+		expect(t.evidence).toBe("e");
 	});
 });

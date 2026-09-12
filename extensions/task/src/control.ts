@@ -80,13 +80,15 @@ export function applyControlAction(state: TaskState, payload: TaskControlFile, n
 			return { state, note: `#${payload.id} không ở trạng thái parked`, applied: false };
 		}
 		// unpark về in_progress; còn blocker thì về pending (blocked task không
-		// được in_progress — cùng luật tool layer)
+		// được in_progress — cùng luật tool layer). User chủ động mở lại = user cấp
+		// chu kỳ phán MỚI: reset judgeRounds/failStreak, nếu không cap 3 vòng cũ sẽ
+		// park lại ngay mà không gọi judge (live incident task #13 2026-09-12).
 		const index = new Map(state.tasks.map((t) => [t.id, t] as const));
 		const blocked = openBlockers(task, index).length > 0;
 		const result = updateTask(
 			state,
 			payload.id,
-			{ status: blocked ? "pending" : "in_progress", clearAppeal: true },
+			{ status: blocked ? "pending" : "in_progress", clearAppeal: true, judgeRounds: 0, failStreak: 0 },
 			now,
 		);
 		if (result.error) return { state, note: result.error, applied: false };
@@ -96,7 +98,8 @@ export function applyControlAction(state: TaskState, payload: TaskControlFile, n
 		// Force reopen (v1.4.35, user request 2026-09-10): user-only button for
 		// tasks the model closed — evidence stays on record; status rolls back
 		// (blocked → pending, else in_progress). Model keeps its own chat-path
-		// reopen via task_update (only PARKED is one-way).
+		// reopen via task_update (only PARKED is one-way). Cùng luật reset chu kỳ
+		// phán như unpark — tránh cap 3 vòng cũ park lại task user vừa mở.
 		if (task.status !== "completed" && task.status !== "cancelled" && task.status !== "parked") {
 			return { state, note: `#${payload.id} đang mở (${task.status}) — không cần reopen`, applied: false };
 		}
@@ -105,7 +108,7 @@ export function applyControlAction(state: TaskState, payload: TaskControlFile, n
 		const result = updateTask(
 			state,
 			payload.id,
-			{ status: blocked ? "pending" : "in_progress", clearAppeal: true },
+			{ status: blocked ? "pending" : "in_progress", clearAppeal: true, judgeRounds: 0, failStreak: 0 },
 			now,
 		);
 		if (result.error) return { state, note: result.error, applied: false };
