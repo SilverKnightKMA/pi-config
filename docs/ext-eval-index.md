@@ -44,7 +44,7 @@
 | 2026-08-30 → 09-06 | Tác giả Eero Alvar (amosblomqvist): 6 repo, 6 quan điểm thiết kế, transcript ~150KB | gốc của snip/OM/subagent; snip backend byte-identical; divergence audit 3 chủ ý |
 | 2026-09-05 | so sánh snip port vs prompt-snippets upstream tại f82da56 | byte-identical + 3 lệch chủ ý (persistence, sticky, control-file) |
 | 2026-09-08 | dòng pi-tasks 3 nhánh + npm ext lạ (pi-goal-x, @arhen needs-edges, mjasnikovs AGPL⚠) | landscape họ task; license disqualifier ghi nhận |
-| 2026-09-12 | **anthropics/sandbox-runtime** (họ bash-safety, do user chỉ định) — chạy đầu tiên chế độ LANDSCAPE | `learn/sandbox-runtime-eval-2026-09-12.md` — MƯỢN CONCEPTS không nhúng runtime: mandatory-deny write list + write-allowlist theo role + thông điệp chặn kiểu deniedDomainReasons cho safe_bash; KHÔNG adopt srt (double-sandbox yếu đi trong Docker, phụ thuộc bubblewrap/socat/userns) |
+| 2026-09-12 | **anthropics/sandbox-runtime** (họ bash-safety, do user chỉ định) — chạy đầu tiên chế độ LANDSCAPE; **verdict sửa cùng ngày theo user: môi trường chạy không gắn với pack** | `learn/sandbox-runtime-eval-2026-09-12.md` — MƯỢN CONCEPTS + ADOPT srt làm TẦNG TÙY CHỌN KHẢ CHUYỂN: 3 mảnh text-level cho safe_bash mọi môi trường (mandatory-deny write list + write-allowlist theo role + thông điệp kiểu deniedDomainReasons) + mảnh 4 detect-delegate-fallback `bashSandbox: auto\|srt\|off` — container hiện tại auto→text-guard, host Windows/Linux/macOS không-container auto→OS-sandbox |
 
 ## Chưa từng quét landscape (nợ hiện tại)
 
