@@ -7,7 +7,7 @@ import { describe, expect, it, test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { ackPayload, applyControlAction, parseControlPayload } from "./control.ts";
-import { createTask, updateTask } from "./graph.ts";
+import { createTask, sanitizeState, updateTask } from "./graph.ts";
 import { EMPTY_STATE, type TaskState } from "./types.ts";
 
 function seeded(verify?: object): TaskState {
@@ -153,5 +153,81 @@ describe("control: un-park/reopen resets the judge cycle", () => {
 		expect(t.status).toBe("in_progress");
 		expect(t.judgeRounds).toBe(0);
 		expect(t.evidence).toBe("e");
+	});
+});
+
+// ── v1.4.38 doneCheck guard (amend) ─────────────────────────────────────
+describe("control: doneCheck amend (user-only door, v1.4.38)", () => {
+	test("valid amend payload parses; empty/malformed description rejected", () => {
+		const ok = parseControlPayload('{"v":1,"action":"amend","id":5,"description":"  mới  "}');
+		assert.equal(ok?.action, "amend");
+		assert.equal(ok?.description, "mới");
+		assert.equal(parseControlPayload('{"v":1,"action":"amend","id":5,"description":""}'), null);
+		assert.equal(parseControlPayload('{"v":1,"action":"amend","id":5}'), null);
+		// length cap 2000 chống phình packet
+		const long = parseControlPayload(`{"v":1,"action":"amend","id":5,"description":"${"x".repeat(3000)}"}`);
+		assert.equal(long?.description.length, 2000);
+	});
+
+	test("amend by user rewrites description, keeps old sheet in trail, does not consume the cap", () => {
+		const state = seeded();
+		const res = applyControlAction(
+			state,
+			{ v: 1, action: "amend", id: 1, description: "đề mới của user" },
+			Date.now(),
+		);
+		assert.equal(res.applied, true);
+		const t = res.state.tasks[0]!;
+		assert.equal(t.description, "đề mới của user");
+		assert.equal(t.descHistory?.length, 1);
+		assert.equal(t.descHistory?.[0]?.by, "user");
+		assert.equal(t.descHistory?.[0]?.from, "done-check");
+		assert.equal(t.descAmendments, undefined); // user sửa không đếm
+	});
+
+	test("amend with identical description is a no-op", () => {
+		const state = seeded();
+		const res = applyControlAction(state, { v: 1, action: "amend", id: 1, description: "done-check" }, Date.now());
+		assert.equal(res.applied, false);
+	});
+});
+
+describe("graph: descAmend accounting (v1.4.38)", () => {
+	test("agent rewrite increments descAmendments and trails old→new; user rewrite trails but does not count", () => {
+		const state = seeded();
+		const a1 = updateTask(state, 1, { description: "đề agent lần 1", descAmend: { by: "agent" } }, 2);
+		assert.equal(a1.state.tasks[0]?.descAmendments, 1);
+		const a2 = updateTask(a1.state, 1, { description: "đề user", descAmend: { by: "user" } }, 3);
+		assert.equal(a2.state.tasks[0]?.descAmendments, 1, "user amend không tốn ngân sách");
+		assert.equal(a2.state.tasks[0]?.descHistory?.length, 2);
+		assert.equal(a2.state.tasks[0]?.descHistory?.[1]?.from, "đề agent lần 1");
+	});
+
+	test("descHistory capped at 5 entries, each side truncated to 400 chars", () => {
+		let state = seeded();
+		for (let i = 0; i < 7; i++) {
+			const r = updateTask(state, 1, { description: "d".repeat(900) + i, descAmend: { by: "agent" } }, i + 10);
+			state = r.state;
+		}
+		const t = state.tasks[0]!;
+		assert.equal(t.descHistory?.length, 5);
+		assert.equal(t.descHistory?.[0]?.to.length, 400);
+	});
+
+	test("description update WITHOUT descAmend flag stays silent (internal paths)", () => {
+		const state = seeded();
+		const r = updateTask(state, 1, { description: "silent" }, 5);
+		assert.equal(r.state.tasks[0]?.descAmendments, undefined);
+		assert.equal(r.state.tasks[0]?.descHistory, undefined);
+	});
+
+	test("sanitizeState round-trips descAmendments + descHistory and drops junk", () => {
+		const state = seeded();
+		const amended = updateTask(state, 1, { description: "v2", descAmend: { by: "agent" } }, 9).state;
+		const restored = sanitizeState(JSON.parse(JSON.stringify(amended)) as Record<string, unknown>);
+		assert.equal(restored.tasks[0]?.descAmendments, 1);
+		assert.equal(restored.tasks[0]?.descHistory?.[0]?.to, "v2");
+		const junk = sanitizeState({ tasks: [{ id: 1, subject: "s", descHistory: [{ at: 1, by: "robot", from: "", to: "" }] }], nextId: 2 });
+		assert.equal(junk.tasks[0]?.descHistory, undefined);
 	});
 });

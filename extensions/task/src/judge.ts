@@ -21,7 +21,7 @@
  * Pure module — no pi/fs/clock imports; the subprocess runner lives in
  * index.ts and is injectable for tests.
  */
-import { isRecord } from "./types.ts";
+import { isRecord, type DescAmendment } from "./types.ts";
 
 export interface LogSliceEntry {
 	cmd: string;
@@ -43,6 +43,10 @@ export interface JudgePacketInput {
 	evidence: string;
 	lane: "state" | "judgment";
 	probes?: JudgeProbeView[];
+	/** v1.4.38: doneCheck rewrite trail. The judge only ever sees the CURRENT
+	 * sheet — without this it cannot know the worker rephrased the question.
+	 * Self-serving rewrites right before completion deserve heavier scrutiny. */
+	descHistory?: DescAmendment[];
 }
 
 export const MAX_LOG_SLICE = 20;
@@ -90,6 +94,18 @@ export function buildJudgePacket(input: JudgePacketInput, log: LogSliceEntry[]):
 	lines.push("## TASK");
 	lines.push(`subject: ${input.subject}`);
 	lines.push(`done-check: ${input.doneCheck || "(no explicit done-check — judge by subject intent)"}`);
+	if (input.descHistory && input.descHistory.length > 0) {
+		const agentRewrites = input.descHistory.filter((d) => d.by === "agent").length;
+		lines.push("## DONE-CHECK AMENDMENTS (the worker rewrote the acceptance criteria)");
+		lines.push(
+			`The done-check above was rewritten ${input.descHistory.length} time(s), ${agentRewrites} by the worker itself. ` +
+				"A rewrite that merely rephrases the criteria to match existing evidence is self-serving — weigh accordingly " +
+				"(older criteria still bind unless the rewrite is justified by changed reality):",
+		);
+		for (const d of input.descHistory) {
+			lines.push(`- (${d.by}) was: ${d.from || "(empty)"} -> now: ${d.to || "(empty)"}`);
+		}
+	}
 	if (input.probes && input.probes.length > 0) {
 		lines.push("## PROBES (deterministic layer-1 results)");
 		for (const p of input.probes) {

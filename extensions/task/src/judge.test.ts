@@ -2,7 +2,7 @@
  * Pure tests for the layer-2 judge module (v1.4.26).
  * Design contract: pify-pending-2026-09-07.md row 9 (settled 2026-09-09).
  */
-import { describe, test } from "bun:test";
+import { describe, it, test } from "bun:test";
 import assert from "node:assert/strict";
 
 import {
@@ -147,5 +147,50 @@ describe("judge: verdictConsequence", () => {
 	test("pass on the 3rd round still completes (cap only funnels non-pass)", () => {
 		const c = verdictConsequence(verdict({}), { failStreak: 0, judgeRounds: MAX_JUDGE_ROUNDS - 1 });
 		assert.equal(c.action, "complete");
+	});
+});
+
+// ── v1.4.38: packet phải đưa judge cả tờ đề cũ ─────────────────────────
+describe("judge: buildJudgePacket — doneCheck amendments (v1.4.38)", () => {
+	it("renders the amendment trail so the judge sees rewrites", () => {
+		const packet = buildJudgePacket(
+			{
+				subject: "s",
+				doneCheck: "chạy echo ok là xong",
+				evidence: "e",
+				lane: "judgment",
+				descHistory: [
+					{ at: 1, by: "agent", from: "deploy production + curl 200", to: "chạy echo ok là xong" },
+				],
+			},
+			[],
+		);
+		assert.ok(packet.includes("## DONE-CHECK AMENDMENTS"));
+		assert.ok(packet.includes("deploy production + curl 200"));
+		assert.ok(packet.includes("chạy echo ok là xong"));
+		assert.ok(packet.includes("1 time(s), 1 by the worker"));
+	});
+
+	it("no section when the sheet was never rewritten", () => {
+		const packet = buildJudgePacket({ subject: "s", doneCheck: "d", evidence: "e", lane: "judgment" }, []);
+		assert.ok(!packet.includes("DONE-CHECK AMENDMENTS"));
+	});
+
+	it("user-authored rewrites are counted separately from worker rewrites", () => {
+		const packet = buildJudgePacket(
+			{
+				subject: "s",
+				doneCheck: "d",
+				evidence: "e",
+				lane: "judgment",
+				descHistory: [
+					{ at: 1, by: "agent", from: "a", to: "b" },
+					{ at: 2, by: "user", from: "b", to: "c" },
+				],
+			},
+			[],
+		);
+		assert.ok(packet.includes("2 time(s), 1 by the worker"));
+		assert.ok(packet.includes("- (user)"));
 	});
 });

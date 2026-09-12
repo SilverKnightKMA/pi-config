@@ -19,7 +19,7 @@ import { homedir } from "node:os";
 import { openBlockers, updateTask } from "./graph.ts";
 import type { TaskState } from "./types.ts";
 
-export type TaskControlAction = "unpark" | "strict" | "reopen";
+export type TaskControlAction = "unpark" | "strict" | "reopen" | "amend";
 
 export interface TaskControlFile {
 	v: 1;
@@ -27,6 +27,8 @@ export interface TaskControlFile {
 	id: number;
 	/** strict only: target value */
 	value?: boolean;
+	/** amend only (v1.4.38): the new done-check text, authored by the user. */
+	description?: string;
 	sentAt?: string;
 	ackAt?: string;
 }
@@ -51,9 +53,21 @@ export function parseControlPayload(raw: string): TaskControlFile | null {
 	if (!data || typeof data !== "object") return null;
 	const d = data as Record<string, unknown>;
 	if (d.v !== 1) return null;
-	if (d.action !== "unpark" && d.action !== "strict" && d.action !== "reopen") return null;
+	if (d.action !== "unpark" && d.action !== "strict" && d.action !== "reopen" && d.action !== "amend") return null;
 	if (typeof d.id !== "number" || !Number.isInteger(d.id) || d.id <= 0) return null;
 	if (d.value !== undefined && typeof d.value !== "boolean") return null;
+	// amend: đề mới phải là chuỗi không rỗng, cắt 2000 ký tự (chống phình packet)
+	if (d.action === "amend") {
+		if (typeof d.description !== "string" || !d.description.trim()) return null;
+		return {
+			v: 1,
+			action: "amend",
+			id: d.id,
+			description: d.description.trim().slice(0, 2000),
+			sentAt: typeof d.sentAt === "string" ? d.sentAt : undefined,
+			ackAt: typeof d.ackAt === "string" ? d.ackAt : undefined,
+		};
+	}
 	return {
 		v: 1,
 		action: d.action,
@@ -113,6 +127,19 @@ export function applyControlAction(state: TaskState, payload: TaskControlFile, n
 		);
 		if (result.error) return { state, note: result.error, applied: false };
 		return { state: result.state, note: `#${payload.id} reopen (${blocked ? "pending — còn blocker" : "in_progress"})`, applied: true };
+	}
+	if (payload.action === "amend") {
+		// v1.4.38 doneCheck guard — cửa user-only khi agent hết hạn mức (cap
+		// DESC_AMEND_MAX) hoặc task strict. User là người giữ hợp đồng: sửa không
+		// tốn ngân sách nhưng VẪN ghi descHistory (by user) để judge thấy toàn bộ
+		// đời sống của tờ đề, không chỉ bản cuối.
+		const next = payload.description ?? "";
+		if (!next || next === task.description) {
+			return { state, note: `#${payload.id} đề mới trùng hoặc rỗng — bỏ qua`, applied: false };
+		}
+		const result = updateTask(state, payload.id, { description: next, descAmend: { by: "user" } }, now);
+		if (result.error) return { state, note: result.error, applied: false };
+		return { state: result.state, note: `#${payload.id} doneCheck user đã sửa (trail giữ tờ cũ)`, applied: true };
 	}
 	// action === "strict"
 	if (!task.verify) return { state, note: `#${payload.id} không có verify spec`, applied: false };

@@ -51,7 +51,7 @@ import {
 	type JudgeProbeView,
 } from "./src/judge.ts";
 import { ackPayload, applyControlAction, controlFilePath, parseControlPayload } from "./src/control.ts";
-import { EMPTY_STATE, type TaskState, type TaskStatus } from "./src/types.ts";
+import { EMPTY_STATE, DESC_AMEND_MAX, type TaskState, type TaskStatus } from "./src/types.ts";
 
 type UiContext = ExtensionContext;
 
@@ -498,6 +498,30 @@ export default function taskExtension(pi: ExtensionAPI) {
 				);
 			}
 
+			// v1.4.38 doneCheck guard — học sinh được đổi đề nhưng không được đổi kín:
+			// mọi sửa description của model được ghi trail (descHistory: tờ cũ → tờ mới,
+			// updateTask qua descAmend), cap DESC_AMEND_MAX lần; task strict cấm hẳn.
+			// Cửa còn lại khi hết hạn mức: user (control-file action 'amend' trên panel,
+			// cùng pattern unpark/strict/reopen). Lý do sống: judge chỉ thấy tờ đề
+			// HIỆN TẠI — agent giữ quyền đổi đề = điều khiển phán quyết (task #13 lesson).
+			if (params.description !== undefined) {
+				const t = state.tasks.find((t) => t.id === params.id);
+				if (t && params.description.trim() !== t.description) {
+					if (t.verify?.strict === true) {
+						throw new Error(
+							`[task] #${params.id} strict — doneCheck chỉ user sửa được (nút 'sửa đề' trên task panel). Model đổi đề thi = tự chấm điểm.`,
+						);
+					}
+					const used = t.descAmendments ?? 0;
+					if (used >= DESC_AMEND_MAX) {
+						throw new Error(
+							`[task] #${params.id} doneCheck đã bị model sửa ${used}/${DESC_AMEND_MAX} lần — xin user sửa qua nút panel ('sửa đề') hoặc chat. Judge chỉ thấy tờ đề hiện tại nên agent đổi đề = điều khiển phán quyết.`,
+						);
+					}
+					patch.descAmend = { by: "agent" };
+				}
+			}
+
 			// Verify-spec amendment: escape hatch khi probe khai sai (chứ không
 			// phải để hạ mức kiểm). Tối đa 2 lần, mỗi lần đếm và ghi vào projection.
 			if (params.verify !== undefined) {
@@ -573,6 +597,24 @@ export default function taskExtension(pi: ExtensionAPI) {
 							probeViews ?? [],
 							evidence,
 						);
+						// v1.4.38: nếu task_update này CŨNG đổi đề, judge phải thấy cả tờ cũ
+						// + lần đổi đang bay (updateTask sẽ ghi trail thật ngay sau đó)
+						let judgeDescHistory = task?.descHistory;
+						if (
+							task &&
+							patch.description !== undefined &&
+							patch.description.trim() !== task.description
+						) {
+							judgeDescHistory = [
+								...(task.descHistory ?? []),
+								{
+									at: Date.now(),
+									by: "agent" as const,
+									from: task.description.slice(0, 400),
+									to: patch.description.trim().slice(0, 400),
+								},
+							];
+						}
 						const packet = buildJudgePacket(
 							{
 								subject: patch.subject ?? task?.subject ?? "",
@@ -580,6 +622,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 								evidence,
 								lane: spec?.lane ?? "judgment",
 								probes: probeViews,
+								descHistory: judgeDescHistory,
 							},
 							logSlice,
 						);

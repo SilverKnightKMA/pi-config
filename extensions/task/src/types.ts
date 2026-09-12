@@ -42,9 +42,27 @@ export interface Task {
   judgeRounds?: number;
   /** Set when the task was parked via appeal or the round cap — why it waits for the user. */
   appealReason?: string;
+  /** v1.4.38 doneCheck guard: how many times the AGENT rewrote the description
+   * (cap DESC_AMEND_MAX — beyond that only the user bridge may amend). */
+  descAmendments?: number;
+  /** v1.4.38: append-only diff trail of description rewrites (agent AND user),
+   * capped length; the judge packet carries this so layer-2 can weigh
+   * self-serving rewrites (live lesson: judge only sees the CURRENT sheet). */
+  descHistory?: DescAmendment[];
   createdAt: number;
   updatedAt: number;
 }
+
+/** One doneCheck rewrite: who changed it, when, old→new (truncated). */
+export interface DescAmendment {
+  at: number;
+  by: "agent" | "user";
+  from: string;
+  to: string;
+}
+
+/** Agent-initiated doneCheck rewrites before the user-only door slams shut. */
+export const DESC_AMEND_MAX = 2;
 
 export interface TaskState {
   tasks: Task[];

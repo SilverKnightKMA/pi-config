@@ -1047,3 +1047,77 @@ test("control wiring: consumeControlFile applies unpark + strict from the user s
 	const list = (await f.tool("task_list").execute("l1", {}, undefined, undefined, f.ctx)) as { content: { text: string }[] };
 	assert.match(list.content[0]!.text, /parked/); // replay giữ parked
 });
+
+// ── v1.4.38 wiring: doneCheck guard — agent được đổi đề nhưng không được đổi kín ──
+describe("v1.4.38 wiring: doneCheck amendment gates", () => {
+	async function amendTwiceAndFailThird() {
+		const f = fakePi();
+		taskExtension(f.pi as never);
+		await f.tool("task_create").execute("c1", { subject: "deploy" }, undefined, undefined, f.ctx);
+		const errs: string[] = [];
+		// lần 1 + 2: được
+		for (const desc of ["đề agent v1", "đề agent v2"]) {
+			const out = (await f.tool("task_update").execute("u", { id: 1, description: desc }, undefined, undefined, f.ctx)) as {
+				content: { text: string }[];
+			};
+			assert.match(out.content[0]!.text, /#1 → /);
+		}
+		// lần 3: bị chặn
+		try {
+			await f.tool("task_update").execute("u3", { id: 1, description: "echo ok là xong" }, undefined, undefined, f.ctx);
+		} catch (e) {
+			errs.push(String(e));
+		}
+		return errs;
+	}
+
+	test("agent rewrite #1 and #2 pass, #3 hits the DESC_AMEND_MAX wall", async () => {
+		const errs = await amendTwiceAndFailThird();
+		assert.equal(errs.length, 1);
+		assert.match(errs[0]!, /doneCheck đã bị model sửa 2\/2/);
+		assert.match(errs[0]!, /user/);
+	});
+
+	test("state after two agent rewrites carries descAmendments + trail", async () => {
+		const f = fakePi();
+		taskExtension(f.pi as never);
+		await f.tool("task_create").execute("c1", { subject: "deploy" }, undefined, undefined, f.ctx);
+		await f.tool("task_update").execute("u1", { id: 1, description: "v1" }, undefined, undefined, f.ctx);
+		await f.tool("task_update").execute("u2", { id: 1, description: "v2" }, undefined, undefined, f.ctx);
+		const data = f.entries[f.entries.length - 1]!.data as {
+			tasks: { descAmendments?: number; descHistory?: { by: string; from: string; to: string }[] }[];
+		};
+		assert.equal(data.tasks[0]!.descAmendments, 2);
+		assert.equal(data.tasks[0]!.descHistory?.length, 2);
+		assert.equal(data.tasks[0]!.descHistory?.[1]?.from, "v1");
+		assert.equal(data.tasks[0]!.descHistory?.[1]?.to, "v2");
+	});
+
+	test("identical description rewrite is free (no false amend)", async () => {
+		const f = fakePi();
+		taskExtension(f.pi as never);
+		await f.tool("task_create").execute("c1", { subject: "s", description: "same text" }, undefined, undefined, f.ctx);
+		await f.tool("task_update").execute("u1", { id: 1, description: " same text " }, undefined, undefined, f.ctx);
+		const data = f.entries[f.entries.length - 1]!.data as { tasks: { descAmendments?: number }[] };
+		assert.equal(data.tasks[0]!.descAmendments, undefined);
+	});
+
+	test("strict task: agent cannot rewrite the doneCheck at all", async () => {
+		const f = fakePi();
+		taskExtension(f.pi as never);
+		await f.tool("task_create").execute(
+			"c1",
+			{ subject: "s", verify: { lane: "state", probes: [], strict: true } },
+			undefined,
+			undefined,
+			f.ctx,
+		);
+		let err = "";
+		try {
+			await f.tool("task_update").execute("u1", { id: 1, description: "đề mới" }, undefined, undefined, f.ctx);
+		} catch (e) {
+			err = String(e);
+		}
+		assert.match(err, /strict — doneCheck chỉ user sửa được/);
+	});
+});

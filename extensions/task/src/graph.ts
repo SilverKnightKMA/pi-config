@@ -9,7 +9,7 @@
  * - no divergences in this file beyond import paths/scope
  */
 
-import { isRecord, type BranchEntryLike, type Task, type TaskState, type TaskStatus } from "./types.ts";
+import { isRecord, type BranchEntryLike, type DescAmendment, type Task, type TaskState, type TaskStatus } from "./types.ts";
 import { sanitizeVerify, type TaskAudit, type VerifySpec } from "./verify.ts";
 
 export const TASK_STATE = "task-state";
@@ -157,6 +157,10 @@ export interface UpdatePatch {
   strictOverride?: boolean;
   /** Bridge-only: clear appealReason on unpark (undefined appealReason means "unchanged"). */
   clearAppeal?: boolean;
+  /** v1.4.38 doneCheck guard: attribute a real description change to its author.
+   * Agent rewrites count against DESC_AMEND_MAX; user rewrites are free but
+   * still land in descHistory so the trail is complete. */
+  descAmend?: { by: "agent" | "user" };
 }
 
 export function updateTask(state: TaskState, id: number, patch: UpdatePatch, now: number): OpResult {
@@ -167,7 +171,22 @@ export function updateTask(state: TaskState, id: number, patch: UpdatePatch, now
   let next: Task = { ...existing, updatedAt: now };
 
   if (patch.subject !== undefined && patch.subject.trim()) next.subject = patch.subject.trim();
-  if (patch.description !== undefined) next.description = patch.description.trim();
+  if (patch.description !== undefined) {
+    const trimmedDesc = patch.description.trim();
+    if (trimmedDesc !== existing.description && patch.descAmend) {
+      // doneCheck rewrite — keep the old sheet (truncated) for the judge + panel
+      next.descHistory = [...(existing.descHistory ?? []), {
+        at: now,
+        by: patch.descAmend.by,
+        from: existing.description.slice(0, 400),
+        to: trimmedDesc.slice(0, 400),
+      }].slice(-5);
+      if (patch.descAmend.by === "agent") {
+        next.descAmendments = (existing.descAmendments ?? 0) + 1;
+      }
+    }
+    next.description = trimmedDesc;
+  }
   if (patch.evidence !== undefined) next.evidence = patch.evidence.trim() || null;
   if (patch.verify !== undefined) {
     next.verify = patch.verify;
@@ -248,6 +267,23 @@ function sanitizeAudit(raw: unknown): TaskAudit | undefined {
  * an older schema — or truncated mid-write — used to reach openBlockers with
  * a missing blockedBy array and take the whole extension down at replay.
  */
+/** v1.4.38: clamp a descHistory array from ledger/unknown input (max 5, each side 400 chars). */
+function sanitizeDescHistory(value: unknown): DescAmendment[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out: DescAmendment[] = [];
+  for (const item of value) {
+    if (!isRecord(item)) continue;
+    if (item.by !== "agent" && item.by !== "user") continue;
+    out.push({
+      at: typeof item.at === "number" ? item.at : 0,
+      by: item.by,
+      from: typeof item.from === "string" ? item.from.slice(0, 400) : "",
+      to: typeof item.to === "string" ? item.to.slice(0, 400) : "",
+    });
+  }
+  return out.length ? out.slice(-5) : undefined;
+}
+
 export function sanitizeState(data: Record<string, unknown>): TaskState {
   const raw = Array.isArray(data.tasks) ? data.tasks : [];
   const tasks: Task[] = [];
@@ -264,6 +300,8 @@ export function sanitizeState(data: Record<string, unknown>): TaskState {
       verify: sanitizeVerify(item.verify),
       audit: sanitizeAudit(item.audit),
       verifyAmendments: typeof item.verifyAmendments === "number" ? item.verifyAmendments : undefined,
+      descAmendments: typeof item.descAmendments === "number" ? item.descAmendments : undefined,
+      descHistory: sanitizeDescHistory(item.descHistory),
       failStreak: typeof item.failStreak === "number" ? item.failStreak : undefined,
       judgeRounds: typeof item.judgeRounds === "number" ? item.judgeRounds : undefined,
       appealReason: typeof item.appealReason === "string" ? item.appealReason : undefined,
