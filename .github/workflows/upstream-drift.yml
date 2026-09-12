@@ -78,6 +78,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # label phải tồn tại trước khi gh issue create dùng nó
+          gh label create upstream-sync --color BFD4F2 --description "upstream nhích so ref đã port — chờ sync-eval chế độ 3" || true
           # map name -> issue number cho các issue upstream-sync đang mở
           declare -A OPEN
           while IFS=$'\t' read -r num title; do
@@ -86,9 +88,9 @@ jobs:
           done < <(gh issue list --label upstream-sync --state open --limit 100 \
                    --json number,title --jq '.[] | [.number, .title] | @tsv')
 
-          # mở / cập nhật theo drift
+          # mở / cập nhật theo drift (NAMES_JSON space-separated → for-loop word-split, KHÔNG while read từng dòng)
           NAMES_JSON=$(python3 -c 'import json;print(" ".join(d["name"] for d in json.load(open("drift.json"))))')
-          while IFS= read -r name; do
+          for name in $NAMES_JSON; do
             [ -z "$name" ] && continue
             body=$(python3 -c "
           import json
@@ -102,7 +104,7 @@ jobs:
               gh issue create --title "[upstream-sync] $name" --body "$body" --label upstream-sync >/dev/null
               echo "created issue ($name)"
             fi
-          done <<< "$NAMES_JSON"
+          done
 
           # đóng issue hết drift
           for name in "${!OPEN[@]}"; do
