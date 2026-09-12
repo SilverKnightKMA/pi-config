@@ -117,10 +117,11 @@ async function dispatchConsolidator(
 		const argv = buildWorkerArgv({
 			model: runtime.config.models.consolidator,
 			sessionName: `om-consolidator-${runId}`,
-			kickoffPrompt: prompt,
 		});
 		const env = buildWorkerEnv("consolidator", { memoryRoot: runtime.memoryRoot, runId });
-		const exit = await spawnWorker({ argv, cwd: runtime.memoryRoot, env, signal: controller.signal });
+		// stdin, not argv: the prompt carries JOURNEY.md verbatim and can exceed the
+		// 128KB MAX_ARG_STRLEN ceiling (live E2BIG incident 2026-09-12).
+		const exit = await spawnWorker({ argv, cwd: runtime.memoryRoot, env, stdinData: prompt, signal: controller.signal });
 		// Capture cost before the exit-code check so a partial run's spend is still recorded.
 		recordWorkerCost(pi, runtime, ctx, "consolidator", runId);
 		if (exit.code !== 0) {

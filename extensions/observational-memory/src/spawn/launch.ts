@@ -37,10 +37,17 @@ export function resolvePiBinary(): { command: string; baseArgs: string[] } {
 	return { command: "pi", baseArgs: [] };
 }
 
+/**
+ * Build the worker argv. The kickoff prompt is intentionally NOT here: Linux caps a
+ * single argv element at MAX_ARG_STRLEN (131,072 bytes) and `spawn()` fails with E2BIG
+ * past it. Long-lived sessions grow JOURNEY.md (verbatim in the consolidator prompt)
+ * past that ceiling — observed live 2026-09-12 ("om: consolidator failed: spawn E2BIG",
+ * journey ~51.7KB + index + observations). `pi -p` with no positional prompt reads it
+ * from stdin instead, which is unbounded and still recorded as the session's user message.
+ */
 export function buildWorkerArgv(opts: {
 	model: ConfiguredModel;
 	sessionName: string;
-	kickoffPrompt: string;
 	agentExtensionPath?: string;
 }): string[] {
 	const pi = resolvePiBinary();
@@ -57,7 +64,7 @@ export function buildWorkerArgv(opts: {
 	if (opts.model.thinking) args.push("--thinking", opts.model.thinking);
 	args.push("-e", opts.agentExtensionPath ?? AGENT_EXTENSION_PATH);
 	args.push("-n", opts.sessionName);
-	args.push("-p", opts.kickoffPrompt);
+	args.push("-p");
 	return [pi.command, ...args];
 }
 
@@ -74,6 +81,8 @@ export function spawnWorker(opts: {
 	argv: string[];
 	cwd: string;
 	env: NodeJS.ProcessEnv;
+	/** Kickoff prompt piped to `pi -p` via stdin (see buildWorkerArgv). */
+	stdinData?: string;
 	signal?: AbortSignal;
 }): Promise<WorkerExit> {
 	const [command, ...rest] = opts.argv;
@@ -82,8 +91,14 @@ export function spawnWorker(opts: {
 		const proc = spawn(command, rest, {
 			cwd: opts.cwd,
 			env: opts.env,
-			stdio: ["ignore", "ignore", "pipe"],
+			stdio: [opts.stdinData != null ? "pipe" : "ignore", "ignore", "pipe"],
 		});
+		if (opts.stdinData != null && proc.stdin) {
+			proc.stdin.on("error", () => {
+				// EPIPE if pi dies before reading — the exit code carries the failure.
+			});
+			proc.stdin.end(opts.stdinData);
+		}
 		let stderr = "";
 		proc.stderr?.on("data", (d: Buffer) => {
 			stderr += d.toString();

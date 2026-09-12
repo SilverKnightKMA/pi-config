@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
-import { AGENT_EXTENSION_PATH, buildWorkerArgv, buildWorkerEnv, modelArg } from "../src/spawn/launch.js";
+import { AGENT_EXTENSION_PATH, buildWorkerArgv, buildWorkerEnv, modelArg, spawnWorker } from "../src/spawn/launch.js";
 import { readObserverResult, runResultPath, runsDir, writeObserverResult } from "../src/spawn/runs.js";
 import { registerObserverTool } from "../agent/observer/tool.js";
 
@@ -11,7 +11,7 @@ describe("launch argv + env", () => {
 	const model = { provider: "anthropic" as const, id: "claude-sonnet-4-6", thinking: "low" as const };
 
 	it("builds the headless yt-edit-style flag set", () => {
-		const argv = buildWorkerArgv({ model, sessionName: "om-observer-x", kickoffPrompt: "go" });
+		const argv = buildWorkerArgv({ model, sessionName: "om-observer-x" });
 		expect(argv).toContain("--no-extensions");
 		expect(argv).toContain("--no-builtin-tools");
 		expect(argv).toContain("--no-skills");
@@ -21,12 +21,15 @@ describe("launch argv + env", () => {
 		expect(argv[argv.indexOf("--thinking") + 1]).toBe("low");
 		expect(argv[argv.indexOf("-e") + 1]).toBe(AGENT_EXTENSION_PATH);
 		expect(argv[argv.indexOf("-n") + 1]).toBe("om-observer-x");
-		expect(argv[argv.indexOf("-p") + 1]).toBe("go");
+		// E2BIG regression (2026-09-12): the kickoff prompt rides stdin, NEVER argv —
+		// `-p` is the bare print-mode flag and must be the last element.
+		expect(argv[argv.length - 1]).toBe("-p");
+		expect(argv.join(" ").length).toBeLessThan(2_000);
 		expect(AGENT_EXTENSION_PATH.endsWith("/agent/index.ts")).toBe(true);
 	});
 
 	it("omits --thinking when no level is configured", () => {
-		const argv = buildWorkerArgv({ model: { provider: "x", id: "y" }, sessionName: "n", kickoffPrompt: "p" });
+		const argv = buildWorkerArgv({ model: { provider: "x", id: "y" }, sessionName: "n" });
 		expect(argv).not.toContain("--thinking");
 	});
 
@@ -107,5 +110,19 @@ describe("registerObserverTool", () => {
 			{ timestamp: "2026-06-25 14:30", content: "first" },
 			{ timestamp: "2026-06-25 14:31", content: "second" },
 		]);
+	});
+});
+
+describe("E2BIG regression (2026-09-12 live incident)", () => {
+	it("spawnWorker pipes a >128KB prompt through stdin where argv would E2BIG", async () => {
+		// 300KB would blow MAX_ARG_STRLEN (131,072 B) as an argv element; a pipe takes it.
+		const big = "x".repeat(300_000);
+		const exit = await spawnWorker({ argv: ["cat"], cwd: tmpdir(), env: process.env, stdinData: big });
+		expect(exit.code).toBe(0);
+	});
+
+	it("spawnWorker without stdinData keeps stdin ignored (judge-runner hang lesson)", async () => {
+		const exit = await spawnWorker({ argv: ["cat"], cwd: tmpdir(), env: process.env });
+		expect(exit.code).toBe(0);
 	});
 });
