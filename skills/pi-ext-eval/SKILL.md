@@ -56,7 +56,10 @@ Khi user chọn một package để đánh giá sâu. Pattern đã chạy 5 lầ
 
 ## Chế độ 3 — SYNC-UPSTREAM (đã port: "upstream có tiến bộ gì?")
 
-Khi: dependabot mở PR witness (`chore(deps): bump @pify/x`), hoặc đợt quét thấy SHA upstream đổi so cột ref trong registry.
+Khi: workflow `upstream-drift` mở/cập nhật issue `[upstream-sync] <name>` (label `upstream-sync`),
+hoặc đợt quét thấy SHA upstream đổi so cột ref trong registry.
+Lưu ý: KHÔNG có dependabot witness PR cho ext đã port — code port nằm trong pi-config,
+bump version không cài gì cả; issue là tín hiệu duy nhất (user chốt 2026-09-12).
 
 1. Mở `upstream-registry.md` tìm dòng tương ứng → ref cũ.
 2. **Diff thật** ref cũ → mới (tarball hai version hoặc `git diff` hai SHA). KHÔNG đọc changelog thay diff.
@@ -77,7 +80,8 @@ Khi: dependabot mở PR witness (`chore(deps): bump @pify/x`), hoặc đợt qu�
 | MƯỢN / BORROW PIECES | lấy concept/mảnh lẻ, triển lại theo hệ mình |
 | BỎ | trùng cái có sẵn, hoặc xung đột doctrine/an toàn |
 | ĐỂ DÀNH / DEFERRED | đáng nhưng chưa đến lúc; ghi index + ngày |
-| witness | pin exact devDeps để dependabot báo upstream nhích — không cài, không import |
+| drift-issue | workflow upstream-drift mở issue khi upstream ≠ ref-đã-port; tự đóng khi registry cập nhật — cơ chế cho ext ĐÃ PORT |
+| witness-deps | devDeps pin cho 2 external cài thật (pi-mcp-adapter/pi-web-access) — dependabot bump = nâng cấp thật, KHÔNG dùng cho ext đã port |
 | tự thiết kế vượt | vùng ta phát triển xa hơn upstream (vẫn ghi registry để so) |
 
 ## Bản đồ gap đã biết (cập nhật khi landscape mới)
