@@ -33,6 +33,7 @@ Endpoint `gh:` theo dõi HEAD của repo — khi drift, mini-brief chỉ cần d
 | `md-log` | viết-lại-theo-mẫu của `learn` `extensions/md-link.ts` (file đã bị xóa ở upstream; header ghi nguồn) | learn `7cfd894` | 2026-09-12 — đứng im | drift-issue | `gh:amosblomqvist/learn@7cfd894` |
 | `read-only-mode` | **tự thiết kế** v1.4.17; v1.4.31 mượn concepts `@pify/plan-mode@0.4.2` (plan file + parseSteps + step cursor + control-file approve) | plan-mode 0.4.2 | 2026-09-12 — npm có 0.4.3, CHƯA diff | drift-issue | `npm:@pify/plan-mode@0.4.2` |
 | `subagent-types` (spawn_pool) | mượn concepts `@pify/swarm@0.6.0` (queue + expect-gate) + `@pify/workflow` (resume/gate) — đổi child-mechanism sang spawn_subagent của mình | swarm 0.6.0 / workflow 0.10.0 | 2026-09-12 — npm có 0.6.2 / 0.10.1, CHƯA diff | drift-issue | `npm:@pify/swarm@0.6.0 npm:@pify/workflow@0.10.0` |
+| `subagent-types` (safe_bash) | port `amosblomqvist/pi-subagents` `tools/safe-bash.ts` — 16 regex deny-list; KHÔNG có mandatory-deny / allowlist (gap do sandbox-runtime eval 2026-09-12 chỉ ra) | pi-subagents `1f54189` | 2026-09-12 — đứng im | drift-issue | `gh:amosblomqvist/pi-subagents@1f54189` |
 | `zombie-watchdog` | **tự thiết kế** 2026-09-01 (sau chat #3845/#3847) | — | — | — | — |
 | `sse-probe` | **tự thiết kế** (detector zaicp SSE) | — | — | — | — |
 | `visual-tools` | **tự thiết kế** cho pipeline Obsidian/teach | — | — | — | — |

@@ -44,11 +44,13 @@
 | 2026-08-30 → 09-06 | Tác giả Eero Alvar (amosblomqvist): 6 repo, 6 quan điểm thiết kế, transcript ~150KB | gốc của snip/OM/subagent; snip backend byte-identical; divergence audit 3 chủ ý |
 | 2026-09-05 | so sánh snip port vs prompt-snippets upstream tại f82da56 | byte-identical + 3 lệch chủ ý (persistence, sticky, control-file) |
 | 2026-09-08 | dòng pi-tasks 3 nhánh + npm ext lạ (pi-goal-x, @arhen needs-edges, mjasnikovs AGPL⚠) | landscape họ task; license disqualifier ghi nhận |
+| 2026-09-12 | **anthropics/sandbox-runtime** (họ bash-safety, do user chỉ định) — chạy đầu tiên chế độ LANDSCAPE | `learn/sandbox-runtime-eval-2026-09-12.md` — MƯỢN CONCEPTS không nhúng runtime: mandatory-deny write list + write-allowlist theo role + thông điệp chặn kiểu deniedDomainReasons cho safe_bash; KHÔNG adopt srt (double-sandbox yếu đi trong Docker, phụ thuộc bubblewrap/socat/userns) |
 
 ## Chưa từng quét landscape (nợ hiện tại)
 
-- họ memory ngoài @pify (pi-memory*, third-party)
+- họ memory ngoài @pify (pi-memory*, third-party) — đánh dấu bắt đầu rồi 2026-09-12 qua bash-safety nhưng chưa quét memory
 - họ goal ngoài @pify (pi-goal-x đã thấy lướt, chưa deep)
+- họ bash-safety ngoài srt: bash-guard các harness, shvl,shellfire... (srt là nguồn 1 do user chỉ định)
 - họ plugin-market Paseo của bên thứ ba (ngoài 5 plugin của mình)
 
 → lần chạy landscape đầu sẽ xử các dòng này theo skill `pi-ext-eval` chế độ 1.
