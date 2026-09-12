@@ -22,7 +22,7 @@ Endpoint `gh:` theo dõi HEAD của repo — khi drift, mini-brief chỉ cần d
 
 | Extension (pi-config) | Nguồn gốc | Ref đã port | Lần kiểm cuối | Theo dõi | endpoint |
 |---|---|---|---|---|---|
-| `task` | `@pify/task` (dòng tintinweb/pi-tasks) — concepts: DAG blockedBy, evidence-gate, transient nudges, ledger | npm `@pify/task@0.3.0` (snapshot 2026-09-07, MIT) | 2026-09-12 — npm có 0.3.2, CHƯA diff | drift-issue | `npm:@pify/task@0.3.0` |
+| `task` | `@pify/task` (dòng tintinweb/pi-tasks) — concepts: DAG blockedBy, evidence-gate, transient nudges, ledger | npm `@pify/task@0.3.0` (snapshot 2026-09-07, MIT) | 2026-09-12 — đã diff 0.3.2 (issue #22): chỉ extract `sweepStep` pure-function + docs, KHÔNG đổi hành vi → không đáng port, ref nhích lên 0.3.2 | drift-issue | `npm:@pify/task@0.3.2` |
 | `task` (verify 3 tầng) | **tự thiết kế** — layer 0/1/2, PARK, doneCheck guard; KHÔNG có ở upstream | — | — | — | — |
 | `snip` | `amosblomqvist/pi-config` `extensions/prompt-snippets` — backend byte-identical lúc port; 3 chủ ý lệch: persistence (ledger), sticky, control-file bridge | commit `f82da56` (2026-08-24) | 2026-09-12 — upstream đứng im tại f82da56 | drift-issue | `gh:amosblomqvist/pi-config@f82da56` |
 | `ask-user-question` | fork RPC-compatible của `amosblomqvist/pi-config` extension cùng tên | `f82da56` | 2026-09-12 — đứng im | drift-issue | `gh:amosblomqvist/pi-config@f82da56` |

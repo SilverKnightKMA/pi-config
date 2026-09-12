@@ -35,6 +35,7 @@
 | 2026-09-09 | @pify/plan-mode 0.4.2 | `learn/pify-planmode-eval-2026-09-09.md` (17.5KB) | 3-stage BORROW → đã ship v1.4.31 |
 | 2026-09-09 | @pify/memory + LLM-as-judge | `learn/pify-memory-research-2026-09-09.txt` (55KB) | để dành; hướng D = Agent-as-a-Judge → cơ sở layer-2 judge |
 | 2026-09-12 | @pify/goal 0.6.2 (diff 0.6.0→0.6.2) | `learn/pify-goal-eval-2026-09-12.md` (17.5KB) | PORT có chọn lọc (4 mảnh) hoặc mượn rẻ 20 dòng — CHỜ USER |
+| 2026-09-12 | @pify/task 0.3.0→0.3.2 (sync issue #22, chế độ 3 đầu tiên) | diff trong mini-brief session | KHÔNG ĐÁNH PORT — chỉ extract sweepStep pure-function + docs polish, truth table không đổi |
 
 ## Nghiên cứu nền ngoài @pify
 
