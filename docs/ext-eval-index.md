@@ -46,11 +46,26 @@
 | 2026-09-08 | dòng pi-tasks 3 nhánh + npm ext lạ (pi-goal-x, @arhen needs-edges, mjasnikovs AGPL⚠) | landscape họ task; license disqualifier ghi nhận |
 | 2026-09-12 | **anthropics/sandbox-runtime** (họ bash-safety, do user chỉ định) — chạy đầu tiên chế độ LANDSCAPE; **verdict sửa cùng ngày theo user: môi trường chạy không gắn với pack** | `learn/sandbox-runtime-eval-2026-09-12.md` — MƯỢN CONCEPTS + ADOPT srt làm TẦNG TÙY CHỌN KHẢ CHUYỂN: 3 mảnh text-level cho safe_bash mọi môi trường (mandatory-deny write list + write-allowlist theo role + thông điệp kiểu deniedDomainReasons) + mảnh 4 detect-delegate-fallback `bashSandbox: auto\|srt\|off` — container hiện tại auto→text-guard, host Windows/Linux/macOS không-container auto→OS-sandbox |
 
-## Chưa từng quét landscape (nợ hiện tại)
+| 2026-09-12 | **LANDSCAPE họ bash-safety ngoài srt** (spawn_pool 4 researcher) | `learn/landscape-bash-safety-2026-09-12.md` — 13 ứng viên: **PORT 1** (opencode-bash-guard — text-tier AST segmentation + substitution lồng + fail-closed + redirect-path, nâng cấp trực tiếp thay 16 regex) · MƯỢN/BỎ phần còn lại · phụ: tree-sitter guards, LlamaFirewall classifier liền kề |
+| 2026-09-12 | **LANDSCAPE họ memory ngoài @pify** | `learn/landscape-memory-2026-09-12.md` — 13 gói npm + 4 harness + 3 trục kiến trúc: **PORT 0 · CANDIDATE 2** (pi-hermes-memory: correction-detector regex 2 lớp + content-scanner + failure target; @fradser/pi-memory: plan→validate→apply có receipt/hash) · MƯỢN 2 (recovery/undo pi-memory; not-extract policy @samfp) · Claude Code auto-memory hội tụ đúng thiết kế 3 lớp của mình |
+| 2026-09-12 | **LANDSCAPE họ goal ngoài @pify** | `learn/landscape-goal-2026-09-12.md` — **PORT 0 · CANDIDATE 1** (pi-goal-x 0.31.2 MIT: checkpoint-marker + disk-persist restart-resume + backoff ladder 5→80s + delegated-guard — 4 mảnh NGOÀI @pify/goal) · MƯỢN 3 (stop_hook_active+hard-cap 8+quota_auto_resume Claude Code; paused-stays-paused Codex; loop-break abort+resume opencode) · BỎ 7 (2 vì AGPL cấm port code) |
+| 2026-09-12 | **LANDSCAPE Paseo plugin bên thứ ba** | `learn/landscape-paseo-plugins-2026-09-12.md` — thị trường non nhưng sống: ~40 repo/~50 plugin trong ~3 tuần, đa số MIT; pattern chuẩn monorepo cá nhân + `plugin add --path`; rủi ro source-only unsandboxed chạy cạnh daemon |
 
-- họ memory ngoài @pify (pi-memory*, third-party) — đánh dấu bắt đầu rồi 2026-09-12 qua bash-safety nhưng chưa quét memory
-- họ goal ngoài @pify (pi-goal-x đã thấy lướt, chưa deep)
-- họ bash-safety ngoài srt: bash-guard các harness, shvl,shellfire... (srt là nguồn 1 do user chỉ định)
-- họ plugin-market Paseo của bên thứ ba (ngoài 5 plugin của mình)
+## Đã quét landscape xong (2026-09-12)
 
-→ lần chạy landscape đầu sẽ xử các dòng này theo skill `pi-ext-eval` chế độ 1.
+4 họ nợ trong mục cũ đã quét trọn bằng spawn_pool 4 researcher (brief ở learn/, verdict
+chi tiết ở bảng trên): bash-safety ngoài srt · memory ngoài @pify · goal ngoài @pify ·
+Paseo plugin bên thứ ba.
+
+Còn nợ deep-eval (chế độ 2, chờ user chọn):
+- pi-goal-x (CANDIDATE — eval sâu 4 mảnh ngoài @pify/goal; đối chiếu song song với
+  decision @pify/goal đang treo)
+- pi-hermes-memory + @fradser/pi-memory (CANDIDATE — đan xen @pify/memory part 2 user
+  đã để dành; hermes chỉ đáng eval mảnh handler vì store MEMORY/USER.md trùng)
+- opencode-bash-guard (PORT đã chốt trong brief — chờ lệnh build cùng 4 mảnh
+  sandbox-runtime: mandatory-deny + role allowlist + thông điệp + tầng srt tùy chọn)
+
+Vẫn chưa từng quét (mở mới nếu cần):
+- họ plan/todo ngoài @pify (plan-mode đã mượn nhưng chưa quét hàng xóm)
+- họ context-compaction ngoài OM của mình
+- plugin/hook cho harness khác xem như nguồn mượn pattern (đã chạm qua các brief riêng)
