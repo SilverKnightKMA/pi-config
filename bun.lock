@@ -7,6 +7,12 @@
       "devDependencies": {
         "@earendil-works/pi-coding-agent": "^0.85.1",
         "@earendil-works/pi-tui": "^0.85.1",
+        "@pify/goal": "0.6.2",
+        "@pify/memory": "0.8.1",
+        "@pify/plan-mode": "0.4.3",
+        "@pify/swarm": "0.6.2",
+        "@pify/task": "0.3.2",
+        "@pify/workflow": "0.10.1",
         "@sinclair/typebox": "^0.34.0",
         "@types/bun": "^1.4.1",
         "bun-types": "latest",
@@ -314,6 +320,18 @@
     "@napi-rs/keyring-win32-x64-msvc": ["@napi-rs/keyring-win32-x64-msvc@1.3.0", "", { "os": "win32", "cpu": "x64" }, "sha512-4DnCWXwDc0HRKwyRlG5y0VhKZW2tNRQfKKfyj6IX/KWfDNyq9hn4n+GL1auyDcOO/v8PwnhmYo2+rOOqCkvvOg=="],
 
     "@oxc-project/types": ["@oxc-project/types@0.148.0", "", {}, "sha512-Nm4s/jB+4FpFsPhWGEC4h7rzksesmtnMXomo6rCMcg/b8zLQuOziRgkCS1fxDCXOlJB/6Q8oABOZ/OP6RIPj9A=="],
+
+    "@pify/goal": ["@pify/goal@0.6.2", "", { "peerDependencies": { "@earendil-works/pi-coding-agent": "*", "typebox": "*" }, "optionalPeers": ["@earendil-works/pi-coding-agent", "typebox"] }, "sha512-uHuaHbO/aO5UGBKOxUGxVUI2dJHWrc+2lr2O/UpimcbvdQ4wAw6g/1Pci43kLLn40mjvUp6Bb+AdoF2G/kmuig=="],
+
+    "@pify/memory": ["@pify/memory@0.8.1", "", { "peerDependencies": { "@earendil-works/pi-ai": "*", "@earendil-works/pi-coding-agent": "*", "typebox": "*" }, "optionalPeers": ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "typebox"] }, "sha512-yEn4gavd04ntcthH3VyVlzj3zQIDNrQAO5g5zX7beKlpAILfLy+8P0OYnY8KK51mf3kydpnIQSNRgOc6s4+8iQ=="],
+
+    "@pify/plan-mode": ["@pify/plan-mode@0.4.3", "", { "peerDependencies": { "@earendil-works/pi-coding-agent": "*", "typebox": "*" }, "optionalPeers": ["@earendil-works/pi-coding-agent", "typebox"] }, "sha512-EwiMjXk9DQ50KZtrtie/AJ2oUWSDeSwH/QGrhjR6Q9MrXQnZD7nLPya+xilC4Bqf3gQ+V2A6j1LriXFDgTcAhw=="],
+
+    "@pify/swarm": ["@pify/swarm@0.6.2", "", { "peerDependencies": { "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*", "typebox": "*" }, "optionalPeers": ["@earendil-works/pi-coding-agent", "@earendil-works/pi-tui", "typebox"] }, "sha512-kVwDtBrVyxM3wRVT/oqhHI1vPyLRqa4UqAtOryyMQW5IyiRm80J6KCod+hm9nb9tY6GMOTPq8dTtmToO/Tv8Vg=="],
+
+    "@pify/task": ["@pify/task@0.3.2", "", { "peerDependencies": { "@earendil-works/pi-ai": "*", "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*", "typebox": "*" }, "optionalPeers": ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui", "typebox"] }, "sha512-xCsiVzk2+OFPbAt59ZgGc53M5s0y/palGINRroJxCw2GMVYu27ns+IZFVoO1bnS4lEnT6A/1lE3dVS/ovBrYag=="],
+
+    "@pify/workflow": ["@pify/workflow@0.10.1", "", { "peerDependencies": { "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*", "typebox": "*" }, "optionalPeers": ["@earendil-works/pi-coding-agent", "@earendil-works/pi-tui", "typebox"] }, "sha512-fD0Hr2XpYI7eNG9RTNciq+10mRHDkabBEnnE+sryrfGRxrVQ7IoIygag6FC3PMwqk8Aooy2/8L00um6Hn50nRw=="],
 
     "@pkgr/core": ["@pkgr/core@0.1.2", "", {}, "sha512-fdDH1LSGfZdTH2sxdpVMw31BanV28K/Gry0cVFxaNP77neJSkd82mM8ErPNYs9e+0O7SdHBLTDzDgwUuy18RnQ=="],
 

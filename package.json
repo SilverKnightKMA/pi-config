@@ -7,6 +7,12 @@
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.85.1",
     "@earendil-works/pi-tui": "^0.85.1",
+    "@pify/goal": "0.6.2",
+    "@pify/memory": "0.8.1",
+    "@pify/plan-mode": "0.4.3",
+    "@pify/swarm": "0.6.2",
+    "@pify/task": "0.3.2",
+    "@pify/workflow": "0.10.1",
     "@sinclair/typebox": "^0.34.0",
     "@types/bun": "^1.4.1",
     "bun-types": "latest",
