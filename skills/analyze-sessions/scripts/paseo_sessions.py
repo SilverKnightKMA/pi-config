@@ -158,7 +158,15 @@ def iter_agent_records(filters: Filters) -> Iterator[AgentSummary]:
             ):
                 continue
             created = ts_from_iso(d.get("createdAt") or "1970-01-01T00:00:00Z")
-            if not filters.matches_time(created):
+            # time filter bounds by LAST ACTIVITY (lastActivityAt → updatedAt → createdAt),
+            # not creation — an old-but-still-running agent must stay visible in --since windows
+            activity = ts_from_iso(
+                d.get("lastActivityAt")
+                or d.get("updatedAt")
+                or d.get("createdAt")
+                or "1970-01-01T00:00:00Z"
+            )
+            if not filters.matches_time(activity):
                 continue
             handle = (d.get("persistence") or {}).get("nativeHandle")
             transcript = Path(handle) if handle else None
@@ -203,12 +211,20 @@ def iter_om_worker_records(filters: Filters) -> Iterator[AgentSummary]:
     """
     if not PI_SESSIONS_DIR.exists():
         return
+    # workers are plain pi runs — a provider filter that isn't pi excludes them all
+    # (before this guard, --provider omp silently returned every worker)
+    if filters.provider and filters.provider != "pi":
+        return
     for bucket in sorted(PI_SESSIONS_DIR.iterdir()):
         if not bucket.is_dir() or ".memory-" not in bucket.name:
             continue
         # bucket name: --<flattened-project-cwd>-.memory-<sessionId>--
         ws_part = bucket.name.split(".memory-")[0][2:].rstrip("-")
         if filters.workspace and filters.workspace not in ws_part:
+            continue
+        # worker cwd is the .memory bucket itself; a cwd filter applies strictly
+        # (substring match against the bucket path, same rule as main records)
+        if filters.cwd and filters.cwd not in str(bucket):
             continue
         for jsonl in sorted(bucket.glob("*.jsonl")):
             session_name = ""

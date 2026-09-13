@@ -37,8 +37,9 @@ python3 scripts/paseo_cost.py --since 30d --by model
 # The 10 most expensive agents of the last month
 python3 scripts/paseo_cost.py --since 30d --by agent --limit 10
 
-# One workspace, all time
-python3 scripts/paseo_cost.py --workspace learn
+# One workspace — beware: with NO time filter, cost defaults to --since 7d.
+# For true all-time pass an explicit wide bound:
+python3 scripts/paseo_cost.py --workspace learn --since 1970-01-01
 
 # Grand total only
 python3 scripts/paseo_cost.py --since 30d --by total
@@ -55,7 +56,7 @@ Groupings: `total`, `day`, `workspace`, `provider`, `model`, `kind`, `agent`. Wh
 |---|---|
 | `main` | Human-created agent (no subagent label) |
 | `subagent` | Spawned via `spawn_subagent` (label `subagent.role`) |
-| `om-observer` / `om-consolidator` | observational-memory worker subprocesses — plain pi sessions under `~/.pi/agent/sessions/<ws>-.memory-<id>--/`, named `om-observer-*` / `om-consolidator-*`. Included automatically: cost, message counts, and prompts all roll up like any other session.
+| `om-observer` / `om-consolidator` | observational-memory worker subprocesses — plain pi sessions under `~/.pi/agent/sessions/<ws>-.memory-<id>--/`, named `om-observer-*` / `om-consolidator-*`. Included automatically: cost, message counts, and prompts all roll up like any other session. Filters apply: `--provider` must be `pi` (workers are pi runs), `--cwd` matches the `.memory` bucket path.
 
 ```bash
 # Cost split by session kind
@@ -135,20 +136,20 @@ python3 scripts/paseo_search.py "global instruction" --prompts-only --since 60d
 python3 scripts/paseo_search.py "rate limit" --literal --context 3
 ```
 
-Each hit prints the agent header (id prefix, provider, title) so you can drill in with `paseo_show.py <prefix>`.
+Each hit prints the agent header (id prefix, provider, title) so you can drill in with `paseo_show.py <prefix>` — EXCEPT OM-worker hits: workers have no paseo record, so read their transcript directly at `~/.pi/agent/sessions/<bucket>/<worker-id>....jsonl`.
 
 ## Shared filters
 
-Available on **all four scripts**:
+Available on `paseo_cost.py`, `paseo_prompts.py`, `paseo_search.py` — NOT `paseo_show.py` (it takes only a positional id + `--max-chars`) and NOT `anomaly_report.py` (own flags: `--days/--json/--record/--self-test`):
 
 | Flag | Meaning |
 |---|---|
-| `--since WHEN` / `--until WHEN` | `YYYY-MM-DD`, ISO datetime, or relative: `7d`, `2w`, `3h`, `30m` |
+| `--since WHEN` / `--until WHEN` | `YYYY-MM-DD`, ISO datetime, or relative `Nd`/`Nh` ONLY (`7d`, `3h` — no `2w`/`30m`). Bounds are by LAST ACTIVITY, not creation: an old-but-still-running agent stays visible |
 | `--provider NAME` | `omp`, `pi`, `claude`, `codex`, `copilot`, `opencode`, `factory-droid` |
 | `--workspace SUBSTR` | Substring match on the workspace directory name (e.g. `learn`) |
 | `--cwd SUBSTR` | Substring match on the agent's real `cwd` |
 | `--session ID` | Agent id or prefix (8 chars usually unique) |
-| `--limit N` | Cap items returned (caps groups, not agents, for `paseo_cost.py` group views) |
+| `--limit N` | `paseo_cost.py` ONLY — caps groups, not agents, in group views. prompts/search have no `--limit` (search uses `--limit-hits`; a stray `--limit` gets argparse-abbreviated to it silently) |
 | `--include-archived` | Include archived agents (excluded by default) |
 
 ## Common queries

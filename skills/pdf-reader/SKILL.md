@@ -11,6 +11,8 @@ Read and comprehend PDF files, especially math lecture notes and academic papers
 
 All scripts use a venv at `SKILL_DIR/.venv` with `pymupdf` installed. If the venv is missing, create it from `requirements.txt`:
 
+RULE: the venv ALWAYS lives at `SKILL_DIR/.venv` (the skill's own directory, wherever it is installed) — NEVER at a guessed workspace path; resolve `SKILL_DIR` from this file's location, not from the current working directory.
+
 ```bash
 python3 -m venv SKILL_DIR/.venv
 SKILL_DIR/.venv/bin/pip install -r SKILL_DIR/requirements.txt
