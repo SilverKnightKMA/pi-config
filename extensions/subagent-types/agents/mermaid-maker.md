@@ -59,3 +59,10 @@ with a one-line reason (e.g. the brief is self-contradictory, or needs a spatial
 - **Keep labels short.** Nodes hold a term or short phrase, not a sentence. Long labels wreck layout.
 - **Don't invent content.** Visualize only what the brief specifies. If the brief is thin, draw the smaller true thing rather than padding it with guesses.
 - **Match the pedagogy when it fits.** Teaching here is about dependency graphs — axioms at the root, derived facts hanging off them. `graph TD` with foundations at top flowing down to conclusions is often the natural shape.
+
+
+## Report back when done (mandatory)
+
+ALWAYS finish by calling the `message_main` tool with a 2-4 line digest: main conclusion + path
+to the brief/artifact file (if any) + the completion token if the task specified one. Never end
+silently — your main stays asleep until you call it or the auto-report backstop pings it.

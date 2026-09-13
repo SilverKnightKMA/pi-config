@@ -11,6 +11,19 @@ Tools for querying every Paseo agent session on this machine. All scripts are st
 
 Each agent is a JSON record `~/.paseo/agents/<workspace-dir>/<agentId>.json` (provider, title, cwd, model, timestamps, archived flag) plus a `persistence.nativeHandle` pointing at the provider-native transcript — for omp/pi that's a JSONL session file with `message` records (roles: `user`, `assistant`, `toolResult`), where assistant messages carry `usage.cost` split into input/output/cacheRead/cacheWrite/total. Agents whose provider keeps transcripts elsewhere (claude, codex, ...) still appear as rows, with metadata only.
 
+## Rule: probe before you parse (mandatory)
+
+The transcript shape changes across pi versions — never hand-parse from memory. Before writing
+any code that reads a transcript JSONL, run exactly one verification step on the file you will
+query:
+
+    python3 scripts/paseo_probe.py <file.jsonl> [--sample 200]
+
+It prints the record types present, the observed field paths (dot notation, `[]` marks array
+elements), and the distribution of `message.role` / `message.content[].type` values. Build your
+query from the paths it PRINTS — when pi changes shape, the probe reports the new shape, so there
+is no frozen shape documentation here to go stale.
+
 ## Scripts
 
 All scripts share the same filter vocabulary (see "Shared filters" below). Run them with `python3` from the skill's `scripts/` directory:
