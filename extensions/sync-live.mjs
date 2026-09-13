@@ -33,6 +33,7 @@ const liveSkills = path.join(homedir(), ".pi/agent/skills");
 // node_modules are excluded, so rsync --delete is safe for them).
 const PACKED = [
 	"ask-user-question",
+	"goal",
 	"md-log",
 	"observational-memory",
 	"quiz",
