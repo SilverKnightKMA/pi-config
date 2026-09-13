@@ -59,6 +59,7 @@ import {
 	parseSteps,
 	planFilePath,
 	planStatusText,
+	planStatusPayload,
 	replayPlan,
 	slugFromPlan,
 	type PlanControlPayload,
@@ -108,6 +109,27 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 			pi.appendEntry(PLAN_STATE, JSON.parse(JSON.stringify(plan)) as never);
 		} catch {
 			// Ledger failures never break mode changes.
+		}
+		writePlanStatus();
+	}
+
+	/** #22 (plugin v1.0.37): small projection file the task panel reads to
+	 *  show plan state + the USER-ONLY approve/revise buttons. Written next to
+	 *  the control file as `<sessionId>.status.json`; the control watcher only
+	 *  reacts to exact `<sessionId>.json`, so this never self-triggers. Best
+	 *  effort: failures never break mode changes (same contract as persistPlan). */
+	function writePlanStatus(): void {
+		if (!sessionId) return;
+		try {
+			const dir = join(homedir(), ".pi", "agent", PLAN_CONTROL_DIR);
+			mkdirSync(dir, { recursive: true });
+			const payload = planStatusPayload(plan, sessionId);
+			const file = join(dir, `${sessionId}.status.json`);
+			const tmp = `${file}.tmp-${process.pid}`;
+			writeFileSync(tmp, JSON.stringify(payload));
+			renameSync(tmp, file);
+		} catch {
+			// never break mode changes
 		}
 	}
 

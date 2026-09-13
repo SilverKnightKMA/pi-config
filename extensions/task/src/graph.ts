@@ -313,3 +313,63 @@ export function sanitizeState(data: Record<string, unknown>): TaskState {
   const nextId = typeof data.nextId === "number" ? Math.max(data.nextId, maxId + 1) : maxId + 1;
   return { tasks: rebuildReverseLinks(tasks), nextId };
 }
+
+// ── #45: field-level CHANGES for update cards ──────────────────────────
+// User report 2026-09-13: "task updated pending => pending" says nothing about
+// WHAT changed. Every harness action must self-explain (same family as the
+// #43 denial envelope). Pure diff over the fields a worker can touch; the
+// update tool renders it for the model AND rides it in `details.fields` for
+// the panel card. Unchanged fields are omitted; cap MAX_FIELD_CHANGES lines.
+
+export interface FieldChange {
+	field: string;
+	from?: string;
+	to: string;
+}
+
+export const MAX_FIELD_CHANGES = 6;
+
+const trunc = (s: string, n = 80): string => (s.length <= n ? s : `${s.slice(0, n - 1)}…`);
+
+const verifySummary = (v: Task["verify"]): string =>
+	v ? `${v.lane}${v.strict ? " strict" : ""} · probes=${v.probes.length}` : "none";
+
+export function fieldChanges(prev: Task | undefined, next: Task): FieldChange[] {
+	if (!prev) return [];
+	const out: FieldChange[] = [];
+	if (prev.subject !== next.subject) {
+		out.push({ field: "subject", from: trunc(prev.subject), to: trunc(next.subject) });
+	}
+	if (prev.description !== next.description) {
+		const amended = (next.descAmendments ?? 0) > (prev.descAmendments ?? 0);
+		out.push({
+			field: amended ? "doneCheck (đã sửa đề x/2 — tờ cũ giữ trong trail)" : "doneCheck",
+			from: trunc(prev.description),
+			to: trunc(next.description),
+		});
+	}
+	const prevBlocked = (prev.blockedBy ?? []).join(",");
+	const nextBlocked = (next.blockedBy ?? []).join(",");
+	if (prevBlocked !== nextBlocked) {
+		out.push({ field: "blockedBy", from: prevBlocked || "—", to: nextBlocked || "—" });
+	}
+	if (verifySummary(prev.verify) !== verifySummary(next.verify)) {
+		out.push({ field: "verify", from: verifySummary(prev.verify), to: verifySummary(next.verify) });
+	}
+	if ((prev.verifyAmendments ?? 0) !== (next.verifyAmendments ?? 0)) {
+		out.push({ field: "verifyAmendments", to: `${next.verifyAmendments ?? 0}/2` });
+	}
+	if (prev.status !== next.status) {
+		out.push({ field: "status", from: prev.status, to: next.status });
+	}
+	if (next.appealReason && prev.appealReason !== next.appealReason) {
+		out.push({ field: "PARK lý do", to: trunc(next.appealReason) });
+	}
+	if ((prev.judgeRounds ?? 0) !== (next.judgeRounds ?? 0)) {
+		out.push({ field: "judgeRounds", from: String(prev.judgeRounds ?? 0), to: String(next.judgeRounds ?? 0) });
+	}
+	if (prev.audit?.verdict !== next.audit?.verdict && next.audit) {
+		out.push({ field: `judge: ${next.audit.verdict}`, to: trunc(next.audit.summary.replace(/\n/g, "; ")) });
+	}
+	return out.slice(0, MAX_FIELD_CHANGES);
+}

@@ -170,3 +170,35 @@ describe("read-only-mode (port of zz-read-only-mode)", () => {
 		expect(state.active).toEqual(["read", "bash"]);
 	});
 });
+
+describe("plan status projection (#22 — panel reads this file)", () => {
+	// writePlanStatus is 8 lines of best-effort fs wiring around this pure
+	// shape; Bun caches os.homedir() at startup so tests pin the contract
+	// here instead of redirecting HOME (PR #102 lesson: never touch real HOME).
+	test("planStatusPayload carries mode/steps/planFile for the panel", async () => {
+		const { emptyPlan, planStatusPayload } = await import("./plan.ts");
+		const plan = { ...emptyPlan(), mode: "awaiting" as const, planFile: ".pi/plans/x.md", steps: [
+			{ index: 1, text: "a", done: true },
+			{ index: 2, text: "b", done: false },
+		] };
+		const p = planStatusPayload(plan, "sess-42", "2026-09-13T00:00:00.000Z");
+		expect(p).toEqual({
+			v: 1,
+			sessionId: "sess-42",
+			mode: "awaiting",
+			stepsDone: 1,
+			stepsTotal: 2,
+			planFile: ".pi/plans/x.md",
+			submittedAt: null,
+			updatedAt: "2026-09-13T00:00:00.000Z",
+		});
+	});
+
+	test("inactive plan still projects (panel shows nothing-to-approve)", async () => {
+		const { emptyPlan, planStatusPayload } = await import("./plan.ts");
+		const p = planStatusPayload(emptyPlan(), "s");
+		expect(p.mode).toBe("inactive");
+		expect(p.stepsTotal).toBe(0);
+		expect(p.planFile).toBeNull();
+	});
+});

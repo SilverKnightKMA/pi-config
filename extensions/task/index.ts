@@ -27,6 +27,7 @@ import {
 	readyTasks,
 	replayBranch,
 	updateTask,
+	fieldChanges,
 	openBlockers,
 	type UpdatePatch,
 } from "./src/graph.ts";
@@ -660,7 +661,8 @@ export default function taskExtension(pi: ExtensionAPI) {
 				}
 			}
 
-			const prevStatus = state.tasks.find((t) => t.id === params.id)?.status ?? null;
+			const prevTask = state.tasks.find((t) => t.id === params.id);
+			const prevStatus = prevTask?.status ?? null;
 			const result = updateTask(state, params.id, patch, Date.now());
 			if (result.error) throw new Error(result.error);
 			const unblocked = newlyReady(state, result.state);
@@ -675,13 +677,20 @@ export default function taskExtension(pi: ExtensionAPI) {
 				params.status === "completed" && result.task!.verify?.strict
 					? "\n(STRICT task — layer-2 judge đã phán theo audit ở trên)"
 					: "";
+			// #45: field-level CHANGES block (self-explaining harness, same family
+			// as the #43 denial envelope) — model sees it, panel card rides it.
+			const fields = fieldChanges(prevTask, result.task!);
+			const changesNote =
+				fields.length > 0
+					? `\nCHANGES:\n${fields.map((f) => `  ${f.field}: ${f.from ? `${f.from} → ` : ""}${f.to}`).join("\n")}`
+					: "";
 			const ready =
 				unblocked.length > 0
 					? `\nNow ready (no open blockers, safe to parallelize): ${unblocked.map((t) => `#${t.id} ${t.subject}`).join(", ")}`
 					: "";
 			return {
 				content: [
-					{ type: "text", text: `#${result.task!.id} → ${result.task!.status}${warn}${auditNote}${parkedNote}${strictNote}${ready}` },
+					{ type: "text", text: `#${result.task!.id} → ${result.task!.status}${warn}${auditNote}${parkedNote}${strictNote}${ready}${changesNote}` },
 				],
 					details: {
 					id: result.task!.id,
@@ -690,6 +699,9 @@ export default function taskExtension(pi: ExtensionAPI) {
 					ready: unblocked.map((t) => t.id),
 					tasks: detailsTasks(result.state),
 					changes: changeFor(result.task!.id, prevStatus, result.task!.status),
+					// #45: field-level diff — "pending => pending" said nothing about
+					// WHAT changed (user 2026-09-13). Panel card renders these lines.
+					fields: fieldChanges(prevTask, result.task!),
 				},
 			};
 		},

@@ -223,3 +223,36 @@ export function replayPlan(entries: readonly BranchEntryLike[]): PlanState {
 	}
 	return state;
 }
+
+// ── #22: status projection the task panel reads ────────────────────────
+
+/** Payload of `<sessionId>.status.json` — the plugin panel renders plan
+ *  state + the USER-ONLY approve/revise buttons from this file. Pure shape
+ *  helper so tests pin the contract without touching a real HOME. */
+export interface PlanStatusPayload {
+	v: 1;
+	sessionId: string;
+	mode: PlanState["mode"];
+	stepsDone: number;
+	stepsTotal: number;
+	planFile: string | null;
+	submittedAt: string | null;
+	updatedAt: string;
+}
+
+export function planStatusPayload(
+	state: PlanState,
+	sessionId: string,
+	now = new Date().toISOString(),
+): PlanStatusPayload {
+	return {
+		v: 1,
+		sessionId,
+		mode: state.mode,
+		stepsDone: state.steps.filter((s) => s.done).length,
+		stepsTotal: state.steps.length,
+		planFile: state.planFile ?? null,
+		submittedAt: state.submittedAt ?? null,
+		updatedAt: now,
+	};
+}
