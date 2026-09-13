@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
-import { controlFilePath, parseControlPayload,
+import { controlFilePath, parseControlPayload, sweepableControlFile,
 	parseTwoGroupSelection,
 	askGroupSelection,
 	parseSnippet,
@@ -245,5 +245,15 @@ describe("control file bridge (v1.5 plugin <-> engine)", () => {
 	test("controlFilePath: one per session under snip-control/", () => {
 		const p = controlFilePath("abc123");
 		expect(p.endsWith(join(".pi", "agent", "snip-control", "abc123.json"))).toBe(true);
+	});
+});
+
+describe("control-file TTL sweep (#53)", () => {
+	test("older than TTL -> sweepable; fresh -> keep; ttl 0 disables", () => {
+		const now = Date.now();
+		const day = 86_400_000;
+		expect(sweepableControlFile(now - 31 * day, now, 30)).toBe(true);
+		expect(sweepableControlFile(now - 29 * day, now, 30)).toBe(false);
+		expect(sweepableControlFile(now - 400 * day, now, 0)).toBe(false);
 	});
 });

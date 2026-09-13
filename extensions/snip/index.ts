@@ -28,7 +28,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, watch, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, watch, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -185,6 +185,41 @@ export default function snip(pi: ExtensionAPI) {
 	let lastSentAtSeen: string | undefined;
 	let watchDebounce: ReturnType<typeof setTimeout> | undefined;
 
+	/** TTL decision — delegates to the exported pure predicate. */
+	function shouldSweepFile(mtimeMs: number, nowMs: number, ttlDays: number): boolean {
+		return sweepableControlFile(mtimeMs, nowMs, ttlDays);
+	}
+
+	const SNIP_CONTROL_TTL_DAYS = Number(process.env.SNIP_CONTROL_TTL_DAYS ?? 30);
+	let lastSweepAt = 0;
+
+	/** Residue sweep (#53): the engine registers a control file for EVERY main
+	 *  session ever started (bridge handshake), so the dir accumulates dead
+	 *  sessions forever (354 files / 249 learn chips by 2026-09-13). At most
+	 *  once per day per process we drop files untouched for SNIP_CONTROL_TTL_DAYS
+	 *  (0 disables). Own file is skipped (it was just rewritten anyway). */
+	function sweepControlFiles(): void {
+		const now = Date.now();
+		if (now - lastSweepAt < 86_400_000) return;
+		lastSweepAt = now;
+		const dir = dirname(controlFilePath(sessionId || "x"));
+		try {
+			for (const f of readdirSync(dir)) {
+				if (!f.endsWith(".json")) continue;
+				const sid = f.replace(/\.json$/, "");
+				if (sid === sessionId) continue;
+				const p = `${dir}/${f}`;
+				try {
+					if (shouldSweepFile(statSync(p).mtimeMs, now, SNIP_CONTROL_TTL_DAYS)) rmSync(p, { force: true });
+				} catch {
+					// stat race — file vanished; nothing to do
+				}
+			}
+		} catch {
+			// no control dir yet — nothing to sweep
+		}
+	}
+
 	function writeControlFile(): void {
 		if (!sessionId) return;
 		const file = controlFilePath(sessionId);
@@ -302,6 +337,7 @@ export default function snip(pi: ExtensionAPI) {
 				// watch unsupported (exotic fs) — panel stays read-only
 			}
 		}
+		sweepControlFiles();
 	});
 
 	// The applied ids are stashed so turn_end can write a transparency marker
@@ -477,4 +513,8 @@ export async function askGroupSelection(
 		return { ids: [], cancelled: false };
 	}
 	return { ids: parsed.ids, cancelled: false };
+}
+/** Pure TTL predicate exported for tests (#53) — mirrors shouldSweepFile above. */
+export function sweepableControlFile(mtimeMs: number, nowMs: number, ttlDays: number): boolean {
+	return ttlDays > 0 && (nowMs - mtimeMs) / 86_400_000 > ttlDays;
 }
