@@ -11,6 +11,7 @@ import {
 	gateCheck,
 	timeoutRunning,
 	aggregateReport,
+	detachReply,
 	resumePlan,
 	replayPools,
 	sanitizePoolState,
@@ -214,5 +215,34 @@ describe("ledger replay (resume across respawn)", () => {
 		expect(out!.items[0].report!.length).toBeLessThanOrEqual(2001);
 		expect(out!.status).toBe("partial");
 		expect(unfinished(out!)).toBe(true);
+	});
+});
+
+describe("detachReply (v1.4.44 fire-and-forget)", () => {
+	test("names the pool, counts queued, states ONE aggregate + timeout", () => {
+		const r = spec([{ role: "scout", task: "a" }, { role: "scout", task: "b" }, { role: "scout", task: "c" }], 2);
+		expect(r.ok).toBe(true);
+		if (!r.ok) return;
+		const st = initPool("p-det", r.items, r.concurrency);
+		markRunning(st, st.items[0].key, "agent-1");
+		markRunning(st, st.items[1].key, "agent-2");
+		const text = detachReply(st, 45 * 60_000);
+		expect(text.includes(st.poolId)).toBe(true);
+		expect(text.includes("DETACHED")).toBe(true);
+		expect(text.includes("1 queued")).toBe(true);
+		expect(text.includes("45min")).toBe(true);
+		expect(text.includes("pool_status")).toBe(true);
+	});
+
+	test("no pending items -> 0 queued", () => {
+		const st = initPool("p-det2", [
+			{ key: "1", role: "scout", task: "a" },
+			{ key: "2", role: "scout", task: "b" },
+		], 4);
+		markRunning(st, st.items[0].key, "agent-1");
+		markRunning(st, st.items[1].key, "agent-2");
+		const text = detachReply(st, 60_000);
+		expect(text.includes("0 queued")).toBe(true);
+		expect(text.includes("1min")).toBe(true);
 	});
 });

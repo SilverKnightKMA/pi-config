@@ -28,6 +28,10 @@ export const POOL_STATE = "pool-state";
 export const POOL_MAX_ITEMS = 12; // swarm's cap — enough for the 3-researcher nights, small enough to babysit
 export const POOL_DEFAULT_CONCURRENCY = 4;
 export const POOL_MAX_CONCURRENCY = 4; // never above the parent-wide SUBAGENT_MAX_CONCURRENT default
+
+/** Child label marking pool membership: the pool driver owns waking main,
+ *  so the child's own auto-report backstop stays silent (no per-child pings). */
+export const POOL_LABEL = "subagent.pool";
 export const MAX_EXPECT_CHARS = 200;
 export const MAX_REPORT_CHARS = 2000; // per-item report kept in ledger + aggregate
 export const MAX_TASK_CHARS = 4000;
@@ -280,6 +284,20 @@ export function resumePlan(state: PoolState): { spawn: PoolItem[]; recheck: Pool
 		spawn: state.items.filter((i) => i.status === "pending"),
 		recheck: state.items.filter((i) => (i.status === "timeout" || i.status === "running") && !!i.agentId),
 	};
+}
+
+/** Immediate reply for a detached pool: the tool call ends at once, the
+ *  harness drives the wave in the background and delivers ONE aggregate
+ *  message on completion (v1.4.44 — keeps the main turn short so a user
+ *  message never hits the daemon's replace-run cancel window). */
+export function detachReply(state: PoolState, timeoutMs: number): string {
+	const queued = state.items.filter((i) => i.status === "pending").length;
+	const mins = Math.max(1, Math.round(timeoutMs / 60_000));
+	return [
+		`Pool ${state.poolId} DETACHED — running in the background; this turn is free now.`,
+		`${state.items.length} items · concurrency ${state.concurrency} · ${queued} queued.`,
+		`ONE aggregate report arrives as a message when the pool completes (or ~${mins}min timeout). pool_status peeks anytime; pool_resume refills after a crash.`,
+	].join("\n");
 }
 
 /** Ledger-safe rebuild: full-snapshot entries, last one per pool wins. */

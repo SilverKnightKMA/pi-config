@@ -211,6 +211,7 @@ import { shouldAutoPing, buildAutoPing } from "./index.ts";
 
 test("shouldAutoPing only for subagents that have not called message_main", () => {
 	expect(shouldAutoPing("researcher", false, true)).toBe(true);
+	expect(shouldAutoPing("researcher", false, true, true)).toBe(false); // pool child: the pool driver owns the wake (v1.4.44)
 	expect(shouldAutoPing("researcher", true, true)).toBe(false);   // reported on its own
 	expect(shouldAutoPing("main", false, true)).toBe(false);          // main never pings itself
 	expect(shouldAutoPing(undefined, false, true)).toBe(false);       // identity unresolved

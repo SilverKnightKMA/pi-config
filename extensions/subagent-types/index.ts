@@ -76,6 +76,8 @@ import {
 	resumePlan,
 	timeoutRunning,
 	unfinished,
+	POOL_LABEL,
+	detachReply,
 	type PoolState,
 } from "./pool.ts";
 
@@ -241,8 +243,10 @@ function readSettingsJson(path: string): Record<string, unknown> | null {
  * notice and let main pull the transcript itself (paseo_activity) only when it
  * needs it. No text duplication into main's context.
  */
-export function shouldAutoPing(role: string | undefined, calledMessageMain: boolean, resolvedIdentity: boolean): boolean {
-	return resolvedIdentity && !!role && role !== MAIN_ROLE && !calledMessageMain;
+export function shouldAutoPing(role: string | undefined, calledMessageMain: boolean, resolvedIdentity: boolean, poolChild = false): boolean {
+	// poolChild: children spawned by spawn_pool stay silent — the pool driver
+	// owns waking main (ONE aggregate message, not one ping per child).
+	return !poolChild && resolvedIdentity && !!role && role !== MAIN_ROLE && !calledMessageMain;
 }
 
 export function buildAutoPing(role: string, agentId: string, title: string | undefined): string {
@@ -550,9 +554,11 @@ async function kickOutbound(): Promise<void> {
 	// message_main still pings its parent — one line, no payload — so main can
 	// wake and pull the transcript itself (see shouldAutoPing for history).
 	async function autoPingOnSettle(): Promise<void> {
-		if (!shouldAutoPing(myRole, messageMainCalledThisRun, resolved)) return;
-		if (!myRole) return; // belt-and-suspenders narrowing for TS
 		const self = resolveSelf(sessionIdRef.value);
+		// Pool children skip the backstop entirely — their pool driver in main
+		// owns the wake (one aggregate, not one ping per child; v1.4.44).
+		if (!shouldAutoPing(myRole, messageMainCalledThisRun, resolved, Boolean(self.labels[POOL_LABEL]))) return;
+		if (!myRole) return; // belt-and-suspenders narrowing for TS
 		const mainId = self.labels["subagent.parent"] ?? self.labels["paseo.parent-agent-id"];
 		if (!mainId || !myAgentId) return;
 		const endpoint = findMcpEndpoint(myAgentId);
@@ -600,6 +606,22 @@ async function kickOutbound(): Promise<void> {
 
 	pi.on("input", (_event, ctx) => {
 		applyRole(ctx);
+		// v1.4.44: re-adopt unfinished pools after a respawn — the detached
+		// driver died with the old process; children may still be running.
+		// Identity is resolved by the time input arrives, so the endpoint is
+		// usable; activeDrivers guards against double-driving. (ctx.scopedModels
+		// may be absent here — queued items then spawn with the fallback model
+		// chain, running items are unaffected.)
+		if (myRole === MAIN_ROLE && myAgentId) {
+			const endpoint = findMcpEndpoint(myAgentId);
+			if (endpoint) {
+				for (const st of pools.values()) {
+					if (unfinished(st) && st.items.some((i) => i.agentId && (i.status === "running" || i.status === "timeout"))) {
+						drivePoolDetached(endpoint, st, ctx);
+					}
+				}
+			}
+		}
 	});
 
 	// Defense in depth: block anything outside the allowlist even if it slips
@@ -700,7 +722,7 @@ function resolveSpawnConfig(
  *  labels must come from this extension or the child's allowlist cannot be
  *  trusted. */
 async function createChildAgent(
-	params: { role: string; task: string; name?: string },
+	params: { role: string; task: string; name?: string; poolId?: string },
 	def: RoleDef,
 	cfg: { modelId: string; thinking: string },
 	myAgentIdValue: string | null,
@@ -708,7 +730,11 @@ async function createChildAgent(
 ): Promise<{ ok: true; agentId?: string; status?: string } | { ok: false; error: string }> {
 	const title = params.name ?? `${params.role}: ${params.task.slice(0, 40)}`;
 	const initialPrompt = `${def.systemPrompt}\n\n---\nTASK:\n${params.task}`;
-	const labels = { [ROLE_LABEL]: params.role, ...(myAgentIdValue ? { "subagent.parent": myAgentIdValue } : {}) };
+	const labels = {
+		[ROLE_LABEL]: params.role,
+		...(myAgentIdValue ? { "subagent.parent": myAgentIdValue } : {}),
+		...(params.poolId ? { [POOL_LABEL]: params.poolId } : {}),
+	};
 	const spawned = await createAgent(
 		{
 			provider: providerStringFor(cfg.modelId, "pi"),
@@ -1107,46 +1133,113 @@ ${reply.text}` }],
 		return { finished: false, report: "" };
 	}
 
+	/** Spawn pending items up to the pool's concurrency. Shared by the
+	 *  blocking wave and the detached driver (v1.4.44). */
+	async function refillPool(endpoint: McpEndpoint, state: PoolState, ctx: unknown): Promise<void> {
+		for (const item of nextToStart(state)) {
+			const def = roles.get(item.role);
+			if (!def) {
+				finishItem(state, item.key, { status: "failed", error: `role "${item.role}" vanished` });
+				persistPool(state);
+				continue;
+			}
+			const cfg = resolveSpawnConfig(item, def, ctx as Parameters<typeof resolveSpawnConfig>[2]);
+			if (cfg.kind !== "ready") {
+				finishItem(state, item.key, { status: "failed", error: cfg.text.slice(0, 300) });
+				persistPool(state);
+				continue;
+			}
+			const spawned = await createChildAgent(
+				{ role: item.role, task: item.task, name: item.name, poolId: state.poolId },
+				def,
+				cfg,
+				myAgentId,
+				endpoint,
+			);
+			if (!spawned.ok || !spawned.agentId) {
+				finishItem(state, item.key, { status: "failed", error: `spawn failed: ${spawned.ok ? "no agent id" : spawned.error}` });
+				persistPool(state);
+				continue;
+			}
+			markRunning(state, item.key, spawned.agentId);
+			persistPool(state);
+		}
+	}
+
+	/** Await the running children once (bounded slice), drain their reports. */
+	async function awaitRunning(endpoint: McpEndpoint, state: PoolState, sliceMs: number): Promise<void> {
+		const running = state.items.filter((i) => i.status === "running");
+		if (running.length === 0) return;
+		const results = await Promise.all(running.map((i) => awaitChild(endpoint, i.agentId!, Date.now() + sliceMs)));
+		running.forEach((item, idx) => {
+			if (results[idx].finished) {
+				finishItem(state, item.key, { status: "done", report: results[idx].report || getActivitySummarySafe(item.agentId!) });
+			}
+			// Still busy stays `running`; the caller re-awaits until the pool
+			// deadline sweep decides (timeout) or the child closes.
+			persistPool(state);
+		});
+	}
+
 	async function runPoolWave(endpoint: McpEndpoint, state: PoolState, deadlineMs: number, ctx: unknown): Promise<void> {
 		const deadline = Date.now() + deadlineMs;
 		while (Date.now() < deadline && unfinished(state)) {
-			// Start what fits within the pool's own concurrency.
-			for (const item of nextToStart(state)) {
-				const def = roles.get(item.role);
-				if (!def) {
-					finishItem(state, item.key, { status: "failed", error: `role "${item.role}" vanished` });
-					persistPool(state);
-					continue;
-				}
-				const cfg = resolveSpawnConfig(item, def, ctx as Parameters<typeof resolveSpawnConfig>[2]);
-				if (cfg.kind !== "ready") {
-					finishItem(state, item.key, { status: "failed", error: cfg.text.slice(0, 300) });
-					persistPool(state);
-					continue;
-				}
-				const spawned = await createChildAgent(item, def, cfg, myAgentId, endpoint);
-				if (!spawned.ok || !spawned.agentId) {
-					finishItem(state, item.key, { status: "failed", error: `spawn failed: ${spawned.ok ? "no agent id" : spawned.error}` });
-					persistPool(state);
-					continue;
-				}
-				markRunning(state, item.key, spawned.agentId);
-				persistPool(state);
-			}
-			// Wait for the first running child to finish, then loop to refill.
-			const running = state.items.filter((i) => i.status === "running");
-			if (running.length === 0) break;
-			const results = await Promise.all(running.map((i) => awaitChild(endpoint, i.agentId!, Math.min(deadline, Date.now() + 60_000))));
-			running.forEach((item, idx) => {
-				if (results[idx].finished) {
-					finishItem(state, item.key, { status: "done", report: results[idx].report || getActivitySummarySafe(item.agentId!) });
-				}
-				// Still busy → stays `running`; the outer loop re-awaits until the
-				// pool deadline sweep decides (timeout) or the child closes.
-				persistPool(state);
-			});
-			if (Date.now() >= deadline) break;
+			await refillPool(endpoint, state, ctx);
+			if (!state.items.some((i) => i.status === "running")) break; // nothing to await - all settled or unrunnable
+			await awaitRunning(endpoint, state, Math.max(1_000, Math.min(deadline - Date.now(), 60_000)));
 		}
+	}
+
+	// -- detached driver (v1.4.44): the tool call returns at once; this loop
+	// runs in the resident pi process, refills queued items as slots free,
+	// and wakes main exactly ONCE with the aggregate (v1.2.7 user-role path).
+	// Children carry the subagent.pool label so their own auto-report
+	// backstop stays silent - the driver owns the wake. Kills the daemon
+	// "Cannot replace agent ... cancellation not acknowledged" window: the
+	// spawn_pool tool call now ends in milliseconds, so a user message never
+	// has to cancel a long-blocking run.
+	const POOL_DETACHED_TIMEOUT_MS = Number(process.env.POOL_DETACHED_TIMEOUT_MS ?? 45 * 60_000);
+	const activeDrivers = new Set<string>();
+
+	function drivePoolDetached(endpoint: McpEndpoint, state: PoolState, ctx: unknown, timeoutMs = POOL_DETACHED_TIMEOUT_MS): void {
+		if (activeDrivers.has(state.poolId)) return;
+		activeDrivers.add(state.poolId);
+		const startedAt = Date.now();
+		void (async () => {
+			let earlyWoken = false;
+			try {
+				while (Date.now() - startedAt < timeoutMs && unfinished(state)) {
+					await refillPool(endpoint, state, ctx);
+					if (!state.items.some((i) => i.status === "running")) continue; // all settled -> while re-checks
+					await awaitRunning(endpoint, state, 60_000);
+					// Early notice on the FIRST hard failure - main may want to act
+					// before the pool drains. One ping per pool, max.
+					const firstBad = state.items.find((i) => i.status === "gate_failed" || i.status === "failed");
+					if (!earlyWoken && firstBad) {
+					earlyWoken = true;
+						try {
+						pi.sendUserMessage(
+							`[pool ${state.poolId}] early notice: ${firstBad.name ?? firstBad.role} -> ${firstBad.status}. Full aggregate follows when the pool completes (pool_status peeks).`,
+							{ deliverAs: "followUp" },
+						);
+						} catch {
+							// wake failed - the final aggregate still comes
+						}
+					}
+				}
+				if (unfinished(state)) timeoutRunning(state);
+			} catch {
+				// Driver crash leaves the ledger resumable - pool_resume picks up.
+			} finally {
+				activeDrivers.delete(state.poolId);
+				persistPool(state);
+				try {
+					pi.sendUserMessage(aggregateReport(state), { deliverAs: "followUp" });
+				} catch {
+					// main unreachable - aggregate stays in pool_status/pool_resume
+				}
+			}
+		})();
 	}
 
 	function getActivitySummarySafe(agentId: string): string {
@@ -1166,7 +1259,7 @@ ${reply.text}` }],
 		name: "spawn_pool",
 		label: "spawn_pool",
 		description:
-			"Bounded parallel fan-out: spawn 2-12 role-typed children, at most 4 at a time, wait for all, and return ONE aggregated report (per-item status + gate-checked results). Read-mostly roles only (scout/researcher shapes) — write-capable roles stay sequential. Survives respawn: pool_status / pool_resume pick up unfinished items.",
+			"Bounded parallel fan-out: spawn 2-12 role-typed children, at most 4 at a time. DETACHED by default (v1.4.44): the call returns immediately and ONE aggregated report (per-item status + gate-checked results) arrives as a message when the pool completes — the main turn stays free. detach:false restores the old blocking wait. Read-mostly roles only (scout/researcher shapes). Survives respawn: pool_status / pool_resume pick up unfinished items.",
 		promptSnippet:
 			"Use spawn_pool for read-only fan-out (e.g. 3 parallel researchers): one call, capped concurrency, one aggregated report with per-item gates. Sequential single-writer work stays OUT of the pool.",
 		promptGuidelines: [
@@ -1177,6 +1270,7 @@ ${reply.text}` }],
 		parameters: Type.Object({
 			items: Type.Array(PoolItemParams, { minItems: 2, maxItems: 12, description: "2-12 independent, self-contained tasks." }),
 			concurrency: Type.Optional(Type.Number({ description: `Parallel children at once (1-${POOL_MAX_CONCURRENCY}, default ${POOL_DEFAULT_CONCURRENCY}).` })),
+			detach: Type.Optional(Type.Boolean({ description: "Default true: return immediately; the harness drives the pool in the background and delivers ONE aggregate message on completion. Set false for the old blocking wait." })),
 		}),
 		async execute(_id, params, _signal, _onUpdate, ctx) {
 			const endpoint = findMcpEndpoint(myAgentId);
@@ -1188,6 +1282,12 @@ ${reply.text}` }],
 			const poolId = `pool-${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 6)}`;
 			const state = initPool(poolId, parsed.items, parsed.concurrency);
 			persistPool(state);
+			// v1.4.44: detached by default. The tool call ends in milliseconds -
+			// the background driver refills the wave and delivers ONE aggregate.
+			if (params.detach !== false) {
+				drivePoolDetached(endpoint, state, ctx);
+				return { content: [{ type: "text" as const, text: detachReply(state, POOL_DETACHED_TIMEOUT_MS) }], details: { poolId, detached: true, total: state.items.length } };
+			}
 			await runPoolWave(endpoint, state, SUBAGENT_WAIT_MS, ctx);
 			if (unfinished(state)) {
 				timeoutRunning(state);
@@ -1223,6 +1323,12 @@ ${reply.text}` }],
 		async execute(_id, params, _signal, _onUpdate, ctx) {
 			const state = pools.get(params.poolId);
 			if (!state) return { content: [{ type: "text" as const, text: `No pool "${params.poolId}" on record — pool_status lists the live ones.` }], details: {} };
+			// A detached driver already owns this pool: no double-drive, just
+			// show where it stands. The aggregate message still arrives once.
+			if (activeDrivers.has(params.poolId)) {
+				refreshPoolStatus(state);
+				return { content: [{ type: "text" as const, text: `${aggregateReport(state)}\n\n(driver active — aggregate arrives as a message; this call did not block)` }], details: { poolId: params.poolId } };
+			}
 			const endpoint = findMcpEndpoint(myAgentId);
 			if (!endpoint) return { content: [{ type: "text" as const, text: "Paseo MCP endpoint not found." }], details: {} };
 			const plan = resumePlan(state);
