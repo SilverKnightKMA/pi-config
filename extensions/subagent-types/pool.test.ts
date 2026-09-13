@@ -12,6 +12,7 @@ import {
 	timeoutRunning,
 	aggregateReport,
 	detachReply,
+	readoptable,
 	resumePlan,
 	replayPools,
 	sanitizePoolState,
@@ -244,5 +245,44 @@ describe("detachReply (v1.4.44 fire-and-forget)", () => {
 		const text = detachReply(st, 60_000);
 		expect(text.includes("0 queued")).toBe(true);
 		expect(text.includes("1min")).toBe(true);
+	});
+});
+
+describe("readoptable (v1.4.45 — dead-pool freeze regression)", () => {
+	const mk = (statuses: string[]) => {
+		const st = initPool("p-adopt", statuses.map((s, i) => ({ key: String(i + 1), role: "scout", task: "t" })), 4);
+		statuses.forEach((s, i) => {
+			if (s === "pending") return;
+			markRunning(st, st.items[i].key, `agent-${i + 1}`);
+			if (s === "done") finishItem(st, st.items[i].key, { status: "done" });
+			else if (s === "failed") finishItem(st, st.items[i].key, { status: "failed" });
+			else if (s === "timeout") st.items[i].status = "timeout" as never; // replay-shaped: swept by a prior process
+		});
+		return st;
+	};
+
+	test("running item -> adoptable (respawn re-attach)", () => {
+		expect(readoptable(mk(["running", "pending"]))).toBe(true);
+	});
+
+	test("all timeout (dead pool, 2026-09-13 incident shape) -> NOT adoptable", () => {
+		const st = mk(["timeout", "timeout", "timeout", "timeout"]);
+		expect(unfinished(st)).toBe(true); // still unfinished...
+		expect(readoptable(st)).toBe(false); // ...but nothing to re-attach to
+	});
+
+	test("mixed running + timeout -> adoptable (one live child to drain)", () => {
+		expect(readoptable(mk(["timeout", "running"]))).toBe(true);
+	});
+
+	test("finished pool (done/failed) -> not adoptable", () => {
+		expect(readoptable(mk(["done", "failed"]))).toBe(false);
+	});
+
+	test("pending without agentId -> not adoptable (never spawned)", () => {
+		const st = initPool("p-p", [{ key: "1", role: "scout", task: "a" }, { key: "2", role: "scout", task: "b" }], 4);
+		markRunning(st, st.items[0].key, "agent-1");
+		finishItem(st, st.items[0].key, { status: "done" });
+		expect(readoptable(st)).toBe(false);
 	});
 });

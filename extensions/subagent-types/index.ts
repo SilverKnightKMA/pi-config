@@ -76,6 +76,7 @@ import {
 	resumePlan,
 	timeoutRunning,
 	unfinished,
+	readoptable,
 	POOL_LABEL,
 	detachReply,
 	type PoolState,
@@ -616,9 +617,12 @@ async function kickOutbound(): Promise<void> {
 			const endpoint = findMcpEndpoint(myAgentId);
 			if (endpoint) {
 				for (const st of pools.values()) {
-					if (unfinished(st) && st.items.some((i) => i.agentId && (i.status === "running" || i.status === "timeout"))) {
-						drivePoolDetached(endpoint, st, ctx);
-					}
+					// v1.4.45 fix (2026-09-13 session-freeze): only adopt pools with an
+					// item genuinely RUNNING — a live child to re-attach to. A pool whose
+					// unfinished items are all timed-out is dead weight: re-driving it
+					// spins refillPool on 0 pending + 0 running (microtask starvation,
+					// CPU 98-100%, the Pi Config agent freeze). Explicit pool_resume only.
+					if (readoptable(st)) drivePoolDetached(endpoint, st, ctx);
 				}
 			}
 		}
@@ -1210,7 +1214,16 @@ ${reply.text}` }],
 			try {
 				while (Date.now() - startedAt < timeoutMs && unfinished(state)) {
 					await refillPool(endpoint, state, ctx);
-					if (!state.items.some((i) => i.status === "running")) continue; // all settled -> while re-checks
+					if (!state.items.some((i) => i.status === "running")) {
+						// v1.4.45 fix: after refill, no-running means no-pending too (refill
+						// spawns every pending item when slots are free) — the only unfinished
+						// items left are timed-out. TERMINAL for this driver: break, deliver
+						// the aggregate in finally, leave the pool to explicit pool_resume.
+						// A bare `continue` here starved the event loop (microtask-only
+						// tight loop) for the whole 45m window — timers, SIGTERM and network
+						// callbacks all froze; that was the 2026-09-13 session-freeze.
+						break;
+					}
 					await awaitRunning(endpoint, state, 60_000);
 					// Early notice on the FIRST hard failure - main may want to act
 					// before the pool drains. One ping per pool, max.

@@ -286,6 +286,15 @@ export function resumePlan(state: PoolState): { spawn: PoolItem[]; recheck: Pool
 	};
 }
 
+/** May a respawned process auto re-drive this pool? Only when an item is
+ *  genuinely RUNNING (a live child to re-attach to). A pool whose unfinished
+ *  items are all timed-out is dead weight — re-driving it spins refillPool on
+ *  0 pending + 0 running (the 2026-09-13 session-freeze root cause); such
+ *  pools resume only via explicit pool_resume. v1.4.45. */
+export function readoptable(state: PoolState): boolean {
+	return unfinished(state) && state.items.some((i) => !!i.agentId && i.status === "running");
+}
+
 /** Immediate reply for a detached pool: the tool call ends at once, the
  *  harness drives the wave in the background and delivers ONE aggregate
  *  message on completion (v1.4.44 — keeps the main turn short so a user
