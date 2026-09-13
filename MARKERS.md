@@ -14,13 +14,22 @@ consumed by the Agent Health panel). The two markers below remain valid for
 `auto-report` and `channel-nack` are functional channel traffic and stay
 live — the main agent must see them.
 
+**v2.1 change (2026-09-13, #52):** pool notifications from `subagent-types`
+join the live markers under the new `<machine-notice>` envelope. They still
+travel the user-role channel **by design** — the main agent must act on them
+(spawn a replacement, resume a pool) and pi has no other model-facing path —
+but the stable envelope lets agent-health restyle them as cards so they no
+longer read as human-typed messages. Presentation is plugin-side; the payload
+the model reads stays verbatim.
+
 Single source of truth for the machine-detectable prefixes that pi extensions
-emit into the conversation timeline, and that the Paseo plugin `om-timeline`
+emit into the conversation timeline, and that the Paseo plugin `agent-health`
 consumes to restyle them as cards. Two repos, one contract:
 
 - **Producer side**: this repo (`extensions/*`) — the pi extensions.
-- **Consumer side**: `paseo-plugins/om-timeline` — a Paseo plugin that
-  transforms timeline items matching these markers into rendered cards.
+- **Consumer side**: `paseo-plugins/agent-health` — its timeline transformer
+  parses `<subagent-message>` and `<machine-notice>` envelopes into rendered
+  cards (the former `om-timeline` plugin was removed 2026-09-04, 2c03477).
 
 ## Rules
 
@@ -33,7 +42,8 @@ consumes to restyle them as cards. Two repos, one contract:
    marker message.
 4. Adding/renaming a marker requires: edit this file → update the test on the
    producer side (`extensions/markers.test.ts`) → vendor this file into
-   `paseo-plugins/` → update `markers.ts` there → both checks green.
+   `paseo-plugins/` → update the agent-health transformer + `check-markers.py`
+   there → both checks green.
 5. Plugin reads state, never writes it. Cards are transient; durable state
    lives in panels (`Agent Health`, `Observational Memory`).
 
@@ -95,3 +105,14 @@ text starts with "[channel-nack] "                      → channel-nack
 
 `paseo-plugins/` keeps a byte-identical copy of this file at its root;
 `check-markers.py` fails if the copies or `markers.ts` drift from it.
+
+### 5. `pool-notice` — detached pool lifecycle notice *(live — v2.1)*
+
+| Field | Value |
+|---|---|
+| Emitted by | `subagent-types` (`drivePoolDetached`) |
+| Mechanism | pi `sendUserMessage` followUp (user-role: model must act on it) |
+| Line prefix (exact) | `<machine-notice kind="pool-notice">` |
+| Payload | early notice: `[pool <id>] early notice: <item> -> <status>…` — first hard failure; final aggregate: `aggregateReport` (counts + per-item lines) |
+| Cadence | ≤ 2 per pool (one early notice on first gate_failed/failed, one final aggregate) |
+| Why user-role | spawn replacement / pool_resume decisions are model work; no model-facing alternative exists in pi today |

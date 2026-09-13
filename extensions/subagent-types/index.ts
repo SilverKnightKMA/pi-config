@@ -68,6 +68,7 @@ import {
 	aggregateReport,
 	finishItem,
 	initPool,
+	poolNotice,
 	markRunning,
 	nextToStart,
 	parsePoolSpec,
@@ -1232,7 +1233,9 @@ ${reply.text}` }],
 					earlyWoken = true;
 						try {
 						pi.sendUserMessage(
-							`[pool ${state.poolId}] early notice: ${firstBad.name ?? firstBad.role} -> ${firstBad.status}. Full aggregate follows when the pool completes (pool_status peeks).`,
+							poolNotice(
+								`[pool ${state.poolId}] early notice: ${firstBad.name ?? firstBad.role} -> ${firstBad.status}. Full aggregate follows when the pool completes (pool_status peeks).`,
+							),
 							{ deliverAs: "followUp" },
 						);
 						} catch {
@@ -1247,7 +1250,7 @@ ${reply.text}` }],
 				activeDrivers.delete(state.poolId);
 				persistPool(state);
 				try {
-					pi.sendUserMessage(aggregateReport(state), { deliverAs: "followUp" });
+					pi.sendUserMessage(poolNotice(aggregateReport(state)), { deliverAs: "followUp" });
 				} catch {
 					// main unreachable - aggregate stays in pool_status/pool_resume
 				}

@@ -295,6 +295,18 @@ export function readoptable(state: PoolState): boolean {
 	return unfinished(state) && state.items.some((i) => !!i.agentId && i.status === "running");
 }
 
+/**
+ * Machine-notice envelope (#52): main-side extension notifications travel the
+ * user-role channel (the only model-facing path in pi), but carry this stable
+ * envelope so the agent-health plugin can restyle them as cards for the human.
+ * Model still reads the payload verbatim — that is the point.
+ */
+export function poolNotice(body: string): string {
+	return `<machine-notice kind="pool-notice">
+${body}
+</machine-notice>`;
+}
+
 /** Immediate reply for a detached pool: the tool call ends at once, the
  *  harness drives the wave in the background and delivers ONE aggregate
  *  message on completion (v1.4.44 — keeps the main turn short so a user

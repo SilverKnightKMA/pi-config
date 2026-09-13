@@ -18,6 +18,7 @@ import {
 	sanitizePoolState,
 	unfinished,
 	refreshPoolStatus,
+	poolNotice,
 } from "./pool";
 
 const roles = new Map<string, { tools: readonly string[] }>([
@@ -284,5 +285,17 @@ describe("readoptable (v1.4.45 — dead-pool freeze regression)", () => {
 		markRunning(st, st.items[0].key, "agent-1");
 		finishItem(st, st.items[0].key, { status: "done" });
 		expect(readoptable(st)).toBe(false);
+	});
+});
+
+describe("poolNotice envelope (#52)", () => {
+	test("wraps body with stable open/close tags", () => {
+		const out = poolNotice("line one\nline two");
+		expect(out.startsWith('<machine-notice kind="pool-notice">')).toBe(true);
+		expect(out.endsWith("</machine-notice>")).toBe(true);
+		expect(out).toContain("\nline one\nline two\n");
+	});
+	test("body verbatim — model must read the payload unchanged", () => {
+		expect(poolNotice("x")).toContain("\nx\n");
 	});
 });

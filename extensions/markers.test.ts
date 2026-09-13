@@ -24,14 +24,17 @@ const omRuntime = read("observational-memory/src/runtime.ts");
 const zw = read("zombie-watchdog/index.ts");
 const subIdx = read("subagent-types/index.ts");
 const subChan = read("subagent-types/paseo-channel.ts");
+const subPool = read("subagent-types/pool.ts");
 
 describe("MARKERS.md producer contract v2", () => {
-	test("spec lists all 4 markers (2 deprecated + 2 active)", () => {
+	test("spec lists all 5 markers (2 deprecated + 3 active)", () => {
 		expect(documented).toContain("> om: ");
 		expect(documented).toContain("> zw ⚠ ");
 		expect(documented).toContain("[auto-report] ");
 		expect(documented).toContain("[channel-nack] ");
+		expect(documented).toContain('<machine-notice kind="pool-notice">');
 		expect(spec).toContain("deprecated v2 — history render only");
+		expect(spec).toContain("v2.1 change");
 	});
 
 	test("B: om sink emits no custom message by default (model-blind)", () => {
@@ -59,8 +62,14 @@ describe("MARKERS.md producer contract v2", () => {
 		expect(subChan).toContain("`[channel-nack] Kick to subagent ${agentId} FAILED (${errText})");
 	});
 
+	test("A: pool-notice envelope at both sendUserMessage sites (#52)", () => {
+		expect(subPool).toContain('<machine-notice kind="pool-notice">');
+		expect((subIdx.match(/poolNotice\(/g) ?? []).length).toBe(2);
+		expect(subIdx).toContain("poolNotice(aggregateReport(state))");
+	});
+
 	test("no orphan markers: every documented prefix exists at source (or behind escape hatch)", () => {
-		const sources = [omSink, omStatus, omRuntime, zw, subIdx, subChan].join("\n");
+		const sources = [omSink, omStatus, omRuntime, zw, subIdx, subChan, subPool].join("\n");
 		for (const pfx of documented) {
 			const literal = pfx.split("${")[0].replace(/^> /, "");
 			expect(sources.includes(literal)).toBe(true);
