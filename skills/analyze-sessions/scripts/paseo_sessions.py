@@ -75,7 +75,7 @@ def add_filter_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--provider", help="filter by provider: omp, pi, claude, codex, ...")
     p.add_argument("--workspace", help="substring match on workspace directory name")
     p.add_argument("--cwd", help="substring match on agent cwd")
-    p.add_argument("--session", help="agent id (or unique prefix)")
+    p.add_argument("--session", help="agent id or pi session id (or unique prefix)")
     p.add_argument("--include-archived", action="store_true",
                    help="include archived agents (excluded by default)")
 
@@ -151,7 +151,11 @@ def iter_agent_records(filters: Filters) -> Iterator[AgentSummary]:
             if filters.cwd and filters.cwd not in cwd:
                 continue
             agent_id = d.get("id") or rec_path.stem
-            if filters.session and not agent_id.startswith(filters.session):
+            pi_session_id = (d.get("runtimeInfo") or {}).get("sessionId") or ""
+            if filters.session and not (
+                agent_id.startswith(filters.session)
+                or pi_session_id.startswith(filters.session)
+            ):
                 continue
             created = ts_from_iso(d.get("createdAt") or "1970-01-01T00:00:00Z")
             if not filters.matches_time(created):
@@ -222,13 +226,16 @@ def iter_om_worker_records(filters: Filters) -> Iterator[AgentSummary]:
                 created = datetime.fromtimestamp(jsonl.stat().st_mtime, tz=timezone.utc)
             except Exception:
                 continue
+            worker_id = jsonl.stem.split("_", 1)[-1]
+            if filters.session and not worker_id.startswith(filters.session):
+                continue
             kind = _worker_kind(session_name)
             if not kind:
                 continue
             if not filters.matches_time(created):
                 continue
             yield AgentSummary(
-                agent_id=jsonl.stem.split("_", 1)[-1],
+                agent_id=worker_id,
                 provider="pi",
                 title=session_name,
                 workspace=bucket.name,
