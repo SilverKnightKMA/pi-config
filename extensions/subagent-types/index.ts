@@ -37,14 +37,17 @@ import { homedir } from "node:os";
 import { Type } from "@sinclair/typebox";
 import safeBash from "./safe-bash.ts";
 import registerReadonlyTools from "./readonly-tools.ts";
+import { LoopGuard, loopGuardConfigFromEnv } from "./loop-guard.ts";
 import {
 	createAgent,
 	findMcpEndpoint,
 	flushKicks,
+	getActivityDigest,
 	getActivitySummary,
 	getAgentStatus,
 	isAutoReport,
 	isBusy,
+	abortStalledChild,
 	listAgents,
 	markKick,
 	pendingKickIds,
@@ -1131,19 +1134,43 @@ ${reply.text}` }],
 		}
 	}
 
-	/** Wait for ONE child to close (grace-drain like spawn_paseo_subagent). */
+	/** Wait for ONE child to close (grace-drain like spawn_paseo_subagent).
+	 *  v1.4.58 loop-guard (task #60, port @pify/swarm 0.8.0): while the child
+	 *  is busy, every timeline growth feeds the curated tail into a LoopGuard —
+	 *  repeat/oscillation without progress aborts the child instead of letting
+	 *  it burn to the deadline. */
 	async function awaitChild(
 		endpoint: McpEndpoint,
 		childId: string,
 		deadline: number,
-	): Promise<{ finished: boolean; report: string }> {
+	): Promise<{ finished: boolean; report: string; stalled?: string }> {
 		const collected: ChannelMessage[] = [];
 		let closedTicks = 0;
+		const loopCfg = loopGuardConfigFromEnv();
+		const guard = loopCfg.enabled ? new LoopGuard({ repeat: loopCfg.repeat, cycle: loopCfg.cycle }) : null;
+		let lastCount = -1;
 		while (Date.now() < deadline) {
 			collected.push(...takeMessagesFrom(childId, myAgentId ?? ""));
 			const st = await getAgentStatus(endpoint, childId);
-			if (!st.ok || isBusy(st.status)) closedTicks = 0;
-			else {
+			if (!st.ok || isBusy(st.status)) {
+				closedTicks = 0;
+				// Loop-guard observation: fingerprint the tail on every growth.
+				if (guard && st.ok) {
+					const d = await getActivityDigest(endpoint, childId);
+					if (d && d.updateCount > lastCount) {
+						lastCount = d.updateCount;
+					const v = guard.observe({ text: d.content, usedTool: false });
+						if (v.stalled && v.reason) {
+							const how = await abortStalledChild(endpoint, childId);
+							return {
+								finished: true,
+								report: "",
+								stalled: `[stopped: no progress] child ${childId} ${v.reason} — aborted by loop-guard (${how})`,
+							};
+						}
+					}
+				}
+			} else {
 				closedTicks += 1;
 				if (closedTicks >= 3) break;
 			}
@@ -1204,7 +1231,8 @@ ${reply.text}` }],
 		const results = await Promise.all(running.map((i) => awaitChild(endpoint, i.agentId!, Date.now() + sliceMs)));
 		running.forEach((item, idx) => {
 			if (results[idx].finished) {
-				finishItem(state, item.key, { status: "done", report: results[idx].report || getActivitySummarySafe(item.agentId!) });
+				if (results[idx].stalled) finishItem(state, item.key, { status: "failed", error: results[idx].stalled });
+				else finishItem(state, item.key, { status: "done", report: results[idx].report || getActivitySummarySafe(item.agentId!) });
 			}
 			// Still busy stays `running`; the caller re-awaits until the pool
 			// deadline sweep decides (timeout) or the child closes.
@@ -1377,7 +1405,10 @@ ${reply.text}` }],
 			// Timed-out children get one re-check window before a new wave.
 			for (const item of plan.recheck) {
 				const r = await awaitChild(endpoint, item.agentId!, Date.now() + 90_000);
-				if (r.finished) finishItem(state, item.key, { status: "done", report: r.report || getActivitySummarySafe(item.agentId!) });
+				if (r.finished) {
+					if (r.stalled) finishItem(state, item.key, { status: "failed", error: r.stalled });
+					else finishItem(state, item.key, { status: "done", report: r.report || getActivitySummarySafe(item.agentId!) });
+				}
 				persistPool(state);
 			}
 			// Timeouts that stayed busy return to running for the wave.

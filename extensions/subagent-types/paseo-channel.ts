@@ -294,6 +294,34 @@ export function isBusy(status: string | undefined): boolean {
 	return status === "running" || status === "initializing";
 }
 
+/** Total-timeline counter + curated tail via one call — the loop-guard (task
+ *  #60) observes on `updateCount` growth and fingerprints the tail content.
+ *  Content is capped so a huge tail cannot balloon the hash input. */
+export interface ActivityDigest {
+	updateCount: number;
+	content: string;
+}
+
+export async function getActivityDigest(endpoint: McpEndpoint, agentId: string, limit = 10): Promise<ActivityDigest | null> {
+	const r = await mcpCall(endpoint, "get_agent_activity", { agentId, limit });
+	if (!r.ok) return null;
+	const d = r.data as { updateCount?: unknown; content?: unknown } | null;
+	if (!d || typeof d !== "object") return null;
+	const updateCount = typeof d.updateCount === "number" ? d.updateCount : -1;
+	const content = typeof d.content === "string" ? d.content.slice(0, 4000) : "";
+	return { updateCount, content };
+}
+
+/** Terminate a pool child that stopped making progress (loop-guard, task #60).
+ *  kill_agent closes the session permanently; cancel_agent (abort the run,
+ *  keep the agent) is the fallback — same call shape as sweepOrphaned. */
+export async function abortStalledChild(endpoint: McpEndpoint, agentId: string): Promise<string> {
+	const kill = await mcpCall(endpoint, "kill_agent", { agentId });
+	if (kill.ok) return "killed";
+	const cancel = await mcpCall(endpoint, "cancel_agent", { agentId });
+	return cancel.ok ? "cancelled" : "abort-failed";
+}
+
 // ---------------------------------------------------------------------------
 // Concurrency cap + orphan sweep (2026-09-05, user-approved)
 // ---------------------------------------------------------------------------
