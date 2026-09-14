@@ -3,6 +3,7 @@ import { foldLedger, poolTokens, rawTokensSinceObservationCoverage, sumSessionCo
 import { listTopics, readJourney } from "../memory/paths.js";
 import { sumRunCosts } from "../spawn/runs.js";
 import { estimateStringTokens } from "../tokens.js";
+import { countWords, journeyWordBudget } from "../../agent/consolidator/staging.js";
 import type { Runtime } from "../runtime.js";
 import { renderTimeline } from "../ui/timeline.js";
 
@@ -82,7 +83,7 @@ export function buildStatusLines(
 		"",
 		"Context & files",
 		`  context: ${contextTokens != null ? `${contextTokens.toLocaleString()} / ${cfg.compactAtContextTokens.toLocaleString()} tok (${pct(contextTokens, cfg.compactAtContextTokens)})` : "?"}`,
-		`  topics (durable): ${topics.length} · journey: ${journey ? `~${estimateStringTokens(journey).toLocaleString()} / ${cfg.journeyTargetTokens.toLocaleString()} tok` : "none yet"}`,
+		`  topics (durable): ${topics.length} · journey: ${journey ? `${countWords(journey)}/${journeyWordBudget(cfg.journeyTargetTokens)} từ (gate theo từ, tolerance 1.25) · ~${estimateStringTokens(journey).toLocaleString()} tok ước tính chars/4 · target ${cfg.journeyTargetTokens.toLocaleString()} tok` : "none yet"}`,
 		"",
 		"Cost",
 		`  session: $${cost.total.costUsd.toFixed(4)} (${cost.total.runs} runs)`,

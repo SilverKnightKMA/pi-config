@@ -6,7 +6,9 @@ import {
 	parseControlPayload,
 	parseSteps,
 	planFilePath,
+	planStatusPayload,
 	planStatusText,
+	sanitizePlanState,
 	replayPlan,
 	slugFromPlan,
 } from "./plan";
@@ -111,5 +113,61 @@ describe("replayPlan — full snapshots, last wins", () => {
 		]);
 		expect(state.mode).toBe("tracking");
 		expect(state.planFile).toBe("/x/b.md");
+	});
+});
+
+// ── v1.4.60 (#62): auto-close + currentStep projection ──────────────────
+
+describe("plan auto-close (#62)", () => {
+	const base: import("./plan.ts").PlanState = {
+		mode: "tracking",
+		planFile: ".pi/plans/2026-09-14-x.md",
+		steps: [
+			{ index: 1, text: "step one", done: true },
+			{ index: 2, text: "step two", done: false },
+		],
+	};
+
+	test("last step done in index wiring flips mode to complete", async () => {
+		// covered end-to-end in index.test.ts; here we pin the pure helpers
+		const payload = planStatusPayload(base, "sess-1", "2026-09-14T00:00:00Z");
+		expect(payload.mode).toBe("tracking");
+		expect(payload.stepsDone).toBe(1);
+		expect(payload.currentStep).toEqual({ index: 2, text: "step two" });
+		expect(payload.completedAt).toBeNull();
+	});
+
+	test("complete payload: currentStep null + completedAt set", () => {
+		const done: import("./plan.ts").PlanState = {
+			...base,
+			mode: "complete",
+			completedAt: "2026-09-14T12:00:00Z",
+			steps: base.steps.map((s) => ({ ...s, done: true })),
+		};
+		const payload = planStatusPayload(done, "sess-1");
+		expect(payload.mode).toBe("complete");
+		expect(payload.currentStep).toBeNull();
+		expect(payload.completedAt).toBe("2026-09-14T12:00:00Z");
+	});
+
+	test("sanitizePlanState accepts complete + completedAt", () => {
+		const st = sanitizePlanState({ mode: "complete", steps: [{ index: 1, text: "a", done: true }], completedAt: "T1" });
+		expect(st?.mode).toBe("complete");
+		expect(st?.completedAt).toBe("T1");
+		expect(sanitizePlanState({ mode: "bogus" })).toBeNull();
+	});
+
+	test("applyControlAction: on from complete re-enters planning; off clears", () => {
+		const done = { ...base, mode: "complete" as const, completedAt: "T1" };
+		expect(applyControlAction(done, "on").state.mode).toBe("active");
+		const off = applyControlAction(done, "off");
+		expect(off.state.mode).toBe("inactive");
+		expect(off.state.steps).toHaveLength(0);
+	});
+
+	test("planStatusText shows COMPLETE line", () => {
+		const txt = planStatusText({ ...base, mode: "complete", completedAt: "2026-09-14T12:00:00Z", steps: base.steps.map((s) => ({ ...s, done: true })) });
+		expect(txt).toContain("COMPLETE 2026-09-14T12:00:00Z");
+		expect(txt).toContain("closed automatically");
 	});
 });

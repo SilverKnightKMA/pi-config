@@ -26,7 +26,7 @@ export const MAX_STEPS = 40;
 export const MAX_STEP_CHARS = 200;
 export const MAX_SLUG_CHARS = 40;
 
-export type PlanMode = "inactive" | "active" | "awaiting" | "tracking";
+export type PlanMode = "inactive" | "active" | "awaiting" | "tracking" | "complete";
 
 export interface PlanStep {
 	index: number; // 1-based, stable per parse order
@@ -41,6 +41,8 @@ export interface PlanState {
 	steps: PlanStep[];
 	thinkingBefore?: string;
 	submittedAt?: string;
+	/** v1.4.60 (#62): auto-close — set when the last step completes. */
+	completedAt?: string;
 }
 
 export function emptyPlan(): PlanState {
@@ -129,6 +131,9 @@ export function planStatusText(state: PlanState): string {
 			parts.push(`${s.done ? "✓" : "·"} #${s.index} ${s.text}`);
 		}
 	}
+	if (state.mode === "complete") {
+		parts.push(`COMPLETE ${state.completedAt ?? ""} — plan closed automatically (all steps done). /plan off clears it; the plan file stays in the library.`);
+	}
 	if (state.mode === "awaiting") parts.push("Waiting for the USER: /plan approve (implement) · /plan revise (keep editing) · /plan off (discard). The model cannot approve its own plan.");
 	return parts.join("\n");
 }
@@ -159,7 +164,7 @@ export function parseControlPayload(raw: unknown): PlanControlPayload | null {
 export function applyControlAction(state: PlanState, action: PlanControlAction, now = new Date().toISOString()): { state: PlanState; note: string } {
 	switch (action) {
 		case "on":
-			if (state.mode === "inactive") {
+			if (state.mode === "inactive" || state.mode === "complete") {
 				return { state: { ...state, mode: "active" }, note: "Plan mode ON — model writes the plan via write_plan." };
 			}
 			return { state, note: `Plan mode already ${state.mode}.` };
@@ -192,7 +197,7 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 export function sanitizePlanState(raw: unknown): PlanState | null {
 	if (!isRecord(raw)) return null;
 	const mode = raw.mode;
-	if (typeof mode !== "string" || !["inactive", "active", "awaiting", "tracking"].includes(mode)) return null;
+	if (typeof mode !== "string" || !["inactive", "active", "awaiting", "tracking", "complete"].includes(mode)) return null;
 	const steps: PlanStep[] = [];
 	if (Array.isArray(raw.steps)) {
 		for (const s of raw.steps.slice(0, MAX_STEPS)) {
@@ -211,6 +216,7 @@ export function sanitizePlanState(raw: unknown): PlanState | null {
 		steps,
 		...(typeof raw.thinkingBefore === "string" ? { thinkingBefore: raw.thinkingBefore } : {}),
 		...(typeof raw.submittedAt === "string" ? { submittedAt: raw.submittedAt } : {}),
+		...(typeof raw.completedAt === "string" ? { completedAt: raw.completedAt } : {}),
 	};
 }
 
@@ -235,8 +241,11 @@ export interface PlanStatusPayload {
 	mode: PlanState["mode"];
 	stepsDone: number;
 	stepsTotal: number;
+	/** v1.4.60 (#62): what the plan is doing RIGHT NOW — first open step. */
+	currentStep: { index: number; text: string } | null;
 	planFile: string | null;
 	submittedAt: string | null;
+	completedAt: string | null;
 	updatedAt: string;
 }
 
@@ -245,14 +254,17 @@ export function planStatusPayload(
 	sessionId: string,
 	now = new Date().toISOString(),
 ): PlanStatusPayload {
+	const open = state.steps.find((s) => !s.done);
 	return {
 		v: 1,
 		sessionId,
 		mode: state.mode,
 		stepsDone: state.steps.filter((s) => s.done).length,
 		stepsTotal: state.steps.length,
+		currentStep: open ? { index: open.index, text: open.text } : null,
 		planFile: state.planFile ?? null,
 		submittedAt: state.submittedAt ?? null,
+		completedAt: state.completedAt ?? null,
 		updatedAt: now,
 	};
 }

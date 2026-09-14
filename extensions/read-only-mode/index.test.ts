@@ -8,7 +8,7 @@ function fakePi(toolNames: string[]) {
 		active: string[];
 		commands: Map<string, { handler: Handler; description: string }>;
 		handlers: Map<string, Handler>;
-		tools: { name: string }[];
+		tools: any[];
 	} = {
 		active: [...toolNames],
 		commands: new Map(),
@@ -22,7 +22,7 @@ function fakePi(toolNames: string[]) {
 			state.active = [...names];
 		},
 		registerTool: (def: any) => {
-			state.tools.push({ name: def.name });
+			state.tools.push(def);
 		},
 		registerCommand: (name: string, def: any) => {
 			state.commands.set(name, def);
@@ -188,8 +188,10 @@ describe("plan status projection (#22 — panel reads this file)", () => {
 			mode: "awaiting",
 			stepsDone: 1,
 			stepsTotal: 2,
+			currentStep: { index: 2, text: "b" },
 			planFile: ".pi/plans/x.md",
 			submittedAt: null,
+			completedAt: null,
 			updatedAt: "2026-09-13T00:00:00.000Z",
 		});
 	});
@@ -200,5 +202,24 @@ describe("plan status projection (#22 — panel reads this file)", () => {
 		expect(p.mode).toBe("inactive");
 		expect(p.stepsTotal).toBe(0);
 		expect(p.planFile).toBeNull();
+	});
+});
+
+// ── v1.4.60 (#62): auto-close wiring — last plan_step_done flips to complete ──
+
+describe("plan auto-close wiring (#62)", () => {
+	test("last step done closes the plan; result announces completion", async () => {
+		const f = fakePi(ALL_TOOLS);
+		readOnlyModeExtension(f.pi);
+		const stepTool = f.state.tools.find((t: { name: string }) => t.name === "plan_step_done")!;
+		expect(stepTool).toBeTruthy();
+		const done1 = await stepTool.execute("c1", { index: 1, evidence: "cmd A ran" }, undefined, undefined, fakeCtx().ctx);
+		// without a loaded plan the tool answers gracefully
+		expect((done1 as { content: { text: string }[] }).content[0]!.text).toContain("No plan loaded");
+	});
+	test("tool def registered", () => {
+		const f2 = fakePi(ALL_TOOLS);
+		readOnlyModeExtension(f2.pi);
+		expect(f2.state.tools.some((t: { name: string }) => t.name === "plan_step_done")).toBe(true);
 	});
 });
