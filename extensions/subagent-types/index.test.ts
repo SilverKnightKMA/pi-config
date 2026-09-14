@@ -14,8 +14,27 @@ import {
 	resolveModel,
 	MAIN_ROLE,
 } from "./index";
-import { writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { writeFileSync, mkdirSync, rmSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
+
+import { goalWakeActive } from "./index.ts";
+
+describe("goalWakeActive (v1.4.51 single-waker)", () => {
+	test("dir có goal running → true; chỉ paused/done → false; không dir → false", () => {
+		const dir = mkdtempSync(join(tmpdir(), "gwake-"));
+		expect(goalWakeActive(dir)).toBe(false); // dir rỗng
+		writeFileSync(join(dir, "a.json"), JSON.stringify({ status: "paused" }));
+		writeFileSync(join(dir, "b.json"), JSON.stringify({ status: "done" }));
+		expect(goalWakeActive(dir)).toBe(false);
+		writeFileSync(join(dir, "c.json"), JSON.stringify({ status: "running" }));
+		expect(goalWakeActive(dir)).toBe(true);
+		writeFileSync(join(dir, "rác.json"), "{not json");
+		expect(goalWakeActive(dir)).toBe(true); // file rác không phá quét
+		rmSync(dir, { recursive: true, force: true });
+		expect(goalWakeActive(join(dir))).toBe(false); // dir biến mất
+	});
+});
 
 describe("parseRoleMd", () => {
 	test("parses frontmatter + body", () => {

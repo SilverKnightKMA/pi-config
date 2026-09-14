@@ -114,6 +114,7 @@ export function createTask(
   blockedBy: number[],
   now: number,
   verify?: VerifySpec,
+  goalId?: string,
 ): OpResult {
   const warnings: string[] = [];
   if (!subject.trim()) return { state, task: null, warnings, error: "subject is required" };
@@ -130,6 +131,7 @@ export function createTask(
     evidence: null,
     verify: verify ?? undefined,
     verifyAmendments: verify !== undefined ? 0 : undefined,
+    goalId: goalId ?? undefined,
     createdAt: now,
     updatedAt: now,
   };
@@ -160,7 +162,7 @@ export interface UpdatePatch {
   /** v1.4.38 doneCheck guard: attribute a real description change to its author.
    * Agent rewrites count against DESC_AMEND_MAX; user rewrites are free but
    * still land in descHistory so the trail is complete. */
-  descAmend?: { by: "agent" | "user" };
+  descAmend?: { by: "agent" | "user" | "goal-lease" };
 }
 
 export function updateTask(state: TaskState, id: number, patch: UpdatePatch, now: number): OpResult {
@@ -305,6 +307,7 @@ export function sanitizeState(data: Record<string, unknown>): TaskState {
       failStreak: typeof item.failStreak === "number" ? item.failStreak : undefined,
       judgeRounds: typeof item.judgeRounds === "number" ? item.judgeRounds : undefined,
       appealReason: typeof item.appealReason === "string" ? item.appealReason : undefined,
+      goalId: typeof item.goalId === "string" && item.goalId.startsWith("g-") ? item.goalId : undefined,
       createdAt: typeof item.createdAt === "number" ? item.createdAt : 0,
       updatedAt: typeof item.updatedAt === "number" ? item.updatedAt : 0,
     });

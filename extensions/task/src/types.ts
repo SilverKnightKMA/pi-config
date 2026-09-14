@@ -45,6 +45,9 @@ export interface Task {
   /** v1.4.38 doneCheck guard: how many times the AGENT rewrote the description
    * (cap DESC_AMEND_MAX — beyond that only the user bridge may amend). */
   descAmendments?: number;
+  /** v1.4.51 goal membership: task tạo khi goal active được stamp goalId
+   * (snapshot ∪ stamped = membership; goal-done check cơ khí theo tập này). */
+  goalId?: string;
   /** v1.4.38: append-only diff trail of description rewrites (agent AND user),
    * capped length; the judge packet carries this so layer-2 can weigh
    * self-serving rewrites (live lesson: judge only sees the CURRENT sheet). */
@@ -56,7 +59,7 @@ export interface Task {
 /** One doneCheck rewrite: who changed it, when, old→new (truncated). */
 export interface DescAmendment {
   at: number;
-  by: "agent" | "user";
+  by: "agent" | "user" | "goal-lease";
   from: string;
   to: string;
 }

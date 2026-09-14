@@ -1,5 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import { createTask, fieldChanges, MAX_FIELD_CHANGES, type TaskState } from "./graph.ts";
+import { sanitizeState } from "./graph.ts";
+import { EMPTY_STATE } from "./types.ts";
+
+describe("goal membership (v1.4.51 #37)", () => {
+	test("createTask stamp goalId; sanitizeState lược goalId rác, giữ dạng g-", () => {
+		const r = createTask(EMPTY_STATE, "xong việc đêm", "", [], 1, undefined, "g-abcd1234-777");
+		expect(r.task?.goalId).toBe("g-abcd1234-777");
+		const raw = { tasks: [{ id: 1, subject: "a", description: "", status: "pending", goalId: "nope" }], nextId: 2 };
+		expect(sanitizeState(raw).tasks[0].goalId).toBeUndefined();
+		const raw2 = { tasks: [{ id: 1, subject: "a", description: "", status: "pending", goalId: "g-ok-1" }], nextId: 2 };
+		expect(sanitizeState(raw2).tasks[0].goalId).toBe("g-ok-1");
+	});
+});
+
 
 
 describe("fieldChanges (#45 — update card shows WHAT changed)", () => {

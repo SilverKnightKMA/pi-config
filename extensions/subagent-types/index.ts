@@ -256,6 +256,26 @@ export function buildAutoPing(role: string, agentId: string, title: string | und
 	return `[auto-report] Subagent ${who} (${agentId}) finished and went idle without calling message_main. Use paseo_activity(agentId) if you need its result.`;
 }
 
+/** v1.4.51: có goal run nào đang running không (đọc goal-state dir —
+ * file bridge, không import goal ext). Auto-ping nhường goal wake. */
+export function goalWakeActive(dir?: string): boolean {
+	const d = dir ?? join(process.env.HOME ?? homedir(), ".pi", "agent", "goal-state");
+	try {
+		for (const f of readdirSync(d)) {
+			if (!f.endsWith(".json")) continue;
+			try {
+				const st = JSON.parse(readFileSync(join(d, f), "utf8")) as { status?: unknown };
+				if (st?.status === "running") return true;
+			} catch {
+				// file rác — bỏ qua
+			}
+		}
+	} catch {
+		// không có dir — không có goal
+	}
+	return false;
+}
+
 /** Identity mapping retained for call sites; .md files now use live names. */
 export function mapToolName(tool: string): string {
 	return tool;
@@ -555,7 +575,13 @@ async function kickOutbound(): Promise<void> {
 	// Auto-report backstop (2026-09-02): a subagent that settled WITHOUT calling
 	// message_main still pings its parent — one line, no payload — so main can
 	// wake and pull the transcript itself (see shouldAutoPing for history).
+	//
+	// v1.4.51 single-waker (#37): khi CÓ goal đang chạy ở main, goal loop sở hữu
+	// nhịp đánh thức main (epoch + backoff) — auto-ping nhường quyền, tránh hai
+	// waker đua nhau trên một main idle. Child result được goal epoch kéo ở lượt
+	// settle kế tiếp (board/projection), mất mát chỉ là độ trễ 1 epoch.
 	async function autoPingOnSettle(): Promise<void> {
+		if (goalWakeActive()) return;
 		const self = resolveSelf(sessionIdRef.value);
 		// Pool children skip the backstop entirely — their pool driver in main
 		// owns the wake (one aggregate, not one ping per child; v1.4.44).

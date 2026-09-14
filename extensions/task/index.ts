@@ -53,6 +53,7 @@ import {
 } from "./src/judge.ts";
 import { ackPayload, applyControlAction, controlFilePath, parseControlPayload } from "./src/control.ts";
 import { EMPTY_STATE, DESC_AMEND_MAX, type TaskState, type TaskStatus } from "./src/types.ts";
+import { activeGoal, goalIdActive, tryConsumeLease } from "./src/goal-bridge.ts";
 
 type UiContext = ExtensionContext;
 
@@ -389,6 +390,9 @@ export default function taskExtension(pi: ExtensionAPI) {
 					}
 				}
 			}
+			// v1.4.51 goal membership: task tạo khi goal active → stamp goalId
+			// (membership = snapshot ∪ stamped; goal-done check cơ khí theo tập này).
+			const goal = statusSessionId ? activeGoal(statusSessionId) : null;
 			const result = createTask(
 				state,
 				params.subject,
@@ -396,6 +400,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 				params.blockedBy ?? [],
 				Date.now(),
 				verifySpec,
+				goal?.goalId,
 			);
 			if (result.error) throw new Error(result.error);
 			commit(ctx as UiContext, result.state);
@@ -481,7 +486,18 @@ export default function taskExtension(pi: ExtensionAPI) {
 		) {
 			turnsSinceTaskTool = 0;
 			const patch: UpdatePatch = {};
-			if (params.status !== undefined) patch.status = params.status;
+			// v1.4.51 no-reopen-in-goal: completed là một chiều trong goal — dao động
+			// (xong → mở lại → làm lại) tiêu epoch vô nghĩa. Escape hợp lệ: TẠO task
+			// mới có stamp (mảnh việc thật), không phải reopen (#43 envelope).
+			if (params.status !== undefined) {
+				const cur = state.tasks.find((t) => t.id === params.id);
+				if (cur && cur.status === "completed" && params.status !== "completed" && cur.goalId && goalIdActive(cur.goalId)) {
+					throw new Error(
+						`[task] #${params.id} thuộc goal ${cur.goalId} (đang chạy) — completed là một chiều trong goal. Việc phát sinh: tạo task mới (tự được stamp vào goal), không reopen.`,
+					);
+				}
+				patch.status = params.status;
+			}
 			if (params.subject !== undefined) patch.subject = params.subject;
 			if (params.description !== undefined) patch.description = params.description;
 			if (params.blockedBy !== undefined) patch.blockedBy = params.blockedBy;
@@ -515,11 +531,21 @@ export default function taskExtension(pi: ExtensionAPI) {
 					}
 					const used = t.descAmendments ?? 0;
 					if (used >= DESC_AMEND_MAX) {
-						throw new Error(
-							`[task] #${params.id} doneCheck đã bị model sửa ${used}/${DESC_AMEND_MAX} lần — xin user sửa qua nút panel ('sửa đề') hoặc chat. Judge chỉ thấy tờ đề hiện tại nên agent đổi đề = điều khiển phán quyết.`,
-						);
+						// v1.4.51 goal lease: appeal đúng 1 lần/goal khi goal đang chạy.
+						// Lease do user cấp mặc định ở /goal start — dùng là ghi log +
+						// lộ trong wrap-up sáng mai. Strict vẫn user-only (không qua đây).
+						const lease = statusSessionId
+							? tryConsumeLease(statusSessionId, `#${params.id} descAmend ${used}/${DESC_AMEND_MAX} — appeal qua goal lease`)
+							: { ok: false as const, reason: "không có goal đang chạy" };
+						if (!lease.ok) {
+							throw new Error(
+								`[task] #${params.id} doneCheck đã bị model sửa ${used}/${DESC_AMEND_MAX} lần — xin user sửa qua nút panel ('sửa đề') hoặc chat. Judge chỉ thấy tờ đề hiện tại nên agent đổi đề = điều khiển phán quyết. (goal lease: ${lease.reason})`,
+							);
+						}
+						patch.descAmend = { by: "goal-lease" };
+					} else {
+						patch.descAmend = { by: "agent" };
 					}
-					patch.descAmend = { by: "agent" };
 				}
 			}
 

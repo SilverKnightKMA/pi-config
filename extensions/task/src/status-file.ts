@@ -38,6 +38,8 @@ export interface TaskStatusFile {
 		failStreak?: number;
 		judgeRounds?: number;
 		appealReason?: string;
+		/** v1.4.51 goal membership stamp — goal engine đọc để goal-done check cơ khí. */
+		goalId?: string;
 		/** v1.4.38 doneCheck guard: agent rewrite count (cap 2) + trail for the panel chip. */
 		descAmendments?: number;
 		descHistory?: Array<{ at: number; by: string; from: string; to: string }>;
@@ -94,6 +96,7 @@ export function buildTaskStatus(state: TaskState, sessionId: string, now = Date.
 			failStreak: task.failStreak,
 			judgeRounds: task.judgeRounds,
 			appealReason: task.appealReason,
+			goalId: task.goalId,
 			descAmendments: task.descAmendments,
 			descHistory: task.descHistory,
 		})),

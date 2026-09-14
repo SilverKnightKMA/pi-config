@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
 	GOAL_BACKOFF_LADDER,
+	goalDone,
+	makeGoalId,
+	memberTasks,
+	recordEpoch,
+	spinning,
 	GOAL_EPOCH_MAX,
 	backoffSec,
 	nextEpoch,
@@ -70,6 +75,47 @@ describe("goal-state (#37)", () => {
 			expect(r2).toContain("ĐÃ DÙNG 1/1");
 			expect(r2).toContain("#12");
 		}
+	});
+
+	test("v1.4.51 membership động: snapshot ∪ stamped; done khi sạch nợ", () => {
+		const st = startGoal("s1", "a", NOW, { memberIds: [1, 2] });
+		// board: 1 xong, 2 mở, 3 stamped chưa xong (sinh trong goal), 4 ngoài goal
+		const board = [
+			{ id: 1, status: "completed" },
+			{ id: 2, status: "in_progress" },
+			{ id: 3, status: "pending", goalId: st.goalId },
+			{ id: 4, status: "pending", goalId: "g-khac-999" },
+		];
+		expect(memberTasks(st, board).map((t) => t.id)).toEqual([1, 2, 3]);
+		expect(goalDone(st, board)).toBe(false);
+		expect(goalDone(st, [
+			{ id: 1, status: "completed" },
+			{ id: 2, status: "cancelled" },
+			{ id: 3, status: "completed", goalId: st.goalId },
+		])).toBe(true);
+	});
+
+	test("v1.4.51 spinning: 2 epoch liền 0 completed → dừng sớm", () => {
+		let st = startGoal("s1", "a", NOW, { memberIds: [1] });
+		st = recordEpoch(st, 1, NOW, 3, 0);
+		expect(spinning(st)).toBe(false); // mới 1 epoch
+		st = recordEpoch(st, 2, NOW, 2, 0);
+		expect(spinning(st)).toBe(true); // tạo 5 task nhưng 0 xong
+		st = recordEpoch(st, 3, NOW, 0, 1);
+		expect(spinning(st)).toBe(false); // có task xong → tiến độ thật
+	});
+
+	test("v1.4.51 goalId unique + wrap-up kế toán tạo/xong", () => {
+		const a = makeGoalId("s1", NOW);
+		const b = makeGoalId("s1", new Date(Date.parse(NOW) + 5).toISOString());
+		expect(a).not.toBe(b);
+		expect(a.startsWith("g-")).toBe(true);
+		let st = startGoal("s1", "a", NOW, { memberIds: [1, 2, 3] });
+		st = recordEpoch(st, 1, NOW, 2, 1);
+		const r = wrapUpReport(st);
+		expect(r).toContain("2 tạo / 1 xong / 3 member");
+		expect(r).toContain("ep1: +2 tạo / 1 xong");
+		expect(r).toContain("snapshot: #1 #2 #3");
 	});
 
 	test("sanitize: null với rác; clip log về 8; epoch clamp", () => {

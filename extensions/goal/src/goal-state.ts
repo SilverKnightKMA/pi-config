@@ -27,14 +27,30 @@ export interface GoalLease {
 	log: LeaseUse[];
 }
 
+/** Một epoch đã tiêu: kế toán tạo/hoàn thành task-member (chống self-feeding). */
+export interface EpochRec {
+	n: number;
+	at: string;
+	created: number;
+	completed: number;
+}
+
 export interface GoalState {
 	v: 1;
 	sessionId: string;
+	/** Id định danh goal run (g-<sid8>-<ts36>) — task stamp tham chiếu về đây. */
+	goalId: string;
 	anchor: string;
 	status: GoalStatus;
 	/** Số epoch tự đánh thức đã tiêu. */
 	epoch: number;
 	lease: GoalLease;
+	/** Snapshot id các task mở lúc start (membership = snapshot ∪ stamped goalId). */
+	memberIds: number[];
+	/** Kế toán từng epoch (cap GOAL_EPOCH_MAX). */
+	epochs: EpochRec[];
+	/** Bộ đếm board lần settle gần nhất (chuẩn để tính delta tạo/xong). */
+	board: { members: number; completed: number };
 	createdAt: string;
 	updatedAt: string;
 	/** Epoch tiếp theo dự kiến đánh thức (ISO) — driver ghi, chỉ để hiển thị. */
@@ -47,22 +63,63 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 	return typeof v === "object" && v !== null;
 }
 
+export function makeGoalId(sessionId: string, now: string): string {
+	const sid8 = sessionId.replace(/-/g, "").slice(0, 8);
+	const ts = Date.parse(now);
+	return `g-${sid8}-${Number.isFinite(ts) ? ts : Date.now()}`;
+}
+
 export function startGoal(
 	sessionId: string,
 	anchor: string,
 	now: string,
-	opts: { lease?: boolean } = {},
+	opts: { lease?: boolean; memberIds?: number[] } = {},
 ): GoalState {
 	return {
 		v: 1,
 		sessionId,
+		goalId: makeGoalId(sessionId, now),
 		anchor: anchor.slice(0, 2000),
 		status: "running",
 		epoch: 0,
 		lease: { granted: opts.lease !== false, used: 0, log: [] },
+		memberIds: (opts.memberIds ?? []).slice(0, 500),
+		epochs: [],
+		board: { members: (opts.memberIds ?? []).length, completed: 0 },
 		createdAt: now,
 		updatedAt: now,
 	};
+}
+
+/** Task-board record tối thiểu để goal nhìn từ ngoài (đọc projection, không import task ext). */
+export interface BoardTaskLike {
+	id: number;
+	status: string;
+	goalId?: string;
+}
+
+/** Membership: snapshot ∪ task stamp goalId này (task sinh trong goal LÀ thành viên). */
+export function memberTasks(state: GoalState, tasks: BoardTaskLike[]): BoardTaskLike[] {
+	const snap = new Set(state.memberIds);
+	return tasks.filter((t) => snap.has(t.id) || t.goalId === state.goalId);
+}
+
+/** Goal-done cơ khí: KHÔNG còn member nào mở (pending/in_progress/parked đều là mở). */
+export function goalDone(state: GoalState, tasks: BoardTaskLike[]): boolean {
+	const open = memberTasks(state, tasks).filter((t) => t.status !== "completed" && t.status !== "cancelled");
+	return open.length === 0;
+}
+
+/** Kế toán epoch từ delta board; trả state mới đã push record (cap GOAL_EPOCH_MAX). */
+export function recordEpoch(state: GoalState, n: number, at: string, created: number, completed: number): GoalState {
+	const rec: EpochRec = { n, at, created: Math.max(0, created), completed: Math.max(0, completed) };
+	return { ...state, epochs: [...state.epochs, rec].slice(-GOAL_EPOCH_MAX) };
+}
+
+/** Spinning: ≥2 epoch liền mà 0 task hoàn thành (tạo task mới KHÔNG tính tiến độ). */
+export function spinning(state: GoalState): boolean {
+	const es = state.epochs;
+	return es.length >= 2 && es[es.length - 1].completed === 0 && es[es.length - 2].completed === 0;
 }
 
 export function sanitizeGoalState(raw: unknown): GoalState | null {
@@ -81,9 +138,21 @@ export function sanitizeGoalState(raw: unknown): GoalState | null {
 			}
 		}
 	}
+	const memberIds = Array.isArray(raw.memberIds)
+		? raw.memberIds.filter((x): x is number => typeof x === "number").slice(0, 500)
+		: [];
+	const epochs = Array.isArray(raw.epochs)
+		? raw.epochs.filter(
+				(e): e is EpochRec =>
+					isRecord(e) && typeof e.n === "number" && typeof e.at === "string" &&
+					typeof e.created === "number" && typeof e.completed === "number",
+			).slice(0, GOAL_EPOCH_MAX)
+		: [];
+	const boardRaw = isRecord(raw.board) ? raw.board : {};
 	return {
 		v: 1,
 		sessionId: raw.sessionId,
+		goalId: typeof raw.goalId === "string" && raw.goalId.startsWith("g-") ? raw.goalId : makeGoalId(raw.sessionId, typeof raw.createdAt === "string" ? raw.createdAt : new Date().toISOString()),
 		anchor: raw.anchor,
 		status: status as GoalStatus,
 		epoch: Math.min(epoch, GOAL_EPOCH_MAX),
@@ -91,6 +160,12 @@ export function sanitizeGoalState(raw: unknown): GoalState | null {
 			granted: leaseRaw.granted !== false,
 			used: typeof leaseRaw.used === "number" && leaseRaw.used > 0 ? 1 : 0,
 			log: log.slice(-8),
+		},
+		memberIds,
+		epochs,
+		board: {
+			members: typeof boardRaw.members === "number" ? boardRaw.members : memberIds.length,
+			completed: typeof boardRaw.completed === "number" ? boardRaw.completed : 0,
 		},
 		createdAt: typeof raw.createdAt === "string" ? raw.createdAt : "",
 		updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : "",
@@ -149,10 +224,15 @@ export function wrapUpReport(state: GoalState): string {
 			? `lease: CHƯA DÙNG${state.lease.granted ? "" : " (không được cấp)"}`
 			: `lease: ĐÃ DÙNG ${state.lease.used}/1 lần`;
 	const uses = state.lease.log.map((l) => `  • ${l.at}${l.taskId ? ` task ${l.taskId}` : ""} — ${l.note}`).join("\n");
+	const created = state.epochs.reduce((s, e) => s + e.created, 0);
+	const done = state.epochs.reduce((s, e) => s + e.completed, 0);
+	const tail = state.epochs.slice(-5).map((e) => `  ep${e.n}: +${e.created} tạo / ${e.completed} xong`).join("\n");
 	return [
 		`GOAL wrap-up — ${state.status}`,
 		`anchor: ${state.anchor}`,
-		`epoch: ${state.epoch}/${GOAL_EPOCH_MAX}`,
+		`epoch: ${state.epoch}/${GOAL_EPOCH_MAX} · task: ${created} tạo / ${done} xong / ${state.board.members} member`,
+		...(state.memberIds.length > 0 ? [`snapshot: #${state.memberIds.slice(0, 30).join(" #")}${state.memberIds.length > 30 ? " …" : ""}`] : []),
+		...(tail ? [tail] : []),
 		leaseLine,
 		...(uses ? [uses] : []),
 	].join("\n");
