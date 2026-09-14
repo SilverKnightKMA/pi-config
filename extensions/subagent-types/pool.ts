@@ -168,6 +168,21 @@ export function initPool(poolId: string, items: PoolItemSpec[], concurrency: num
 	};
 }
 
+/** Standing footer injected into EVERY pool item task at spawn (task #58,
+ *  bug 2026-09-14: scout reported a tool-lack complaint as its FINAL report,
+ *  failed the expect gate, and needed a message to finish). The harness says
+ *  it so the child doesn't have to remember: ask, then WAIT. */
+export const POOL_STANDING_FOOTER =
+	"\n\n—\nStanding rule: if a required tool is missing (you cannot read/exec what the task needs), " +
+	"send message_main describing exactly what you need, then WAIT for it. " +
+	"Never submit a partial report as your final report.";
+
+/** Idempotent: applies the footer once, no matter how often it runs. */
+export function withStandingFooter(task: string): string {
+	if (task.includes("Standing rule:")) return task;
+	return task + POOL_STANDING_FOOTER;
+}
+
 /** Items that may start NOW: pending ones, bounded by free slots. */
 export function nextToStart(state: PoolState): PoolItem[] {
 	const running = state.items.filter((i) => i.status === "running").length;

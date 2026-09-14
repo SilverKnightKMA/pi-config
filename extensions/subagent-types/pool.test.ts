@@ -3,6 +3,7 @@ import {
 	POOL_DEFAULT_CONCURRENCY,
 	POOL_MAX_ITEMS,
 	initPool,
+	withStandingFooter,
 	parsePoolSpec,
 	poolSafeRole,
 	nextToStart,
@@ -297,5 +298,19 @@ describe("poolNotice envelope (#52)", () => {
 	});
 	test("body verbatim — model must read the payload unchanged", () => {
 		expect(poolNotice("x")).toContain("\nx\n");
+	});
+});
+
+describe("standing footer (#58)", () => {
+	test("applies once with the ask-and-wait rule", () => {
+		const out = withStandingFooter("Read the diff at /tmp/x.diff and brief it.");
+		expect(out).toStartWith("Read the diff at /tmp/x.diff and brief it.");
+		expect(out).toContain("send message_main describing exactly what you need, then WAIT");
+		expect(out).toContain("Never submit a partial report");
+	});
+	test("idempotent — footer never duplicated", () => {
+		const once = withStandingFooter("task");
+		expect(withStandingFooter(once)).toBe(once);
+		expect(once.match(/Standing rule:/g)).toHaveLength(1);
 	});
 });

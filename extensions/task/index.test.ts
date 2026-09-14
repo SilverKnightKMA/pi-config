@@ -660,6 +660,12 @@ test("verify wiring: amber escalates to judge with observed output; amend fixes 
 			content: { text: string }[];
 		};
 		assert.match(r1.content[0]!.text, /chưa đủ bằng chứng/);
+		// #59: completion bị giữ phải tự phô bày — HELD note + vòng judge + NEXT
+		assert.match(r1.content[0]!.text, /⏸ Completion HELD/);
+		assert.match(r1.content[0]!.text, /vòng judge 1\/3/);
+		assert.match(r1.content[0]!.text, /Đừng khai lại y nguyên/);
+		assert.match(r1.content[0]!.text, /NEXT: \(1\) làm đúng việc gate yêu cầu/);
+		assert.match(r1.content[0]!.text, /appeal=/);
 		assert.equal(calls.length, 1);
 		assert.match(calls[0]!, /\[amber\]/); // observed output thật rides the judge packet
 		assert.match(calls[0]!, /OPEN/);

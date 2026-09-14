@@ -735,6 +735,17 @@ export default function taskExtension(pi: ExtensionAPI) {
 				params.status === "completed" && result.task!.verify?.strict
 					? "\n(STRICT task — layer-2 judge đã phán theo audit ở trên)"
 					: "";
+			// #59 (user 2026-09-14): completion bị GIỮ phải tự phô bày — gate nào giữ,
+			// vòng judge thứ mấy, và NEXT hợp lệ. Envelope chuẩn #43: thiếu dòng này
+			// model chỉ thấy "→ pending" và khai lại mò vài lần.
+			const heldNote =
+				params.status === "completed" && result.task!.status !== "completed" && result.task!.status !== "parked"
+					? `\n⏸ Completion HELD — #${result.task!.id} CHƯA hoàn thành (vòng judge ${result.task!.judgeRounds ?? 0}/${MAX_JUDGE_ROUNDS}). ` +
+					  `Đừng khai lại y nguyên: bỏ phiếu lại cũng bị giữ. ` +
+					  `NEXT: (1) làm đúng việc gate yêu cầu — chạy lệnh probe THẬT qua bash (sổ ghi lệnh bắt bằng chứng) / bổ sung evidence cụ thể: lệnh + output + file, rồi khai completed lại; ` +
+					  `(2) probe khai sai → amend verify (task_update verify=..., ≤2 lần); ` +
+					  `(3) tranh chấp phán quyết → appeal="lý do cụ thể" → PARK chờ user.`
+					: "";
 			// #45: field-level CHANGES block (self-explaining harness, same family
 			// as the #43 denial envelope) — model sees it, panel card rides it.
 			const fields = fieldChanges(prevTask, result.task!);
@@ -748,7 +759,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 					: "";
 			return {
 				content: [
-					{ type: "text", text: `#${result.task!.id} → ${result.task!.status}${warn}${auditNote}${parkedNote}${strictNote}${ready}${changesNote}` },
+					{ type: "text", text: `#${result.task!.id} → ${result.task!.status}${heldNote}${warn}${auditNote}${parkedNote}${strictNote}${ready}${changesNote}` },
 				],
 					details: {
 					id: result.task!.id,

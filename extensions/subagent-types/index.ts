@@ -72,6 +72,7 @@ import {
 	finishItem,
 	initPool,
 	poolNotice,
+	withStandingFooter,
 	markRunning,
 	nextToStart,
 	parsePoolSpec,
@@ -1208,7 +1209,9 @@ ${reply.text}` }],
 				continue;
 			}
 			const spawned = await createChildAgent(
-				{ role: item.role, task: item.task, name: item.name, poolId: state.poolId },
+				// v1.4.59 (#58): standing footer — ask via message_main and WAIT
+				// when a tool is missing; never report half-done.
+				{ role: item.role, task: withStandingFooter(item.task), name: item.name, poolId: state.poolId },
 				def,
 				cfg,
 				myAgentId,
