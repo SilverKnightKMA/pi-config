@@ -312,6 +312,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 				t.judgeRounds ? `judge-rounds:${t.judgeRounds}` : "",
 				t.failStreak ? `fail-streak:${t.failStreak}` : "",
 				t.status === "parked" ? `parked:${(t.appealReason ?? "chờ user").slice(0, 60)}` : "",
+				t.status === "held" ? `HELD judge ${t.judgeRounds ?? 1}/3 — cần evidence thật, đừng khai lại y nguyên` : "",
 			]
 				.filter(Boolean)
 				.join(" · ");
@@ -708,11 +709,13 @@ export default function taskExtension(pi: ExtensionAPI) {
 							patch.appealReason = conseq.message.slice(0, 500);
 							patch.audit = { at: Date.now(), verdict: "judge-insufficient", summary: conseq.message };
 						} else if (conseq.action === "need-evidence") {
-							patch.status = task?.status ?? "pending"; // không hoàn thành — giữ nguyên trạng thái
+							// v1.4.65 #64: judge giữ completion → status HELD (thay vì giữ nguyên) —
+							// task_list + nudge hiện rõ "đã khai, bị giữ, cần evidence thật".
+							patch.status = "held";
 							patch.audit = { at: Date.now(), verdict: "judge-insufficient", summary: conseq.message };
 						} else {
-							// fail-streak: refused, chưa demote — giữ trạng thái, đếm streak
-							patch.status = task?.status ?? "pending";
+							// fail-streak: refused, chưa demote — v1.4.65 #64: cũng HELD
+							patch.status = "held";
 							patch.audit = { at: Date.now(), verdict: "judge-fail", summary: conseq.message };
 						}
 					}

@@ -117,6 +117,13 @@ test("replayBranch: last snapshot wins, junk skipped", () => {
 	assert.deepEqual(replayBranch([]), { tasks: [], nextId: 1 });
 });
 
+test("v1.4.65 #64: held task cũng được nudge — bị judge giữ là việc đang dang dở", () => {
+	const s0 = seed();
+	const held = updateTask(s0, 1, { status: "held" }, 5).state;
+	assert.ok(shouldNudge({ state: held, turnsSinceTaskTool: 3, lastTurnTextOnly: false }));
+	assert.ok(shouldNudge({ state: held, turnsSinceTaskTool: 1, lastTurnTextOnly: true }));
+});
+
 test("nudge only fires when a task is in_progress — pending-only board là queue của user, không phải model quên (v1.4.63 #61/#63)", () => {
 	const s = seed();
 	assert.ok(!shouldNudge({ state: EMPTY_STATE, turnsSinceTaskTool: 99, lastTurnTextOnly: true }));
@@ -689,6 +696,12 @@ test("verify wiring: amber escalates to judge with observed output; amend fixes 
 			content: { text: string }[];
 		};
 		assert.match(r1.content[0]!.text, /chưa đủ bằng chứng/);
+		// v1.4.65 #64: completion bị giữ → status HELD (không còn về pending/in_progress mù mờ)
+		assert.match(r1.content[0]!.text, /#1 → held/);
+		const lst = (await f.tool("task_list").execute("l1", {}, undefined, undefined, f.ctx)) as {
+			content: { text: string }[];
+		};
+		assert.match(lst.content[0]!.text, /held · .*HELD judge 1\/3 — cần evidence thật/);
 		// #59: completion bị giữ phải tự phô bày — HELD note + vòng judge + NEXT
 		assert.match(r1.content[0]!.text, /⏸ Completion HELD/);
 		assert.match(r1.content[0]!.text, /vòng judge 1\/3/);

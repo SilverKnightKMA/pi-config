@@ -16,7 +16,7 @@
 
 import type { VerifySpec, TaskAudit } from "./verify.ts";
 
-export const TASK_STATUSES = ["pending", "in_progress", "completed", "cancelled", "parked"] as const;
+export const TASK_STATUSES = ["pending", "in_progress", "held", "completed", "cancelled", "parked"] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
 
 export interface Task {

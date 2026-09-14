@@ -1,6 +1,30 @@
+
+test("v1.4.65 #64: held — judge giữ completion, chặn dependent, không ready, sanitize giữ được", () => {
+	let s = EMPTY_STATE;
+	s = createTask(s, "blocker", "", [], 1).state; // #1
+	s = createTask(s, "dep", "", [1], 2).state; // #2 blocked by #1
+	// pending → held (engine judge branch; qua updateTask như patch.status thường)
+	const held = updateTask(s, 1, { status: "held" }, 5);
+	assert.equal(held.task!.status, "held");
+	assert.equal(held.error, null);
+	// held vẫn chặn dependent (openBlockers filter âm — held không phải completed/cancelled)
+	const idx = new Map(held.state.tasks.map((t) => [t.id, t]));
+	assert.ok(openBlockers(held.state.tasks[1]!, idx).includes(1));
+	// held KHÔNG vào ready set
+	assert.ok(readyTasks(held.state).every((t) => t.id !== 1));
+	// held → in_progress được (model làm tiếp)
+	assert.equal(updateTask(held.state, 1, { status: "in_progress" }, 6).task!.status, "in_progress");
+	// held → completed cần evidence
+	const noEv = updateTask(held.state, 1, { status: "completed" }, 7);
+	assert.match(noEv.error ?? "", /requires evidence/);
+	// sanitizeState không đánh rơi held
+	const st = sanitizeState({ tasks: held.state.tasks, nextId: 3 });
+	assert.equal(st.tasks[0]!.status, "held");
+});
+
 import { describe, expect, test } from "bun:test";
-import { createTask, fieldChanges, MAX_FIELD_CHANGES, type TaskState } from "./graph.ts";
-import { sanitizeState } from "./graph.ts";
+import assert from "node:assert";
+import { createTask, fieldChanges, MAX_FIELD_CHANGES, openBlockers, readyTasks, sanitizeState, type TaskState, updateTask } from "./graph.ts";
 import { EMPTY_STATE } from "./types.ts";
 
 describe("goal membership (v1.4.51 #37)", () => {

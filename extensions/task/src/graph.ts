@@ -253,7 +253,7 @@ export function replayBranch(entries: BranchEntryLike[]): TaskState {
   return state;
 }
 
-const STATUSES = new Set(["pending", "in_progress", "completed", "cancelled", "parked"]);
+const STATUSES = new Set(["pending", "in_progress", "held", "completed", "cancelled", "parked"]); // v1.4.65 #64: held = judge giữ completion
 
 function numbers(value: unknown): number[] {
   return Array.isArray(value) ? value.filter((n): n is number => typeof n === "number") : [];

@@ -30,7 +30,8 @@ export function shouldNudge(input: NudgeInput): boolean {
   // v1.4.63 (#61/#63, user 00:5x): chỉ nhắc khi CÓ task đang làm (in_progress).
   // Board toàn pending (đợi user quyết / deferred) không phải "quên cập nhật"
   // — nhắc mỗi lượt thành noise; cùng điều kiện in_progress như wake của #61.
-  const working = input.state.tasks.filter((t) => t.status === "in_progress");
+  // v1.4.65 #64: held (judge giữ completion) cũng là việc đang làm — nudge được.
+  const working = input.state.tasks.filter((t) => t.status === "in_progress" || t.status === "held");
   if (working.length === 0) return false;
   if (input.lastTurnTextOnly && input.turnsSinceTaskTool >= 1) return true;
   return input.turnsSinceTaskTool >= NUDGE_AFTER_TURNS;
