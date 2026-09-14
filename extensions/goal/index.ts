@@ -137,7 +137,7 @@ function say(pi: ExtensionAPI, content: string): void {
 	pi.sendMessage({ customType: "goal-status", content, display: true });
 }
 
-export function activate(pi: ExtensionAPI): void {
+export default function activate(pi: ExtensionAPI): void {
 	let sessionId = "";
 	let wakeTimer: ReturnType<typeof setTimeout> | null = null;
 
