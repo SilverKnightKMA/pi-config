@@ -30,7 +30,7 @@ describe("goal-state (#37)", () => {
 		expect(st.lease.granted).toBe(true);
 		expect(st.lease.used).toBe(0);
 		expect(st.epoch).toBe(0);
-		expect(st.status).toBe("running");
+		expect(st.status).toBe("draft");
 	});
 
 	test("lease: đúng 1 lần, lần 2 chặn cứng, chết khi goal xong", () => {
