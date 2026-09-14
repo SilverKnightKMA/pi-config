@@ -117,13 +117,16 @@ test("replayBranch: last snapshot wins, junk skipped", () => {
 	assert.deepEqual(replayBranch([]), { tasks: [], nextId: 1 });
 });
 
-test("nudge fires on stale open tasks and stuck in_progress", () => {
+test("nudge only fires when a task is in_progress — pending-only board là queue của user, không phải model quên (v1.4.63 #61/#63)", () => {
 	const s = seed();
 	assert.ok(!shouldNudge({ state: EMPTY_STATE, turnsSinceTaskTool: 99, lastTurnTextOnly: true }));
-	assert.ok(!shouldNudge({ state: s, turnsSinceTaskTool: 2, lastTurnTextOnly: false }));
-	assert.ok(shouldNudge({ state: s, turnsSinceTaskTool: 3, lastTurnTextOnly: false }));
+	// pending-only: KHÔNG bao giờ nudge, dù stale bao nhiêu lượt (user 00:5x —
+	// 14 task pending chờ user từng khiến reminder bắn gần như mỗi lượt)
+	assert.ok(!shouldNudge({ state: s, turnsSinceTaskTool: 99, lastTurnTextOnly: false }));
+	assert.ok(!shouldNudge({ state: s, turnsSinceTaskTool: 99, lastTurnTextOnly: true }));
 	const stuck = updateTask(s, 1, { status: "in_progress" }, 5).state;
 	assert.ok(shouldNudge({ state: stuck, turnsSinceTaskTool: 1, lastTurnTextOnly: true }));
+	assert.ok(shouldNudge({ state: stuck, turnsSinceTaskTool: 3, lastTurnTextOnly: false }));
 	assert.ok(!shouldNudge({ state: stuck, turnsSinceTaskTool: 0, lastTurnTextOnly: true }));
 });
 
@@ -378,6 +381,8 @@ test("wiring: context hook injects a transient reminder and returns messages", a
 	const f = fakePi();
 	taskExtension(f.pi as never);
 	await f.tool("task_create").execute("c1", { subject: "stale work" }, undefined, undefined, f.ctx);
+	// v1.4.63: nudge chỉ khi có task in_progress — pending-only là queue của user
+	await f.tool("task_update").execute("c2", { id: 1, status: "in_progress" }, undefined, undefined, f.ctx);
 	// simulate three agent_end turns without task tool use (text-only turns)
 	for (let i = 0; i < 3; i++) {
 		await f.handlers.get("agent_end")!({ messages: [{ role: "assistant", content: [{ type: "text", text: "talk" }] }] });
@@ -391,8 +396,9 @@ test("wiring: context hook injects a transient reminder and returns messages", a
 	assert.match(injected.content[0]!.text, /<system-reminder>/);
 	assert.match(injected.content[0]!.text, /stale work/);
 	// transient: the original message stays first, nothing was persisted
+	// (2 entries = task_create + task_update; nudge itself không ghi gì)
 	assert.equal(result.messages.length, 2);
-	assert.equal(f.entries.length, 1);
+	assert.equal(f.entries.length, 2);
 });
 
 test("wiring: session_start replays state from the session branch", async () => {
