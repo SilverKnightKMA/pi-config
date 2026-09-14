@@ -132,6 +132,7 @@ describe("plan auto-close (#62)", () => {
 		// covered end-to-end in index.test.ts; here we pin the pure helpers
 		const payload = planStatusPayload(base, "sess-1", "2026-09-14T00:00:00Z");
 		expect(payload.mode).toBe("tracking");
+		expect(payload.steps).toEqual(base.steps);
 		expect(payload.stepsDone).toBe(1);
 		expect(payload.currentStep).toEqual({ index: 2, text: "step two" });
 		expect(payload.completedAt).toBeNull();

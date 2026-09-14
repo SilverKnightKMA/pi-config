@@ -131,7 +131,7 @@ describe("applyStagedSections (engine-append contract)", () => {
 
 describe("JOURNEY budget gate (replaces v1.4.54 enforceJourneyCap)", () => {
 	test("journeyWordBudget: tokens→words with tolerance, floor 50", () => {
-		expect(journeyWordBudget(1000)).toBe(938); // 1000 * 3 * 1.25 / 4 = 937.5
+		expect(journeyWordBudget(1000)).toBe(750); // 1000 * 3 / 4 — v1.4.62 bỏ tolerance (upstream ~750 từ)
 		expect(journeyWordBudget(1)).toBe(50);
 	});
 

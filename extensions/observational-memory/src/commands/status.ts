@@ -82,7 +82,7 @@ export function buildStatusLines(
 		"",
 		"Context & files",
 		`  context: ${contextTokens != null ? `${contextTokens.toLocaleString()} / ${cfg.compactAtContextTokens.toLocaleString()} tok (${pct(contextTokens, cfg.compactAtContextTokens)})` : "?"}`,
-		`  topics (durable): ${topics.length} · journey: ${journey ? `${countWords(journey)}/${journeyWordBudget(cfg.journeyTargetTokens)} từ` : "none yet"}`,
+		`  topics (durable): ${topics.length} · journey: ${journey ? `~${Math.round((countWords(journey) * 4) / 3).toLocaleString()} / ${Math.round((journeyWordBudget(cfg.journeyTargetTokens) * 4) / 3).toLocaleString()} tok` : "none yet"}`,
 		"",
 		"Cost",
 		`  session: $${cost.total.costUsd.toFixed(4)} (${cost.total.runs} runs)`,

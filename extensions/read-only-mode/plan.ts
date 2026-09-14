@@ -241,6 +241,8 @@ export interface PlanStatusPayload {
 	mode: PlanState["mode"];
 	stepsDone: number;
 	stepsTotal: number;
+	/** v1.4.62 (#62): danh sách bước nguyên vẹn — panel render checklist như task rows. */
+	steps: { index: number; text: string; done: boolean }[];
 	/** v1.4.60 (#62): what the plan is doing RIGHT NOW — first open step. */
 	currentStep: { index: number; text: string } | null;
 	planFile: string | null;
@@ -261,6 +263,7 @@ export function planStatusPayload(
 		mode: state.mode,
 		stepsDone: state.steps.filter((s) => s.done).length,
 		stepsTotal: state.steps.length,
+		steps: state.steps.map((s) => ({ index: s.index, text: s.text, done: s.done })),
 		currentStep: open ? { index: open.index, text: open.text } : null,
 		planFile: state.planFile ?? null,
 		submittedAt: state.submittedAt ?? null,

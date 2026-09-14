@@ -143,15 +143,17 @@ export function countWords(text: string): number {
 	return text.split(/\s+/).filter(Boolean).length;
 }
 
-/** Words ≈ tokens × 3/4 with tolerance; floor 50 guards against absurdly small budgets. */
-export function journeyWordBudget(targetTokens: number, tolerance = 1.25): number {
+/** Words ≈ tokens × 3/4; floor 50 guards against absurdly small budgets.
+ * v1.4.62: bỏ tolerance 1.25 (port-side) — upstream pi-observational-memory
+ * hướng dẫn ~750 từ cho 1,000 tok, không có đệm. Gate giờ khớp prompt + hiển thị. */
+export function journeyWordBudget(targetTokens: number, tolerance = 1): number {
 	return Math.max(50, Math.round((targetTokens * 3 * tolerance) / 4));
 }
 
 export function checkJourneyBudget(
 	content: string,
 	targetTokens: number,
-	tolerance = 1.25,
+	tolerance = 1,
 ): { ok: boolean; words: number; budget: number; overBy: number } {
 	const budget = journeyWordBudget(targetTokens, tolerance);
 	const words = countWords(content);

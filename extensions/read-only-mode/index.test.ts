@@ -188,6 +188,10 @@ describe("plan status projection (#22 — panel reads this file)", () => {
 			mode: "awaiting",
 			stepsDone: 1,
 			stepsTotal: 2,
+			steps: [
+				{ index: 1, text: "a", done: true },
+				{ index: 2, text: "b", done: false },
+			],
 			currentStep: { index: 2, text: "b" },
 			planFile: ".pi/plans/x.md",
 			submittedAt: null,
