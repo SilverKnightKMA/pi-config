@@ -36,6 +36,7 @@
 | 2026-09-09 | @pify/memory + LLM-as-judge | `learn/pify-memory-research-2026-09-09.txt` (55KB) | để dành; hướng D = Agent-as-a-Judge → cơ sở layer-2 judge |
 | 2026-09-12 | @pify/goal 0.6.2 (diff 0.6.0→0.6.2) | `learn/pify-goal-eval-2026-09-12.md` (17.5KB) | PORT có chọn lọc (4 mảnh) hoặc mượn rẻ 20 dòng — CHỜ USER |
 | 2026-09-12 | @pify/task 0.3.0→0.3.2 (sync issue #22, chế độ 3 đầu tiên) | diff trong mini-brief session | KHÔNG ĐÁNH PORT — chỉ extract sweepStep pure-function + docs polish, truth table không đổi |
+| 2026-09-14 | SYNC 4 gói (issues #23 #24 #25 #29): task 0.3.2→0.3.6 · plan-mode 0.4.2→0.4.9 · swarm 0.6.0→0.9.0 · workflow 0.10.0→0.11.6 | diff tarball thật (4 scout pool + /tmp/sync-* brief) | task MƯỢN 3 dòng promptSnippet (pi #2285, ship v1.4.57); swarm MƯỢN loop-guard ~80 dòng (task #60 → v1.4.58), DAG needs ĐỂ DÀNH; plan-mode BỎ (4 vùng mượn byte-identical, delta toàn TUI); workflow BỎ (gate/resume byte-identical, delta toàn consent/TUI) — user duyệt 2026-09-14 |
 
 ## Nghiên cứu nền ngoài @pify
 
