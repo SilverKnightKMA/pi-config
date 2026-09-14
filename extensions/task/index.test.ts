@@ -573,6 +573,29 @@ test("wiring: tool results carry details.tasks snapshot for the Paseo transforme
 	assert.equal(listDetails.tasks.length, 2, "list carries full snapshot");
 });
 
+test("v1.4.64 (#64): update không đổi status nói rõ CÁI GÌ đổi — không còn '#N → pending' trơ trọi", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	await f.handlers.get("session_start")!({}, f.ctx);
+	await f.tool("task_create").execute("c1", { subject: "gamma" }, undefined, undefined, f.ctx);
+	// sửa đề (description) — status giữ nguyên pending
+	const amended = (await f
+		.tool("task_update")
+		.execute("u1", { id: 1, description: "đề mới" }, undefined, undefined, f.ctx)) as {
+		content: { text: string }[];
+	};
+	const txt = amended.content[0]!.text;
+	assert.match(txt, /#1 → pending — status không đổi; đổi: doneCheck/, "dòng đầu nêu field đổi");
+	// update status thật thì KHÔNG có statusNote
+	const moved = (await f
+		.tool("task_update")
+		.execute("u2", { id: 1, status: "in_progress" }, undefined, undefined, f.ctx)) as {
+		content: { text: string }[];
+	};
+	assert.match(moved.content[0]!.text, /#1 → in_progress\n/);
+	assert.ok(!moved.content[0]!.text.includes("status không đổi"));
+});
+
 // ── Verify layer 0+1 wiring (v1.4.24) ─────────────────────────────────
 
 function fireBash(f: ReturnType<typeof fakePi>, id: string, cmd: string, output: string) {

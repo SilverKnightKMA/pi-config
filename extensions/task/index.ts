@@ -749,6 +749,13 @@ export default function taskExtension(pi: ExtensionAPI) {
 			// #45: field-level CHANGES block (self-explaining harness, same family
 			// as the #43 denial envelope) — model sees it, panel card rides it.
 			const fields = fieldChanges(prevTask, result.task!);
+			// v1.4.64 (#64): status không đổi thì "#N → pending" đọc như no-op/bị bật lại
+			// (user nhìn card, model đọc tool result post-compaction) — nói rõ CÁI GÌ đổi.
+			const sameStatus = prevStatus !== null && prevStatus === result.task!.status;
+			const statusNote =
+				sameStatus && fields.length > 0
+					? ` — status không đổi; đổi: ${fields.slice(0, 2).map((f) => f.field).join(", ")}`
+					: "";
 			const changesNote =
 				fields.length > 0
 					? `\nCHANGES:\n${fields.map((f) => `  ${f.field}: ${f.from ? `${f.from} → ` : ""}${f.to}`).join("\n")}`
@@ -759,7 +766,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 					: "";
 			return {
 				content: [
-					{ type: "text", text: `#${result.task!.id} → ${result.task!.status}${heldNote}${warn}${auditNote}${parkedNote}${strictNote}${ready}${changesNote}` },
+					{ type: "text", text: `#${result.task!.id} → ${result.task!.status}${statusNote}${heldNote}${warn}${auditNote}${parkedNote}${strictNote}${ready}${changesNote}` },
 				],
 					details: {
 					id: result.task!.id,
