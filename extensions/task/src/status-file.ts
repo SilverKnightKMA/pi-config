@@ -42,6 +42,7 @@ export interface TaskStatusFile {
 		goalId?: string;
 		/** v1.4.38 doneCheck guard: agent rewrite count (cap 2) + trail for the panel chip. */
 		descAmendments?: number;
+		proposals?: Array<{ id: string; at: number; from: string; to: string; reason: string; status: string; decidedAt?: number }>;
 		descHistory?: Array<{ at: number; by: string; from: string; to: string }>;
 	}>;
 }
@@ -98,6 +99,16 @@ export function buildTaskStatus(state: TaskState, sessionId: string, now = Date.
 			appealReason: task.appealReason,
 			goalId: task.goalId,
 			descAmendments: task.descAmendments,
+			proposals: (task.proposals ?? []).slice(-4).map((p) => ({
+				id: p.id,
+				at: p.at,
+				from: p.from.slice(0, 200),
+				to: p.to.slice(0, 200),
+				reason: p.reason.slice(0, 200),
+				status: p.status,
+				decidedAt: p.decidedAt,
+			})),
+
 			descHistory: task.descHistory,
 		})),
 	};

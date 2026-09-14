@@ -19,7 +19,7 @@ import { homedir } from "node:os";
 import { openBlockers, updateTask } from "./graph.ts";
 import type { TaskState } from "./types.ts";
 
-export type TaskControlAction = "unpark" | "strict" | "reopen" | "amend";
+export type TaskControlAction = "unpark" | "strict" | "reopen" | "amend" | "proposal-decide";
 
 export interface TaskControlFile {
 	v: 1;
@@ -29,6 +29,10 @@ export interface TaskControlFile {
 	value?: boolean;
 	/** amend only (v1.4.38): the new done-check text, authored by the user. */
 	description?: string;
+	/** proposal-decide only (v1.4.53). */
+	proposalId?: string;
+	decision?: "apply" | "reject";
+	note?: string;
 	sentAt?: string;
 	ackAt?: string;
 }
@@ -53,9 +57,24 @@ export function parseControlPayload(raw: string): TaskControlFile | null {
 	if (!data || typeof data !== "object") return null;
 	const d = data as Record<string, unknown>;
 	if (d.v !== 1) return null;
-	if (d.action !== "unpark" && d.action !== "strict" && d.action !== "reopen" && d.action !== "amend") return null;
+	if (d.action !== "unpark" && d.action !== "strict" && d.action !== "reopen" && d.action !== "amend" && d.action !== "proposal-decide") return null;
 	if (typeof d.id !== "number" || !Number.isInteger(d.id) || d.id <= 0) return null;
 	if (d.value !== undefined && typeof d.value !== "boolean") return null;
+	// proposal-decide (v1.4.53): user bấm ✓/✗ trên đề xuất sửa đề
+	if (d.action === "proposal-decide") {
+		if (typeof d.proposalId !== "string" || !d.proposalId) return null;
+		if (d.decision !== "apply" && d.decision !== "reject") return null;
+		return {
+			v: 1,
+			action: "proposal-decide",
+			id: d.id,
+			proposalId: d.proposalId,
+			decision: d.decision,
+			note: typeof d.note === "string" ? d.note.slice(0, 1000) : undefined,
+			sentAt: typeof d.sentAt === "string" ? d.sentAt : undefined,
+			ackAt: typeof d.ackAt === "string" ? d.ackAt : undefined,
+		};
+	}
 	// amend: đề mới phải là chuỗi không rỗng, cắt 2000 ký tự (chống phình packet)
 	if (d.action === "amend") {
 		if (typeof d.description !== "string" || !d.description.trim()) return null;
@@ -127,6 +146,27 @@ export function applyControlAction(state: TaskState, payload: TaskControlFile, n
 		);
 		if (result.error) return { state, note: result.error, applied: false };
 		return { state: result.state, note: `#${payload.id} reopen (${blocked ? "pending — còn blocker" : "in_progress"})`, applied: true };
+	}
+	if (payload.action === "proposal-decide") {
+		// v1.4.53: user duyệt/từ chối đề xuất sửa đề trên panel.
+		// apply = đường user-amend: KHÔNG tiêu descAmendments cap, descHistory by 'user-proposal'.
+		const p = (task.proposals ?? []).find((x) => x.id === payload.proposalId && x.status === "pending");
+		if (!p) return { state, note: `#${payload.id} không có proposal ${payload.proposalId ?? "?"} đang chờ`, applied: false };
+		const decided = (task.proposals ?? []).map((x) =>
+			x.id === p.id ? { ...x, status: payload.decision === "apply" ? ("applied" as const) : ("rejected" as const), decidedAt: now, note: payload.note } : x,
+		);
+		if (payload.decision === "apply") {
+			const result = updateTask(state, payload.id, {
+				description: p.to,
+				descAmend: { by: "user-proposal" },
+				proposals: decided,
+			}, now);
+			if (result.error) return { state, note: result.error, applied: false };
+			return { state: result.state, note: `#${payload.id} ĐÃ DUYỆT đề xuất ${p.id} — đề mới áp dụng (không tốn cap)`, applied: true };
+		}
+		const result = updateTask(state, payload.id, { proposals: decided }, now);
+		if (result.error) return { state, note: result.error, applied: false };
+		return { state: result.state, note: `#${payload.id} TỪ CHỐI đề xuất ${p.id}${payload.note ? ` (ghi chú: ${payload.note})` : ""} — đề giữ nguyên`, applied: true };
 	}
 	if (payload.action === "amend") {
 		// v1.4.38 doneCheck guard — cửa user-only khi agent hết hạn mức (cap

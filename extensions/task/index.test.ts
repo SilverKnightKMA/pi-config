@@ -1054,7 +1054,7 @@ describe("v1.4.38 wiring: doneCheck amendment gates", () => {
 		const f = fakePi();
 		taskExtension(f.pi as never);
 		await f.tool("task_create").execute("c1", { subject: "deploy" }, undefined, undefined, f.ctx);
-		const errs: string[] = [];
+		const third: string[] = [];
 		// lần 1 + 2: được
 		for (const desc of ["đề agent v1", "đề agent v2"]) {
 			const out = (await f.tool("task_update").execute("u", { id: 1, description: desc }, undefined, undefined, f.ctx)) as {
@@ -1062,20 +1062,19 @@ describe("v1.4.38 wiring: doneCheck amendment gates", () => {
 			};
 			assert.match(out.content[0]!.text, /#1 → /);
 		}
-		// lần 3: bị chặn
-		try {
-			await f.tool("task_update").execute("u3", { id: 1, description: "echo ok là xong" }, undefined, undefined, f.ctx);
-		} catch (e) {
-			errs.push(String(e));
-		}
-		return errs;
+		// lần 3 (v1.4.53): KHÔNG throw nữa — ghi proposal chờ user duyệt
+		const out3 = (await f.tool("task_update").execute("u3", { id: 1, description: "echo ok là xong", amendReason: "phạm vi hẹp hơn" }, undefined, undefined, f.ctx)) as {
+			content: { text: string }[];
+		};
+		third.push(out3.content[0]!.text);
+		return third;
 	}
 
-	test("agent rewrite #1 and #2 pass, #3 hits the DESC_AMEND_MAX wall", async () => {
-		const errs = await amendTwiceAndFailThird();
-		assert.equal(errs.length, 1);
-		assert.match(errs[0]!, /doneCheck đã bị model sửa 2\/2/);
-		assert.match(errs[0]!, /user/);
+	test("agent rewrite #1 and #2 pass, #3 → PROPOSAL chờ user (không throw, v1.4.53)", async () => {
+		const third = await amendTwiceAndFailThird();
+		assert.equal(third.length, 1);
+		assert.match(third[0]!, /đã ghi đề xuất p\w+/);
+		assert.match(third[0]!, /CHƯA đổi/);
 	});
 
 	test("state after two agent rewrites carries descAmendments + trail", async () => {
@@ -1112,12 +1111,11 @@ describe("v1.4.38 wiring: doneCheck amendment gates", () => {
 			undefined,
 			f.ctx,
 		);
-		let err = "";
-		try {
-			await f.tool("task_update").execute("u1", { id: 1, description: "đề mới" }, undefined, undefined, f.ctx);
-		} catch (e) {
-			err = String(e);
-		}
-		assert.match(err, /strict — doneCheck chỉ user sửa được/);
+		const out = (await f.tool("task_update").execute("u1", { id: 1, description: "đề mới" }, undefined, undefined, f.ctx)) as {
+			content: { text: string }[];
+		};
+		// v1.4.53: strict cũng ĐỀ XUẤT được (đề xuất = hỏi user), chỉ không tự sửa
+		assert.match(out.content[0]!.text, /đã ghi đề xuất p\w+/);
+		assert.match(out.content[0]!.text, /strict/);
 	});
 });

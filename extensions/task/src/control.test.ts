@@ -231,3 +231,45 @@ describe("graph: descAmend accounting (v1.4.38)", () => {
 		assert.equal(junk.tasks[0]?.descHistory, undefined);
 	});
 });
+
+describe("proposal-decide (v1.4.53 — bảng duyệt khi amend bị chặn)", () => {
+	function stateWithProposal(strict = false): TaskState {
+		let st = createTask(EMPTY_STATE, "t", "đề gốc", [], 1000, strict ? { lane: "state", strict: true, probes: [{ pattern: "ls", expect: "x" }] } : undefined).state!;
+		const t = st.tasks[0];
+		st.tasks[0] = { ...t, proposals: [{ id: "p1", at: 2000, from: "đề gốc", to: "đề mới", reason: "cap 2/2", status: "pending" }] };
+		return st;
+	}
+	test("apply: đề mới áp dụng, KHÔNG tốn descAmendments, descHistory ghi user-proposal", () => {
+		const st = stateWithProposal();
+		const r = applyControlAction(st, { v: 1, action: "proposal-decide", id: 1, proposalId: "p1", decision: "apply" }, 3000);
+		expect(r.applied).toBe(true);
+		const t = r.state.tasks[0];
+		expect(t.description).toBe("đề mới");
+		expect(t.descAmendments ?? 0).toBe(0);
+		expect(t.descHistory?.at(-1)?.by).toBe("user-proposal");
+		expect(t.proposals?.[0].status).toBe("applied");
+		expect(t.proposals?.[0].decidedAt).toBe(3000);
+	});
+	test("reject: đề giữ nguyên, proposal đánh dấu rejected + note", () => {
+		const st = stateWithProposal();
+		const r = applyControlAction(st, { v: 1, action: "proposal-decide", id: 1, proposalId: "p1", decision: "reject", note: "thiếu căn cứ" }, 3000);
+		expect(r.applied).toBe(true);
+		const t = r.state.tasks[0];
+		expect(t.description).toBe("đề gốc");
+		expect(t.proposals?.[0].status).toBe("rejected");
+		expect(t.proposals?.[0].note).toBe("thiếu căn cứ");
+	});
+	test("id không đúng / đã quyết rồi → không áp", () => {
+		const st = stateWithProposal();
+		expect(applyControlAction(st, { v: 1, action: "proposal-decide", id: 1, proposalId: "pX", decision: "apply" }, 3000).applied).toBe(false);
+		const done = applyControlAction(st, { v: 1, action: "proposal-decide", id: 1, proposalId: "p1", decision: "apply" }, 3000);
+		const again = applyControlAction(done.state, { v: 1, action: "proposal-decide", id: 1, proposalId: "p1", decision: "apply" }, 3500);
+		expect(again.applied).toBe(false);
+	});
+	test("parseControlPayload: đủ cặp mới qua, thiếu decision rớt", () => {
+		const ok = parseControlPayload(JSON.stringify({ v: 1, action: "proposal-decide", id: 1, proposalId: "p1", decision: "apply" }));
+		expect(ok?.action).toBe("proposal-decide");
+		expect(ok?.decision).toBe("apply");
+		expect(parseControlPayload(JSON.stringify({ v: 1, action: "proposal-decide", id: 1, proposalId: "p1" }))).toBeNull();
+	});
+});

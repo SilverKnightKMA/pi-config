@@ -52,7 +52,7 @@ import {
 	type JudgeProbeView,
 } from "./src/judge.ts";
 import { ackPayload, applyControlAction, controlFilePath, parseControlPayload } from "./src/control.ts";
-import { EMPTY_STATE, DESC_AMEND_MAX, type TaskState, type TaskStatus } from "./src/types.ts";
+import { EMPTY_STATE, DESC_AMEND_MAX, type TaskProposal, type TaskState, type TaskStatus } from "./src/types.ts";
 import { activeGoal, goalIdActive, tryConsumeLease } from "./src/goal-bridge.ts";
 
 type UiContext = ExtensionContext;
@@ -217,6 +217,13 @@ export default function taskExtension(pi: ExtensionAPI) {
 			pi.appendEntry(TASK_STATE, state);
 			projectStatus();
 			renderWidget();
+			// v1.4.53: vòng kín — báo ngược về model để làm tiếp, không phải dò
+			if (payload.action === "proposal-decide") {
+				pi.sendUserMessage(
+					`[task-proposal] #${payload.id} ${payload.decision === "apply" ? "user ĐÃ DUYỆT" : "user TỪ CHỐI"} đề xuất sửa đề${payload.note ? ` (ghi chú: ${payload.note})` : ""}. ${payload.decision === "apply" ? "Đề mới đã áp dụng — làm tiếp theo đề mới." : "Đề giữ nguyên — tiếp tục theo đề cũ hoặc hỏi user làm rõ."}`,
+					{ deliverAs: "followUp" },
+				);
+			}
 		}
 		ackControlFile(payload);
 	}
@@ -448,6 +455,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 			description: Type.Optional(Type.String()),
 			blockedBy: Type.Optional(Type.Array(Type.Number())),
 			evidence: Type.Optional(Type.String({ description: "Required when completing" })),
+			amendReason: Type.Optional(Type.String({ description: "v1.4.53: lý do đề xuất sửa đề (hiện trong bảng duyệt) — ghi rõ khi bị chặn" })),
 			appeal: Type.Optional(
 				Type.String({
 					escription: "Worker phản đối phán quyết verify/judge → PARK chờ user; nêu lý do cụ thể",
@@ -479,6 +487,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 				evidence?: string;
 				verify?: unknown;
 				appeal?: string;
+				amendReason?: string;
 			},
 			_signal,
 			_onUpdate,
@@ -524,23 +533,44 @@ export default function taskExtension(pi: ExtensionAPI) {
 			if (params.description !== undefined) {
 				const t = state.tasks.find((t) => t.id === params.id);
 				if (t && params.description.trim() !== t.description) {
+					// v1.4.53 proposal channel: amend bị chặn KHÔNG còn là đường chết.
+					// (1) còn quota → sửa như thường; (2) goal lease chưa dùng → lease;
+					// (3) còn lại → GHI ĐỀ XUẤT chờ user duyệt trên panel (strict cũng
+					// được đề xuất — đề xuất = hỏi user, không phải tự sửa).
+					const recordProposal = (blockedWhy: string): string => {
+						const to = (params.description ?? "").trim().slice(0, 2000);
+						const dup = (t.proposals ?? []).find((p) => p.status === "pending" && p.to === to);
+						if (dup) return `đề xuất ${dup.id} đã đang chờ duyệt (nội dung trùng) — không ghi thêm`;
+						const p: TaskProposal = {
+							id: `p${Date.now().toString(36)}`,
+							at: Date.now(),
+							from: t.description.slice(0, 2000),
+							to,
+							reason: (params.amendReason ?? "").slice(0, 1000) || blockedWhy,
+							status: "pending",
+						};
+						patch.proposals = [...(t.proposals ?? []), p].slice(-4);
+						return `đã ghi đề xuất ${p.id} — user duyệt ở bảng đề xuất trên task panel (✓/✗); đề CHƯA đổi`;
+					};
 					if (t.verify?.strict === true) {
-						throw new Error(
-							`[task] #${params.id} strict — doneCheck chỉ user sửa được (nút 'sửa đề' trên task panel). Model đổi đề thi = tự chấm điểm.`,
-						);
+						const note = recordProposal("strict — chỉ user được sửa đề");
+						return {
+							content: [{ type: "text", text: `[task] #${params.id} ${note}. Lý do chặn: strict — doneCheck do user giữ. Sau khi user duyệt, engine sẽ áp + báo lại.` }],
+							details: {},
+						};
 					}
 					const used = t.descAmendments ?? 0;
 					if (used >= DESC_AMEND_MAX) {
 						// v1.4.51 goal lease: appeal đúng 1 lần/goal khi goal đang chạy.
-						// Lease do user cấp mặc định ở /goal start — dùng là ghi log +
-						// lộ trong wrap-up sáng mai. Strict vẫn user-only (không qua đây).
 						const lease = statusSessionId
 							? tryConsumeLease(statusSessionId, `#${params.id} descAmend ${used}/${DESC_AMEND_MAX} — appeal qua goal lease`)
 							: { ok: false as const, reason: "không có goal đang chạy" };
 						if (!lease.ok) {
-							throw new Error(
-								`[task] #${params.id} doneCheck đã bị model sửa ${used}/${DESC_AMEND_MAX} lần — xin user sửa qua nút panel ('sửa đề') hoặc chat. Judge chỉ thấy tờ đề hiện tại nên agent đổi đề = điều khiển phán quyết. (goal lease: ${lease.reason})`,
-							);
+							const note = recordProposal(`cap ${used}/${DESC_AMEND_MAX} — ${lease.reason}`);
+							return {
+								content: [{ type: "text", text: `[task] #${params.id} ${note}. Lý do chặn: doneCheck đã bị model sửa ${used}/${DESC_AMEND_MAX} lần (judge chỉ thấy đề hiện tại). Goal lease: ${lease.reason}.` }],
+								details: {},
+							};
 						}
 						patch.descAmend = { by: "goal-lease" };
 					} else {

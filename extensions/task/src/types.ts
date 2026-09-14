@@ -45,6 +45,9 @@ export interface Task {
   /** v1.4.38 doneCheck guard: how many times the AGENT rewrote the description
    * (cap DESC_AMEND_MAX — beyond that only the user bridge may amend). */
   descAmendments?: number;
+  /** v1.4.53 proposal channel: đề xuất sửa đề chờ user duyệt trên panel.
+   *  Amend bị chặn (strict/cap) KHÔNG throw nữa — ghi proposal, user quyết định. */
+  proposals?: TaskProposal[];
   /** v1.4.51 goal membership: task tạo khi goal active được stamp goalId
    * (snapshot ∪ stamped = membership; goal-done check cơ khí theo tập này). */
   goalId?: string;
@@ -56,10 +59,22 @@ export interface Task {
   updatedAt: number;
 }
 
+/** Một đề xuất sửa đề: model soạn, user duyệt (panel) mới áp dụng. */
+export interface TaskProposal {
+	id: string;
+	at: number;
+	from: string;
+	to: string;
+	reason: string;
+	status: "pending" | "applied" | "rejected";
+	decidedAt?: number;
+	note?: string;
+}
+
 /** One doneCheck rewrite: who changed it, when, old→new (truncated). */
 export interface DescAmendment {
   at: number;
-  by: "agent" | "user" | "goal-lease";
+  by: "agent" | "user" | "goal-lease" | "user-proposal";
   from: string;
   to: string;
 }

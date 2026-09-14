@@ -9,7 +9,7 @@
  * - no divergences in this file beyond import paths/scope
  */
 
-import { isRecord, type BranchEntryLike, type DescAmendment, type Task, type TaskState, type TaskStatus } from "./types.ts";
+import { isRecord, type BranchEntryLike, type DescAmendment, type Task, type TaskProposal, type TaskState, type TaskStatus } from "./types.ts";
 import { sanitizeVerify, type TaskAudit, type VerifySpec } from "./verify.ts";
 
 export const TASK_STATE = "task-state";
@@ -162,7 +162,9 @@ export interface UpdatePatch {
   /** v1.4.38 doneCheck guard: attribute a real description change to its author.
    * Agent rewrites count against DESC_AMEND_MAX; user rewrites are free but
    * still land in descHistory so the trail is complete. */
-  descAmend?: { by: "agent" | "user" | "goal-lease" };
+  descAmend?: { by: "agent" | "user" | "goal-lease" | "user-proposal" };
+	/** v1.4.53: replace toàn bộ mảng proposals (ghi đề xuất mới / quyết định). */
+	proposals?: TaskProposal[];
 }
 
 export function updateTask(state: TaskState, id: number, patch: UpdatePatch, now: number): OpResult {
@@ -199,6 +201,7 @@ export function updateTask(state: TaskState, id: number, patch: UpdatePatch, now
   if (patch.judgeRounds !== undefined) next.judgeRounds = patch.judgeRounds;
   if (patch.appealReason !== undefined) next.appealReason = patch.appealReason;
   if (patch.clearAppeal === true) next.appealReason = undefined;
+  if (patch.proposals !== undefined) next.proposals = patch.proposals.slice(-4);
   if (patch.strictOverride !== undefined && next.verify) {
     next.verify = { ...next.verify, strict: patch.strictOverride };
   }
@@ -308,6 +311,13 @@ export function sanitizeState(data: Record<string, unknown>): TaskState {
       judgeRounds: typeof item.judgeRounds === "number" ? item.judgeRounds : undefined,
       appealReason: typeof item.appealReason === "string" ? item.appealReason : undefined,
       goalId: typeof item.goalId === "string" && item.goalId.startsWith("g-") ? item.goalId : undefined,
+      proposals: Array.isArray(item.proposals)
+        ? item.proposals.filter(
+					(p): p is TaskProposal =>
+						isRecord(p) && typeof p.id === "string" && typeof p.from === "string" && typeof p.to === "string" &&
+						typeof p.reason === "string" && (p.status === "pending" || p.status === "applied" || p.status === "rejected"),
+				).slice(-4)
+        : undefined,
       createdAt: typeof item.createdAt === "number" ? item.createdAt : 0,
       updatedAt: typeof item.updatedAt === "number" ? item.updatedAt : 0,
     });
