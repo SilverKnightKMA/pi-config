@@ -123,6 +123,8 @@ export type ObserverLaunchEnv = {
 	/** Absolute `.memory/<sessionId>/` root — IPC files and the consolidator sandbox live here. */
 	memoryRoot: string;
 	runId: string;
+	/** v1.4.56: JOURNEY budget (tokens) for the consolidator's write_journey gate. */
+	journeyTokens?: number;
 };
 
 /**
@@ -131,7 +133,7 @@ export type ObserverLaunchEnv = {
  * faithfully inspectable on resume.
  */
 export function buildWorkerEnv(role: "observer" | "consolidator", opts: ObserverLaunchEnv): NodeJS.ProcessEnv {
-	return {
+	const env: NodeJS.ProcessEnv = {
 		...process.env,
 		OM_WORKER: role,
 		OM_RUN_ID: opts.runId,
@@ -141,4 +143,8 @@ export function buildWorkerEnv(role: "observer" | "consolidator", opts: Observer
 		// Sandbox root for the consolidator's scoped file tools (design risk 6).
 		OM_MEMORY_DIR: opts.memoryRoot,
 	};
+	if (role === "consolidator" && opts.journeyTokens != null) {
+		env["OM_JOURNEY_TOKENS"] = String(Math.round(opts.journeyTokens));
+	}
+	return env;
 }

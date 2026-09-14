@@ -13,6 +13,7 @@
  * disturb it. The transient `.runs/` IPC directory is excluded.
  */
 import { cpSync, existsSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { migrateNestedTopics } from "./migrate.js";
 import { basename, sep } from "node:path";
 import { sessionMemoryRoot } from "./paths.js";
 
@@ -54,6 +55,15 @@ function isRunsPath(p: string): boolean {
 	return basename(p) === ".runs" || p.includes(`${sep}.runs${sep}`);
 }
 
+/** v1.4.56: marker-guarded one-time flatten of nested topic files (best-effort, never throws). */
+function runV1456Migration(root: string): void {
+	try {
+		migrateNestedTopics(root);
+	} catch {
+		/* migration must never block memory resolution */
+	}
+}
+
 /**
  * Resolve this session's `.memory/<sessionId>/` root, seeding it from the parent session on
  * first touch (fork/clone/new-with-parent). Idempotent: once the dir exists it is returned
@@ -63,7 +73,10 @@ function isRunsPath(p: string): boolean {
 export function ensureSessionMemory(ctx: SessionCtx): string {
 	const sessionId = ctx.sessionManager.getSessionId();
 	const root = sessionMemoryRoot(ctx.cwd, sessionId);
-	if (existsSync(root)) return root;
+	if (existsSync(root)) {
+		runV1456Migration(root);
+		return root;
+	}
 
 	const parent = parentMemoryRoot(ctx);
 	if (parent) {
@@ -81,5 +94,6 @@ export function ensureSessionMemory(ctx: SessionCtx): string {
 			}
 		}
 	}
+	runV1456Migration(root);
 	return root;
 }

@@ -152,37 +152,3 @@ export function splitJourneySections(text: string): string[] {
 		.map((s, i) => (i === 0 ? s : "## " + s))
 		.filter((s) => s.trim().length > 0);
 }
-
-/**
- * v1.4.54 hard cap. The journey target (`journeyTargetTokens`) is only prompt-advised and the
- * model ratchets — it appends one section per run and never compresses the tail (live evidence
- * 2026-09-14: 98KB / ~24k tokens against a 1,000-token target, 15 accumulated sections). After
- * every consolidator run the engine now enforces the budget in code: drop the OLDEST sections
- * first; the newest section always survives; a marker notes the mechanical truncation.
- */
-export function enforceJourneyCap(
-	root: string,
-	targetTokens: number,
-	budgetFactor = 1.5,
-): { changed: boolean; words: number } {
-	const budgetWords = Math.max(50, Math.round((targetTokens * 3 * budgetFactor) / 4));
-	const path = journeyPath(root);
-	let text: string;
-	try {
-		text = readFileSync(path, "utf-8");
-	} catch {
-		return { changed: false, words: 0 };
-	}
-	const countWords = (s: string): number => s.split(/\s+/).filter(Boolean).length;
-	if (countWords(text) <= budgetWords) return { changed: false, words: countWords(text) };
-	const sections = splitJourneySections(text);
-	while (sections.length > 1 && countWords(sections.join("\n\n")) > budgetWords) {
-		sections.shift();
-	}
-	sections.unshift(
-		`_Older journey sections were mechanically dropped by the v1.4.54 cap (budget ${budgetWords} words; the engine caps after every consolidator run)._`,
-	);
-	const out = sections.join("\n\n");
-	atomicWrite(path, out);
-	return { changed: true, words: countWords(out) };
-}

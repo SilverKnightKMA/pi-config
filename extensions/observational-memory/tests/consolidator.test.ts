@@ -12,15 +12,22 @@ describe("buildWorkerEnv(consolidator)", () => {
 		expect(env.OM_WORKER).toBe("consolidator");
 		expect(env.OM_RUN_ID).toBe("c1");
 		expect(env.OM_MEMORY_DIR).toBe("/proj/.memory/sess-1");
+		expect(env.OM_JOURNEY_TOKENS).toBeUndefined();
+	});
+
+	it("v1.4.56: carries the journey budget for the write_journey gate", () => {
+		const env = buildWorkerEnv("consolidator", { memoryRoot: "/p/.memory/s", runId: "c2", journeyTokens: 1200 });
+		expect(env.OM_JOURNEY_TOKENS).toBe("1200");
 	});
 });
 
-describe("registerConsolidatorTools (scoped to .memory/)", () => {
+describe("registerConsolidatorTools legacy belt (OM_CONSOLIDATOR_V2=0 escape hatch)", () => {
 	let cwd: string;
 	let memoryRoot: string;
 	let tools: Map<string, any>;
 
 	beforeEach(() => {
+		process.env.OM_CONSOLIDATOR_V2 = "0";
 		cwd = mkdtempSync(join(tmpdir(), "om-cons-tools-"));
 		memoryRoot = join(cwd, ".memory");
 		tools = new Map();
@@ -28,6 +35,7 @@ describe("registerConsolidatorTools (scoped to .memory/)", () => {
 		registerConsolidatorTools(fakePi, memoryRoot);
 	});
 	afterEach(() => {
+		delete process.env.OM_CONSOLIDATOR_V2;
 		rmSync(cwd, { recursive: true, force: true });
 	});
 

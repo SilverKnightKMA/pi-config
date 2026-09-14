@@ -15,7 +15,7 @@
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { trackWorkerCost } from "./cost.js";
-import { CONSOLIDATOR_SYSTEM } from "./consolidator/prompt.js";
+import { COMPACT_TOPIC_SYSTEM, CONSOLIDATOR_SYSTEM } from "./consolidator/prompt.js";
 import { registerConsolidatorTools } from "./consolidator/tools.js";
 import { OBSERVER_SYSTEM } from "./observer/prompt.js";
 import { registerObserverTool } from "./observer/tool.js";
@@ -50,8 +50,9 @@ export default function omWorker(pi: ExtensionAPI): void {
 		// tombstones the whole provided batch on clean exit (it knows what it handed over).
 		registerConsolidatorTools(pi, memoryRoot);
 
+		// The >200KB valve job (OM_COMPACT_FILE) gets the single-file compaction prompt.
 		pi.on("before_agent_start", async () => {
-			return { systemPrompt: CONSOLIDATOR_SYSTEM };
+			return { systemPrompt: process.env.OM_COMPACT_FILE ? COMPACT_TOPIC_SYSTEM : CONSOLIDATOR_SYSTEM };
 		});
 
 		pi.on("agent_end", async (_event: unknown, ctx: { shutdown: () => void }) => {
