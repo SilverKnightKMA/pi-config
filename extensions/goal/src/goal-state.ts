@@ -11,7 +11,7 @@ export const GOAL_EPOCH_MAX = 20;
 /** Backoff ladder (giây) giữa các epoch — kiên nhẫn tăng dần, cap 80s. */
 export const GOAL_BACKOFF_LADDER = [5, 10, 20, 40, 80] as const;
 
-export type GoalStatus = "running" | "paused" | "done" | "stopped";
+export type GoalStatus = "draft" | "running" | "paused" | "done" | "stopped";
 
 export interface LeaseUse {
 	at: string;
@@ -25,6 +25,19 @@ export interface GoalLease {
 	granted: boolean;
 	used: number;
 	log: LeaseUse[];
+}
+
+/** Bảng đề xuất scope cho pha init (draft) — model soạn, user duyệt. */
+export interface GoalProposal {
+	/** Anchor tả ĐÍCH BẰNG KẾT QUẢ (không phải danh sách task). */
+	anchor: string;
+	/** Task id đề xuất VÀO scope (rỗng = mọi task đang mở). */
+	includeIds: number[];
+	/** Task id đề xuất BỎ (chỉ hợp lệ khi includeIds rỗng). */
+	excludeIds: number[];
+	/** Lý do từng lựa chọn (hiện trong bảng chat + card duyệt). */
+	rationale: string;
+	proposedAt: string;
 }
 
 /** Một epoch đã tiêu: kế toán tạo/hoàn thành task-member (chống self-feeding). */
@@ -42,6 +55,9 @@ export interface GoalState {
 	goalId: string;
 	anchor: string;
 	status: GoalStatus;
+	/** DRAFT (#v1.4.52): bảng đề xuất scope chờ user duyệt trên panel.
+	 *  Model chỉ ghi được qua tool goal_propose — KHÔNG tự start được. */
+	proposal?: GoalProposal;
 	/** Số epoch tự đánh thức đã tiêu. */
 	epoch: number;
 	lease: GoalLease;
@@ -73,14 +89,14 @@ export function startGoal(
 	sessionId: string,
 	anchor: string,
 	now: string,
-	opts: { lease?: boolean; memberIds?: number[] } = {},
+	opts: { lease?: boolean; memberIds?: number[]; status?: "draft" | "running" } = {},
 ): GoalState {
 	return {
 		v: 1,
 		sessionId,
 		goalId: makeGoalId(sessionId, now),
 		anchor: anchor.slice(0, 2000),
-		status: "running",
+		status: opts.status ?? "draft",
 		epoch: 0,
 		lease: { granted: opts.lease !== false, used: 0, log: [] },
 		memberIds: (opts.memberIds ?? []).slice(0, 500),
@@ -89,6 +105,43 @@ export function startGoal(
 		createdAt: now,
 		updatedAt: now,
 	};
+}
+
+/** Model ghi bảng đề xuất (chỉ hợp lệ khi draft). Pure validation + return state mới. */
+export function setProposal(state: GoalState, p: GoalProposal, now: string): GoalState {
+	const trimmed: GoalProposal = {
+		anchor: p.anchor.trim().slice(0, 2000),
+		includeIds: p.includeIds.filter((x, i) => Number.isInteger(x) && x > 0 && p.includeIds.indexOf(x) === i).slice(0, 500),
+		excludeIds: p.excludeIds.filter((x, i) => Number.isInteger(x) && x > 0 && p.excludeIds.indexOf(x) === i).slice(0, 500),
+		rationale: p.rationale.trim().slice(0, 4000),
+		proposedAt: now,
+	};
+	return { ...state, status: "draft", proposal: trimmed, updatedAt: now };
+}
+
+/** User bấm ✓ duyệt: draft → running, membership KHÓA theo bảng đã duyệt.
+ *  openIds là snapshot task mở tại lúc confirm (nếu includeIds rỗng = mọi task mở trừ exclude). */
+export function confirmGoal(state: GoalState, openIds: number[], now: string): GoalState {
+	const p = state.proposal;
+	const memberIds = p && p.includeIds.length > 0
+		? p.includeIds.filter((id) => openIds.includes(id))
+		: openIds.filter((id) => !(p?.excludeIds ?? []).includes(id));
+	return {
+		...state,
+		status: "running",
+		anchor: p?.anchor?.trim() || state.anchor,
+		memberIds: memberIds.slice(0, 500),
+		board: { members: memberIds.length, completed: 0 },
+		epoch: 0,
+		epochs: [],
+		proposal: undefined,
+		updatedAt: now,
+	};
+}
+
+/** User bấm ↺ sửa lại: về draft, xóa bảng cũ (model đề xuất lại). */
+export function reviseGoal(state: GoalState, now: string): GoalState {
+	return { ...state, status: "draft", proposal: undefined, updatedAt: now };
 }
 
 /** Task-board record tối thiểu để goal nhìn từ ngoài (đọc projection, không import task ext). */
@@ -127,7 +180,7 @@ export function sanitizeGoalState(raw: unknown): GoalState | null {
 	if (raw.v !== 1 || typeof raw.sessionId !== "string" || !raw.sessionId) return null;
 	if (typeof raw.anchor !== "string" || !raw.anchor) return null;
 	const status = raw.status;
-	if (typeof status !== "string" || !["running", "paused", "done", "stopped"].includes(status)) return null;
+	if (typeof status !== "string" || !["draft", "running", "paused", "done", "stopped"].includes(status)) return null;
 	const epoch = typeof raw.epoch === "number" && raw.epoch >= 0 ? Math.floor(raw.epoch) : 0;
 	const leaseRaw = isRecord(raw.lease) ? raw.lease : {};
 	const log: LeaseUse[] = [];

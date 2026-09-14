@@ -6,6 +6,9 @@ import {
 	memberTasks,
 	recordEpoch,
 	spinning,
+	confirmGoal,
+	reviseGoal,
+	setProposal,
 	GOAL_EPOCH_MAX,
 	backoffSec,
 	nextEpoch,
@@ -22,7 +25,7 @@ import {
 const NOW = "2026-09-14T00:00:00.000Z";
 
 describe("goal-state (#37)", () => {
-	test("start: lease MẶC ĐẶN granted, epoch 0, running", () => {
+	test("start (v1.4.52): lease granted, epoch 0, DRAFT — chạy chỉ sau confirm", () => {
 		const st = startGoal("s1", "port X", NOW);
 		expect(st.lease.granted).toBe(true);
 		expect(st.lease.used).toBe(0);
@@ -48,7 +51,7 @@ describe("goal-state (#37)", () => {
 	});
 
 	test("epoch cap: chạm 20 → done, không đánh thức nữa", () => {
-		let st = startGoal("s1", "a", NOW);
+		let st = confirmGoal(setProposal(startGoal("s1", "a", NOW), { anchor: "a", includeIds: [1], excludeIds: [], rationale: "r", proposedAt: NOW }), [1], NOW);
 		for (let i = 0; i < GOAL_EPOCH_MAX - 1; i++) st = nextEpoch(st, NOW);
 		expect(st.status).toBe("running");
 		st = nextEpoch(st, NOW);
@@ -132,5 +135,36 @@ describe("goal-state (#37)", () => {
 			expect(st.lease.used).toBe(1);
 			expect(st.lease.log.length).toBe(8);
 		}
+	});
+});
+
+describe("goal v1.4.52 — draft init + confirm khóa membership", () => {
+	const NOW = "2026-09-14T10:00:00Z";
+	test("startGoal mặc định draft; goal_propose chỉ ghi bảng, không chạy", () => {
+		const st = startGoal("s1", "yêu cầu thô", NOW);
+		expect(st.status).toBe("draft");
+		const withP = setProposal(st, { anchor: "repo xanh + test pass", includeIds: [3, 3, 7, 0], excludeIds: [], rationale: "3&7 liên quan X", proposedAt: NOW });
+		expect(withP.status).toBe("draft");
+		expect(withP.proposal?.includeIds).toEqual([3, 7]); // dedupe + lọc id<=0
+		expect(withP.epoch).toBe(0);
+	});
+	test("confirmGoal: include mode lọc theo task còn mở; exclude mode lấy phần bù", () => {
+		const st = startGoal("s1", "a", NOW);
+		const p = setProposal(st, { anchor: "xong", includeIds: [1, 2, 99], excludeIds: [], rationale: "r", proposedAt: NOW });
+		const run = confirmGoal(p, [1, 2, 4, 5], NOW);
+		expect(run.status).toBe("running");
+		expect(run.memberIds).toEqual([1, 2]); // 99 không mở → loại
+		expect(run.proposal).toBeUndefined();
+		const p2 = setProposal(st, { anchor: "xong", includeIds: [], excludeIds: [4], rationale: "r", proposedAt: NOW });
+		expect(confirmGoal(p2, [1, 2, 4, 5], NOW).memberIds).toEqual([1, 2, 5]);
+	});
+	test("reviseGoal về draft xóa bảng; anchor đề xuất thắng anchor thô khi confirm", () => {
+		const st = startGoal("s1", "thô", NOW);
+		const p = setProposal(st, { anchor: "đích đẹp", includeIds: [1], excludeIds: [], rationale: "r", proposedAt: NOW });
+		const run = confirmGoal(p, [1], NOW);
+		expect(run.anchor).toBe("đích đẹp");
+		const rv = reviseGoal(run, NOW);
+		expect(rv.status).toBe("draft");
+		expect(rv.proposal).toBeUndefined();
 	});
 });
