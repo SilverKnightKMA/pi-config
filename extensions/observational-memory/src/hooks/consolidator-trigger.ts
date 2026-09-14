@@ -30,8 +30,10 @@ import {
 } from "../ledger/index.js";
 import { nowTimestamp } from "../ledger/serialize.js";
 import { renderIndexFile } from "../memory/index-render.js";
-import { atomicWrite, indexPath, listTopics, readJourney } from "../memory/paths.js";
+import { atomicWrite, indexPath, listTopics, readJourney, splitJourneySections, enforceJourneyCap } from "../memory/paths.js";
 import type { Runtime } from "../runtime.js";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { buildWorkerArgv, buildWorkerEnv, spawnWorker } from "../spawn/launch.js";
 import { recordWorkerCost } from "./observer-trigger.js";
 import { readWorkerCost, runCostPath } from "../spawn/runs.js";
@@ -57,8 +59,27 @@ function nextRunId(): string {
  * (append a segment for this batch; compress the old tail only if over `journeyTargetTokens`).
  */
 function buildConsolidatorPrompt(memoryRoot: string, promote: Observation[], journeyTargetTokens: number): string {
-	const indexText = renderIndexFile(listTopics(memoryRoot));
-	const journeyText = readJourney(memoryRoot);
+	const topics = listTopics(memoryRoot);
+	const indexText = renderIndexFile(topics);
+	const journeySections = splitJourneySections(readJourney(memoryRoot) ?? "");
+	const journeyHeadings = journeySections
+		.filter((s) => s.startsWith("## "))
+		.map((s) => s.split("\n")[0])
+		.join("\n");
+	const journeyLast = journeySections.length ? journeySections[journeySections.length - 1] : undefined;
+	const TOPIC_CHAR_CAP = 8_000;
+	const topicContents = topics
+		.map((t) => {
+			let body = "";
+			try {
+				body = readFileSync(join(memoryRoot, t.filename), "utf-8");
+			} catch {
+				body = "(unreadable)";
+			}
+			if (body.length > TOPIC_CHAR_CAP) body = body.slice(0, TOPIC_CHAR_CAP) + "\n…(truncated)";
+			return `--- FILE: ${t.filename} ---\n${body}`;
+		})
+		.join("\n\n");
 	const journeyWords = Math.round((journeyTargetTokens * 3) / 4);
 	const obsLines = sortObservations(promote).map(observationToLine).join("\n");
 	return (
@@ -68,15 +89,25 @@ function buildConsolidatorPrompt(memoryRoot: string, promote: Observation[], jou
 		"===== CURRENT MEMORY INDEX (generated; do not edit INDEX.md) =====\n" +
 		`${indexText}\n` +
 		"===== END MEMORY INDEX =====\n\n" +
-		"===== CURRENT JOURNEY (.memory/JOURNEY.md — the running descriptive project history) =====\n" +
-		`${journeyText ?? "(empty — no journey yet; start one)"}\n` +
-		"===== END JOURNEY =====\n\n" +
+		"===== CURRENT JOURNEY — SECTIONS (headings only; older sections are NOT repeated below) =====\n" +
+		`${journeyHeadings ?? "(no journey yet; start one)"}\n` +
+		"===== END JOURNEY SECTIONS =====\n\n" +
+		"===== CURRENT JOURNEY — LAST SECTION (verbatim; the only section you must carry forward) =====\n" +
+		`${journeyLast ?? "(empty)"}\n` +
+		"===== END LAST SECTION =====\n\n" +
+		"===== CURRENT TOPIC FILES (verbatim, engine-read — these are the ONLY files to update) =====\n" +
+		`${topicContents}\n` +
+		"===== END TOPIC FILES =====\n\n" +
 		"===== OBSERVATIONS TO CONSOLIDATE (each line is `<timestamp-id>  <content>`) =====\n" +
 		`${obsLines}\n` +
 		"===== END OBSERVATIONS =====\n\n" +
-		"Fold every observation above into topic files (create/merge/rewrite as needed). Then update " +
-		`.memory/JOURNEY.md per your instructions — keep it under ~${journeyTargetTokens} tokens (~${journeyWords} words), ` +
-		"purely descriptive, no advice or next steps. Finish with a one-sentence confirmation."
+		"ALL INPUTS ARE IN THIS PROMPT (index, journey headings + last section, full topic files, observations). " +
+		"Do NOT grep/read/ls to explore .memory — that search loop is what made past runs take 80 turns; go straight to writing.\n\n" +
+		"1. Fold every observation into the topic files above (create/merge/rewrite as needed; write the FULL updated file each time).\n" +
+		"2. REWRITE the WHOLE .memory/JOURNEY.md from scratch: compress the older headings into a few sentences, " +
+		`carry the last section forward compressed, and stay under ~${journeyTargetTokens} tokens (~${journeyWords} words) ` +
+		"— purely descriptive, no advice or next steps. (The engine hard-caps this file after you finish; over-budget oldest sections are dropped.)\n" +
+		"Finish with a one-sentence confirmation."
 	);
 }
 
@@ -126,6 +157,14 @@ async function dispatchConsolidator(
 		recordWorkerCost(pi, runtime, ctx, "consolidator", runId);
 		if (exit.code !== 0) {
 			throw new Error(`consolidator exited with code ${exit.code}${exit.stderr ? `: ${exit.stderr.trim().slice(0, 200)}` : ""}`);
+		}
+
+		// v1.4.54: the journey target is prompt-advised only; enforce it in code after every run
+		// (drops oldest sections first, newest survives, notes the mechanical truncation).
+		try {
+			enforceJourneyCap(runtime.memoryRoot, runtime.config.journeyTargetTokens);
+		} catch {
+			// A cap failure must never fail the consolidation itself.
 		}
 
 		// Trust the consolidator: on clean exit it has folded (or discarded) everything we handed it.
