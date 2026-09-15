@@ -30,6 +30,7 @@ The **endpoint** column is the machine-readable format for the `upstream-drift` 
 | `zombie-watchdog` | **own design** 2026-09-01 (after chats #3845/#3847) | — | — | — | — |
 | `sse-probe` | **own design** (zaicp SSE detector) | — | — | — | — |
 | `visual-tools` | **own design** for the Obsidian/teach pipeline | — | — | — | — |
+| `lessons` | **own design** (global memory tier #1A, v1.4.75) — pure injector at session_start + session_compact; ideas credited: `@pify/memory` 0.9.2 session_compact re-inject recipe + dedupe insight (MIT), Claude Code auto-memory index-small/on-demand pattern (validated OM's map), 4-tag taxonomy (failure/correction/preference/convention) borrowed from @pify/memory | @pify/memory 0.9.2 (recipe only, no code) | 2026-09-15 | drift-issue | `npm:@pify/memory@0.9.2` |
 
 ## Externals actually installed (witness-deps, root package.json devDependencies)
 

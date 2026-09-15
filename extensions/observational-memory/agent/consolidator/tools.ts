@@ -14,13 +14,14 @@
  * Scoping: every path argument is resolved against OM_MEMORY_DIR and rejected if it escapes
  * that directory, so a wayward model cannot read or clobber the user's project.
  */
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import type { Static } from "@sinclair/typebox";
 import { atomicWrite } from "../../src/memory/paths.js";
 import { applyStagedSections, checkJourneyBudget, normalizeTarget } from "./staging.js";
+import { buildLessonLine, lessonsFilePath, trimLines } from "../../../_shared/lessons-core.ts";
 
 type ToolText = { content: { type: "text"; text: string }[]; details: unknown };
 
@@ -91,6 +92,16 @@ const WriteJourneySchema = Type.Object({
 const WriteFullFileSchema = Type.Object({
 	content: Type.String({ description: "The FULL rewritten file body, starting with its front-matter block." }),
 });
+const RecordLessonSchema = Type.Object({
+	tag: Type.Union(
+		[Type.Literal("failure"), Type.Literal("correction"), Type.Literal("preference"), Type.Literal("convention")],
+		{ description: "failure = a mode to avoid; correction = supersedes a wrong earlier claim; preference = user's standing choice; convention = house rule." },
+	),
+	text: Type.String({
+		description:
+			"One durable lesson in plain prose, ≤500 chars, no secrets/tokens. It is injected into EVERY future session — record sparingly, only what stays true.",
+	}),
+});
 
 type ReadInput = Static<typeof ReadSchema>;
 type WriteInput = Static<typeof WriteSchema>;
@@ -99,6 +110,36 @@ type LsInput = Static<typeof LsSchema>;
 type GrepInput = Static<typeof GrepSchema>;
 type SubmitInput = Static<typeof SubmitSchema>;
 type WriteJourneyInput = Static<typeof WriteJourneySchema>;
+type RecordLessonInput = Static<typeof RecordLessonSchema>;
+
+/** Global lessons tier (#1A): append one validated line to ~/.pi/agent/lessons.md
+ *  (or LESSONS_FILE). The consolidator worker is the SINGLE WRITER; date is
+ *  engine-stamped (never model-supplied); buildLessonLine rejects empty /
+ *  >500-char / secret-shaped text; trimLines applies the 232→200 hysteresis so
+ *  the file can never grow unbounded. The lessons extension (pure injector)
+ *  reads this file at session_start and re-injects after every compaction. */
+function appendGlobalLesson(params: RecordLessonInput): ToolText {
+	const at = new Date().toISOString().slice(0, 10);
+	const line = buildLessonLine(at, params.tag, params.text);
+	if (!line) {
+		return fail(
+			`lesson rejected — WHAT: a [${params.tag}] lesson line. WHY: empty, over 500 chars, multiline, or secret-shaped (tokens/keys are never written to the global tier). NEXT: restate the lesson in plain prose under 500 chars with no credentials, then call record_lesson again.`,
+		);
+	}
+	const file = lessonsFilePath(process.env);
+	try {
+		mkdirSync(dirname(file), { recursive: true });
+		appendFileSync(file, `${line}\n`);
+		const lines = readFileSync(file, "utf8").split("\n").filter((l) => l.trim());
+		const trimmed = trimLines(lines);
+		if (trimmed.length !== lines.length) {
+			atomicWrite(file, `${trimmed.join("\n")}\n`);
+		}
+		return ok(`lesson recorded → global tier (${trimmed.length} lines): ${line}`, { line, lines: trimmed.length });
+	} catch (e) {
+		return fail(`global tier write failed: ${e instanceof Error ? e.message : String(e)}`);
+	}
+}
 type WriteFullFileInput = Static<typeof WriteFullFileSchema>;
 
 function listFilesRecursive(dir: string): string[] {
@@ -167,6 +208,17 @@ function registerStagingTools(pi: ExtensionAPI, root: string): void {
 			const body = params.content.endsWith("\n") ? params.content : `${params.content}\n`;
 			atomicWrite(join(root, "JOURNEY.md"), body);
 			return ok(`JOURNEY.md rewritten (${gate.words}/${gate.budget} words).`, gate);
+		},
+	});
+
+	pi.registerTool({
+		name: "record_lesson",
+		label: "Record a global lesson",
+		description:
+			"Append ONE line to the global cross-session lessons tier (~/.pi/agent/lessons.md) that every future session reads at start and after each compaction. Only for lessons that stay true across ALL future sessions; the engine stamps the date and rejects secrets. Record sparingly.",
+		parameters: RecordLessonSchema,
+		async execute(_id: string, params: RecordLessonInput): Promise<ToolText> {
+			return appendGlobalLesson(params);
 		},
 	});
 }

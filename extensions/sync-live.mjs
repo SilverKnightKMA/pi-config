@@ -39,6 +39,7 @@ const PACKED = [
 	"_shared",
 	"ask-user-question",
 	"goal",
+	"lessons",
 	"md-log",
 	"observational-memory",
 	"quiz",

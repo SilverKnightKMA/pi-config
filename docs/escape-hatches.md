@@ -84,3 +84,13 @@ loops) and answers with the background recipe (`setsid nohup … > /tmp/blk-*.lo
 instead. The tool channel intermittently kills such calls a few seconds in —
 daemon restarts do not fix it. Set `BASH_LONG_RUN_GUARD=0` to restore raw
 behavior.
+
+## LESSONS_INJECT / LESSONS_MAX_LINES / LESSONS_MAX_AGE_DAYS / LESSONS_FILE (v1.4.75, default on)
+
+`extensions/lessons` injects the newest lessons from the global tier
+(`~/.pi/agent/lessons.md`, single writer = OM consolidator) at session_start
+and after every compaction. Knobs: `LESSONS_INJECT=0` disables all injection;
+`LESSONS_MAX_LINES` (default 8, clamp 1–50) is the newest-N recall window;
+`LESSONS_MAX_AGE_DAYS` (default 30, clamp 1–365) is the age filter;
+`LESSONS_FILE` overrides the path (tests/isolation). Review 2027-01-15:
+expected to stay — revisit the caps after real usage data.

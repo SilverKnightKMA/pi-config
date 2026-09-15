@@ -84,6 +84,8 @@ Never scanned yet (open if needed):
   NEW + borrow 3 pieces (zero-LLM inject, hit-rate log, git-traceable store), OpenViking concept-only (needs server).
 - Key finding: nobody combines deterministic + survive-compaction + headless + no-server — that gap is ours; hybrid (#1A option 1)
   remains the recommendation, now with 3 concrete port pieces.
+- **DECISION CLOSED 2026-09-15 (user approved hybrid): built as `extensions/lessons` (own design) + OM consolidator `record_lesson`
+  global-tier write — v1.4.75. Design: docs/designs/lessons-memory-tier.md. Verdict: SHIPPED.**
 
 ## Sync log 2026-09-15 (mode 3, npm drift after 2026-09-14 sync)
 

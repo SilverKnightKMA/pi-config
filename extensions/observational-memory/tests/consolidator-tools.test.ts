@@ -9,6 +9,12 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerConsolidatorTools } from "../agent/consolidator/tools.js";
 
+function recordLessonTool(tools: RegisteredTool[]): RegisteredTool {
+	const t = tools.find((x) => x.name === "record_lesson");
+	if (!t) throw new Error("record_lesson not registered");
+	return t;
+}
+
 type RegisteredTool = {
 	name: string;
 	label: string;
@@ -27,7 +33,7 @@ function makeFakePi(): { pi: ExtensionAPI; tools: RegisteredTool[] } {
 	return { pi, tools };
 }
 
-const SAVED_ENV = ["OM_CONSOLIDATOR_V2", "OM_COMPACT_FILE", "OM_RUN_ID", "OM_JOURNEY_TOKENS"];
+const SAVED_ENV = ["OM_CONSOLIDATOR_V2", "OM_COMPACT_FILE", "OM_RUN_ID", "OM_JOURNEY_TOKENS", "LESSONS_FILE"];
 
 beforeEach(() => {
 	process.env.OM_RUN_ID = "cons-test";
@@ -44,10 +50,10 @@ afterEach(() => {
 });
 
 describe("v1.4.56 tool dispatch", () => {
-	test("default: exactly submit_sections + write_journey (no exploration tools)", () => {
+	test("default: exactly submit_sections + write_journey + record_lesson (no exploration tools)", () => {
 		const { pi, tools } = makeFakePi();
 		registerConsolidatorTools(pi, mkdtempSync(join(tmpdir(), "omtool-")));
-		expect(tools.map((t) => t.name).sort()).toEqual(["submit_sections", "write_journey"]);
+		expect(tools.map((t) => t.name).sort()).toEqual(["record_lesson", "submit_sections", "write_journey"]);
 	});
 
 	test("OM_CONSOLIDATOR_V2=0 restores the legacy belt", () => {
@@ -137,5 +143,58 @@ describe("v1.4.56 compact write_full_file", () => {
 		const good = await wff.execute("id6", { content: "---\nid: bloat\n---\nsmaller" });
 		expect(good.content[0].text).toContain("Rewrote");
 		expect(readFileSync(join(root, "bloat.md"), "utf-8")).toBe("---\nid: bloat\n---\nsmaller");
+	});
+});
+
+describe("record_lesson — global lessons tier (single writer, #1A)", () => {
+	function setup(): { tools: RegisteredTool[]; file: string } {
+		const file = join(mkdtempSync(join(tmpdir(), "omlesson-")), "lessons.md");
+		process.env.LESSONS_FILE = file;
+		const { pi, tools } = makeFakePi();
+		registerConsolidatorTools(pi, mkdtempSync(join(tmpdir(), "omtool-")));
+		return { tools, file };
+	}
+
+	test("valid lesson → engine-dated line appended", async () => {
+		const { tools, file } = setup();
+		const out = await recordLessonTool(tools).execute("t1", { tag: "failure", text: "bash silent-abort >2s — use setsid nohup bg" });
+		expect(out.content[0].text).toContain("lesson recorded");
+		const today = new Date().toISOString().slice(0, 10);
+		expect(readFileSync(file, "utf8").trim()).toBe(
+			`[${today}][failure] bash silent-abort >2s — use setsid nohup bg`,
+		);
+	});
+
+	test("secret-shaped text → rejected with denial envelope, file untouched", async () => {
+		const { tools, file } = setup();
+		const out = await recordLessonTool(tools).execute("t1", { tag: "failure", text: "key sk-ant-0123456789abcdef0123 leaked" });
+		expect(out.content[0].text).toContain("lesson rejected");
+		expect(out.content[0].text).toContain("NEXT:");
+		expect(() => readFileSync(file, "utf8")).toThrow(); // never created
+	});
+
+	test("empty + >500-char text rejected", async () => {
+		const { tools } = setup();
+		const r1 = await recordLessonTool(tools).execute("t1", { tag: "preference", text: "   " });
+		expect(r1.content[0].text).toContain("lesson rejected");
+		const r2 = await recordLessonTool(tools).execute("t2", { tag: "convention", text: "x".repeat(501) });
+		expect(r2.content[0].text).toContain("lesson rejected");
+	});
+
+	test("trim hysteresis: over 232 lines → batch-drop oldest to 200", async () => {
+		const { tools, file } = setup();
+		const old = Array.from({ length: 232 }, (_, i) => `[2026-08-01][failure] filler number ${i}`);
+		writeFileSync(file, `${old.join("\n")}\n`);
+		await recordLessonTool(tools).execute("t1", { tag: "correction", text: "pushes past hysteresis" });
+		const lines = readFileSync(file, "utf8").split("\n").filter((l) => l.trim());
+		expect(lines).toHaveLength(200);
+		expect(lines[0]).toContain("filler number 33"); // oldest 33 dropped
+		expect(lines[199]).toContain("pushes past hysteresis");
+	});
+
+	test("honors LESSONS_FILE override (tests + isolation)", async () => {
+		const { tools, file } = setup();
+		await recordLessonTool(tools).execute("t1", { tag: "preference", text: "component-level design before build" });
+		expect(readFileSync(file, "utf8")).toContain("component-level design before build");
 	});
 });
