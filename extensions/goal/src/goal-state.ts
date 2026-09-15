@@ -114,7 +114,10 @@ export function setProposal(state: GoalState, p: GoalProposal, now: string): Goa
 		includeIds: p.includeIds.filter((x, i) => Number.isInteger(x) && x > 0 && p.includeIds.indexOf(x) === i).slice(0, 500),
 		excludeIds: p.excludeIds.filter((x, i) => Number.isInteger(x) && x > 0 && p.excludeIds.indexOf(x) === i).slice(0, 500),
 		rationale: p.rationale.trim().slice(0, 4000),
-		proposedAt: now,
+		// #88: never emit an undefined proposedAt (JSON roundtrip would drop the key
+		// and sanitize would then reject the whole table) — fall back to the caller's
+		// copy, then wall-clock.
+		proposedAt: now || p.proposedAt || new Date().toISOString(),
 	};
 	return { ...state, status: "draft", proposal: trimmed, updatedAt: now };
 }
@@ -202,6 +205,28 @@ export function sanitizeGoalState(raw: unknown): GoalState | null {
 			).slice(0, GOAL_EPOCH_MAX)
 		: [];
 	const boardRaw = isRecord(raw.board) ? raw.board : {};
+	// #88 (2026-09-16): the proposal table MUST survive the disk→RAM roundtrip.
+	// sanitize used to rebuild the object without `proposal`, so every readGoal()
+	// dropped the table while goal-state/<sid>.json still had it on disk —
+	// /goal confirm then failed with "draft without a proposal" (user-approved
+	// goal stuck in draft), and session_start restart-back-up nagged [goal-init]
+	// continue even after the model had proposed. Malformed proposals still drop.
+	const proposalRaw = isRecord(raw.proposal) ? raw.proposal : null;
+	const proposal: GoalProposal | undefined =
+		proposalRaw &&
+		typeof proposalRaw.anchor === "string" && proposalRaw.anchor &&
+		Array.isArray(proposalRaw.includeIds) && proposalRaw.includeIds.every((x) => typeof x === "number") &&
+		Array.isArray(proposalRaw.excludeIds) && proposalRaw.excludeIds.every((x) => typeof x === "number") &&
+		typeof proposalRaw.rationale === "string" &&
+		typeof proposalRaw.proposedAt === "string"
+			? {
+				anchor: proposalRaw.anchor,
+				includeIds: proposalRaw.includeIds as number[],
+				excludeIds: proposalRaw.excludeIds as number[],
+				rationale: proposalRaw.rationale,
+				proposedAt: proposalRaw.proposedAt,
+			}
+			: undefined;
 	return {
 		v: 1,
 		sessionId: raw.sessionId,
@@ -223,6 +248,7 @@ export function sanitizeGoalState(raw: unknown): GoalState | null {
 		createdAt: typeof raw.createdAt === "string" ? raw.createdAt : "",
 		updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : "",
 		...(typeof raw.wakeAt === "string" ? { wakeAt: raw.wakeAt } : {}),
+		...(proposal ? { proposal } : {}),
 	};
 }
 

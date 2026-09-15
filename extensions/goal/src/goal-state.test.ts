@@ -15,6 +15,7 @@ import {
 	pauseGoal,
 	resumeGoal,
 	sanitizeGoalState,
+	recordProposal,
 	shouldWake,
 	startGoal,
 	stopGoal,
@@ -166,5 +167,34 @@ describe("goal-state (#37)", () => {
 		const rv = reviseGoal(run, NOW);
 		expect(rv.status).toBe("draft");
 		expect(rv.proposal).toBeUndefined();
+	});
+	// #88 (2026-09-16): the proposal table must survive the disk→RAM roundtrip.
+	// Regression: sanitizeGoalState rebuilt the object without `proposal`, so
+	// /goal confirm failed "draft without a proposal" while the disk file had it.
+	test("#88 sanitize roundtrip KEEPS the proposal table (draft survives reload)", () => {
+		const st = startGoal("s1", "raw anchor", NOW);
+		const p = setProposal(st, { anchor: "approved destination", includeIds: [34, 43, 82], excludeIds: [1, 84], rationale: "user picked the build table", proposedAt: NOW });
+		const reloaded = sanitizeGoalState(JSON.parse(JSON.stringify(p)));
+		expect(reloaded).not.toBeNull();
+		expect(reloaded!.status).toBe("draft");
+		expect(reloaded!.proposal).toBeDefined();
+		expect(reloaded!.proposal!.anchor).toBe("approved destination");
+		expect(reloaded!.proposal!.includeIds).toEqual([34, 43, 82]);
+		expect(reloaded!.proposal!.excludeIds).toEqual([1, 84]);
+		expect(reloaded!.proposal!.rationale).toBe("user picked the build table");
+		expect(reloaded!.proposal!.proposedAt).toBe(NOW);
+		// and the confirm that failed live now works straight off the sanitized state
+		const run = confirmGoal(reloaded!, [34, 43, 82, 100], NOW);
+		expect(run.status).toBe("running");
+		expect(run.memberIds).toEqual([34, 43, 82]);
+	});
+	test("#88 sanitize drops a malformed proposal without killing the state", () => {
+		const st = startGoal("s1", "raw anchor", NOW);
+		const p = setProposal(st, { anchor: "ok", includeIds: [1], excludeIds: [], rationale: "r", proposedAt: NOW });
+		const broken = { ...(JSON.parse(JSON.stringify(p)) as Record<string, unknown>), proposal: { anchor: 42 } };
+		const reloaded = sanitizeGoalState(broken);
+		expect(reloaded).not.toBeNull();
+		expect(reloaded!.status).toBe("draft");
+		expect(reloaded!.proposal).toBeUndefined();
 	});
 });
