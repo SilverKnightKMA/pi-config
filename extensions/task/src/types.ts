@@ -51,6 +51,11 @@ export interface Task {
   /** v1.4.51 goal membership: a task created while a goal is active gets goalId stamped
    * (snapshot ∪ stamped = membership; the goal-done check is mechanical over this set). */
   goalId?: string;
+  /** v1.4.68 plan bridge (#47 Phase B): a step-task born from an APPROVED plan —
+   * stamped planId + stepIndex so the plan panel derives step status from the
+   * board (registration + verification reuse the task machinery). */
+  planId?: string;
+  stepIndex?: number;
   /** v1.4.38: append-only diff trail of description rewrites (agent AND user),
    * capped length; the judge packet carries this so layer-2 can weigh
    * self-serving rewrites (live lesson: judge only sees the CURRENT sheet). */

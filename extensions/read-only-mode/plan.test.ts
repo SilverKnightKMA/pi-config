@@ -12,6 +12,8 @@ import {
 	replayPlan,
 	slugFromPlan,
 	reconcilePlan,
+	deriveFromTasks,
+	planBridgePayload,
 } from "./plan";
 
 describe("slugFromPlan", () => {
@@ -228,5 +230,84 @@ describe("reconcilePlan drift repair (#47 Phase A)", () => {
 		expect(withText.planText).toHaveLength(12_000);
 		const tracked = planStatusPayload({ ...stale }, "s", "T", "body");
 		expect(tracked.planText).toBeUndefined();
+	});
+});
+
+// ── v1.4.68 (#47 Phase B): task bridge payload + derive + taskRef ────────
+
+describe("plan task bridge (#47 Phase B)", () => {
+	const bridged: import("./plan.ts").PlanState = {
+		mode: "tracking",
+		planFile: ".pi/plans/2026-09-15-x.md",
+		planId: "p-sess1-abc",
+		steps: [
+			{ index: 1, text: "step one", done: false },
+			{ index: 2, text: "step two", done: false },
+		],
+	};
+
+	test("planBridgePayload: null without planId; tracking carries steps; off empties them", () => {
+		expect(planBridgePayload({ mode: "tracking", steps: [] }, "s", "tracking")).toBeNull();
+		const t = planBridgePayload(bridged, "sess1", "tracking")!;
+		expect(t.planId).toBe("p-sess1-abc");
+		expect(t.steps.map((s) => s.index)).toEqual([1, 2]);
+		const off = planBridgePayload(bridged, "sess1", "off")!;
+		expect(off.status).toBe("off");
+		expect(off.steps).toHaveLength(0);
+	});
+
+	test("deriveFromTasks: completed step-task marks done; pending/in_progress do not", () => {
+		const board = [
+			{ id: 7, status: "completed", planId: "p-sess1-abc", stepIndex: 1 },
+			{ id: 8, status: "in_progress", planId: "p-sess1-abc", stepIndex: 2 },
+		];
+		const r = deriveFromTasks(bridged, board);
+		expect(r.changed).toBe(true);
+		expect(r.state.steps[0].done).toBe(true);
+		expect(r.state.steps[1].done).toBe(false);
+	});
+
+	test("deriveFromTasks: monotonic — done stays done even if the board row vanishes", () => {
+		const once = deriveFromTasks(bridged, [{ id: 7, status: "completed", planId: "p-sess1-abc", stepIndex: 1 }]).state;
+		const twice = deriveFromTasks(once, []); // torn/empty projection read
+		expect(twice.state.steps[0].done).toBe(true);
+		expect(twice.changed).toBe(false);
+	});
+
+	test("deriveFromTasks: held task ≠ done (judge still holds the step)", () => {
+		const r = deriveFromTasks(bridged, [{ id: 8, status: "held", planId: "p-sess1-abc", stepIndex: 2 }]);
+		expect(r.changed).toBe(false);
+	});
+
+	test("deriveFromTasks: foreign planId ignored; no planId → unchanged", () => {
+		expect(deriveFromTasks(bridged, [{ id: 9, status: "completed", planId: "p-other", stepIndex: 1 }]).changed).toBe(false);
+		expect(deriveFromTasks({ mode: "tracking", steps: bridged.steps }, [{ id: 9, status: "completed", planId: "p-sess1-abc", stepIndex: 1 }]).changed).toBe(false);
+	});
+
+	test("all steps derived done + reconcilePlan → plan auto-completes (the #15 loop)", () => {
+		let st = bridged;
+		st = deriveFromTasks(st, [
+			{ id: 7, status: "completed", planId: "p-sess1-abc", stepIndex: 1 },
+			{ id: 8, status: "completed", planId: "p-sess1-abc", stepIndex: 2 },
+		]).state;
+		const r = reconcilePlan(st, null, "T9");
+		expect(r.state.mode).toBe("complete");
+		expect(r.state.completedAt).toBe("T9");
+	});
+
+	test("payload steps carry taskRef from the board", () => {
+		const payload = planStatusPayload(bridged, "sess1", "T", undefined, [
+			{ id: 7, status: "in_progress", planId: "p-sess1-abc", stepIndex: 1 },
+			{ id: 8, status: "held", planId: "p-sess1-abc", stepIndex: 2 },
+		]);
+		expect(payload.steps[0].taskRef).toEqual({ id: 7, status: "in_progress" });
+		expect(payload.steps[1].taskRef).toEqual({ id: 8, status: "held" });
+	});
+
+	test("sanitizePlanState keeps planId (p- prefix) and drops junk", () => {
+		const st = sanitizePlanState({ mode: "tracking", planId: "p-sess1-abc", steps: [] });
+		expect(st?.planId).toBe("p-sess1-abc");
+		const bad = sanitizePlanState({ mode: "tracking", planId: "x-1", steps: [] });
+		expect(bad?.planId).toBeUndefined();
 	});
 });

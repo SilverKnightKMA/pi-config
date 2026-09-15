@@ -115,6 +115,8 @@ export function createTask(
   now: number,
   verify?: VerifySpec,
   goalId?: string,
+  planId?: string,
+  stepIndex?: number,
 ): OpResult {
   const warnings: string[] = [];
   if (!subject.trim()) return { state, task: null, warnings, error: "subject is required" };
@@ -132,6 +134,8 @@ export function createTask(
     verify: verify ?? undefined,
     verifyAmendments: verify !== undefined ? 0 : undefined,
     goalId: goalId ?? undefined,
+    planId: planId ?? undefined,
+    stepIndex: typeof stepIndex === "number" && stepIndex > 0 ? stepIndex : undefined,
     createdAt: now,
     updatedAt: now,
   };
@@ -311,6 +315,8 @@ export function sanitizeState(data: Record<string, unknown>): TaskState {
       judgeRounds: typeof item.judgeRounds === "number" ? item.judgeRounds : undefined,
       appealReason: typeof item.appealReason === "string" ? item.appealReason : undefined,
       goalId: typeof item.goalId === "string" && item.goalId.startsWith("g-") ? item.goalId : undefined,
+      planId: typeof item.planId === "string" && item.planId.startsWith("p-") ? item.planId : undefined,
+      stepIndex: typeof item.stepIndex === "number" && Number.isInteger(item.stepIndex) && item.stepIndex > 0 ? item.stepIndex : undefined,
       proposals: Array.isArray(item.proposals)
         ? item.proposals.filter(
 					(p): p is TaskProposal =>

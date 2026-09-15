@@ -62,6 +62,9 @@ import {
 	planStatusPayload,
 	reconcilePlan,
 	replayPlan,
+	deriveFromTasks,
+	planBridgePayload,
+	type BoardStepTaskLike,
 	slugFromPlan,
 	type PlanControlPayload,
 	type PlanState,
@@ -134,7 +137,7 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 					// file gone → panel falls back to the step checklist
 				}
 			}
-			const payload = planStatusPayload(plan, sessionId, new Date().toISOString(), planText);
+			const payload = planStatusPayload(plan, sessionId, new Date().toISOString(), planText, readBoard());
 			const file = join(dir, `${sessionId}.status.json`);
 			const tmp = `${file}.tmp-${process.pid}`;
 			writeFileSync(tmp, JSON.stringify(payload));
@@ -144,13 +147,55 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 		}
 	}
 
-	/** v1.4.67 (#47 Phase A): drift repair at load points — see reconcilePlan.
+	/** v1.4.68 #47 Phase B: board projection of the task ext (read-only, stable
+	 *  subset — same bridge shape goal uses). Empty when task ext has not run. */
+	function readBoard(): BoardStepTaskLike[] {
+		if (!sessionId) return [];
+		try {
+			const raw = JSON.parse(readFileSync(join(homedir(), ".pi", "agent", "task-status", `${sessionId}.json`), "utf8"));
+			const tasks = raw?.tasks;
+			if (!Array.isArray(tasks)) return [];
+			return tasks
+				.filter(
+					(t: unknown): t is BoardStepTaskLike =>
+						typeof t === "object" && t !== null && typeof (t as { id?: unknown }).id === "number" && typeof (t as { status?: unknown }).status === "string",
+				)
+				.map((t) => ({ id: t.id, status: t.status, ...(typeof t.planId === "string" ? { planId: t.planId } : {}), ...(typeof t.stepIndex === "number" ? { stepIndex: t.stepIndex } : {}) }));
+		} catch {
+			return [];
+		}
+	}
+
+	/** v1.4.68 #47 Phase B: write the bridge request the task ext consumes —
+	 *  approve → strict judgment step-tasks, off → cancel open ones. Skipped
+	 *  entirely when PLAN_TASK_BRIDGE=0 (legacy cursor behavior). */
+	function writePlanBridge(status: "tracking" | "off"): void {
+		if (process.env.PLAN_TASK_BRIDGE === "0" || !sessionId) return;
+		const payload = planBridgePayload(plan, sessionId, status);
+		if (!payload) return;
+		try {
+			const dir = join(homedir(), ".pi", "agent", "plan-bridge");
+			mkdirSync(dir, { recursive: true });
+			const file = join(dir, `${sessionId}.json`);
+			writeFileSync(file, JSON.stringify(payload, null, 2));
+		} catch {
+			// best effort — the task ext consumer is idempotent
+		}
+	}
+
+	/** v1.4.67 (#47 Phase A) + v1.4.68 (Phase B): drift repair at load points —
+	 *  see reconcilePlan. Derives bridge step done-ness from the task board FIRST,
 	 *  Reads the plan file (best effort), reconciles, and persists only when
 	 *  something actually changed; always refreshes the projection so a
 	 *  restart under a NEW engine repairs a projection written by an OLD one
 	 *  (the stuck `tracking 11/11` case) even without a plan event. */
 	function reconcileAndPersist(): void {
 		if (plan.mode === "tracking" || plan.mode === "complete") {
+			// v1.4.68 Phase B: bridge plans derive step done-ness from the task board
+			// first — a verified-completed step-task marks its step done, then
+			// reconcilePlan auto-closes when every step is done.
+			const d = deriveFromTasks(plan, readBoard());
+			if (d.changed) plan = d.state;
 			let text: string | null = null;
 			if (plan.planFile) {
 				try {
@@ -160,7 +205,7 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 				}
 			}
 			const r = reconcilePlan(plan, text);
-			if (r.changed) {
+			if (r.changed || d.changed) {
 				plan = r.state;
 				persistPlan();
 				return;
@@ -219,7 +264,13 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 			ctx.ui.notify("Plan mode already off.", "info");
 			return;
 		}
-		if (!keepTracking) plan.steps = [];
+		if (!keepTracking) {
+			// v1.4.68 #47 Phase B: dropping a bridged plan cancels its still-open
+			// step-tasks (the task ext consumes the off payload).
+			if (plan.planId && (plan.mode === "tracking" || plan.mode === "complete")) writePlanBridge("off");
+			plan.steps = [];
+			plan.planId = undefined;
+		}
 		plan.mode = "inactive";
 		restoreThinking();
 		restoreTools(pi, toolsBeforePlan);
@@ -236,16 +287,23 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 		}
 		if (action === "approve" && plan.mode === "awaiting") {
 			plan = applyControlAction(plan, "approve").state;
+			// v1.4.68 #47 Phase B: stamp planId + bridge → the task ext creates one
+			// strict judgment-verified step-task per step (registration + verification
+			// reuse the task machinery; the plan derives progress from the board).
+			if (!plan.planId) plan.planId = `p-${sessionId}-${Date.now().toString(36)}`;
 			restoreThinking();
 			restoreTools(pi, toolsBeforePlan);
 			toolsBeforePlan = undefined;
 			persistPlan();
+			writePlanBridge("tracking");
 			// APPROVE_HERE semantics: a user-role message starts the
 			// implementation turn in THIS session (upstream used sendUserMessage
 			// followUp too; fresh-session handoff is not ported to the daemon).
 			try {
 				pi.sendUserMessage(
-					`The user APPROVED your plan (${plan.planFile}). Implement it now. After each step call plan_step_done(index, evidence) with real evidence — same verify discipline as task tools. Open steps: ${plan.steps.filter((s) => !s.done).length}/${plan.steps.length}.`,
+				plan.planId
+					? `The user APPROVED your plan (${plan.planFile}). Implement it now. One strict, judge-verified step-task per step is being created on the task board (see task_list, stamped [plan i/N]) — work each step via task_update with real evidence; the judge verifies every completion and can hold it (status held). This plan auto-closes ONLY when every step-task is verified-complete — plan_step_done is retired for bridged plans. Open steps: ${plan.steps.filter((s) => !s.done).length}/${plan.steps.length}.`
+					: `The user APPROVED your plan (${plan.planFile}). Implement it now. After each step call plan_step_done(index, evidence) with real evidence — same verify discipline as task tools. Open steps: ${plan.steps.filter((s) => !s.done).length}/${plan.steps.length}.`,
 					{ deliverAs: "followUp" },
 				);
 			} catch {
@@ -564,6 +622,20 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 			if (plan.steps.length === 0) {
 				return { content: [{ type: "text" as const, text: "No plan loaded — /plan open <match> or approve a plan first." }], details: {} };
 			}
+			// v1.4.68 #47 Phase B: bridged plans track REAL verification — if a
+			// step-task exists for this step, redirect to task_update (the judge
+			// gates completion there). Legacy cursor path only when no task exists
+			// (bridge off/late consume) or PLAN_TASK_BRIDGE=0.
+			if (plan.planId && process.env.PLAN_TASK_BRIDGE !== "0") {
+				const board = readBoard();
+				const t = board.find((x) => x.planId === plan.planId && x.stepIndex === params.index);
+				if (t && t.status !== "completed" && t.status !== "cancelled") {
+					return {
+						content: [{ type: "text" as const, text: `Step #${params.index} is tracked by step-task #${t.id} (${t.status}) — bridged plans verify through the task machinery. Call task_update {id: ${t.id}, status: "completed", evidence: ...} with real evidence; the judge verifies it and this plan follows the board automatically.` }],
+						details: { redirected: true, taskId: t.id },
+					};
+				}
+			}
 			const r = markStepDone(plan, params.index, params.evidence);
 			if (!r.ok) return { content: [{ type: "text" as const, text: r.error }], details: {} };
 			// v1.4.60 (#62, user 2026-09-14): last open step done → AUTO-CLOSE — the plan no longer
@@ -659,6 +731,27 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 		if (planActive()) applyPlanTools(pi);
 		else if (enabled) applyReadOnlyTools(pi);
 		bindControlWatcher(ctx);
+		// v1.4.68 #47 Phase B: bridge plans follow the task board live — the task
+		// ext rewrites task-status on every task_update, we re-derive on change
+		// (debounced; the watcher dies with the process — no cleanup contract).
+		if (sessionId) {
+			try {
+				const tsDir = join(homedir(), ".pi", "agent", "task-status");
+				mkdirSync(tsDir, { recursive: true });
+				let tsDebounce: ReturnType<typeof setTimeout> | undefined;
+				watch(tsDir, (_event, filename) => {
+					if (!filename || !filename.endsWith(`${sessionId}.json`)) return;
+					if (plan.mode !== "tracking" || !plan.planId) return;
+					if (tsDebounce) clearTimeout(tsDebounce);
+					tsDebounce = setTimeout(() => {
+						tsDebounce = undefined;
+						reconcileAndPersist();
+					}, 300);
+				});
+			} catch {
+				// watcher best effort
+			}
+		}
 		// A control action may have landed while the process was down.
 		consumeControlFile(sessionId, ctx);
 		// v1.4.67 (#47 Phase A): restart under a new engine must repair a

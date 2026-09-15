@@ -38,6 +38,9 @@ export interface PlanStep {
 export interface PlanState {
 	mode: PlanMode;
 	planFile?: string;
+	/** v1.4.68 (#47 Phase B): stamped at approve when the task bridge is on —
+	 *  step-tasks carry it back so the plan derives progress from the board. */
+	planId?: string;
 	steps: PlanStep[];
 	thinkingBefore?: string;
 	submittedAt?: string;
@@ -216,6 +219,7 @@ export function sanitizePlanState(raw: unknown): PlanState | null {
 	return {
 		mode: mode as PlanMode,
 		...(typeof raw.planFile === "string" && raw.planFile ? { planFile: raw.planFile } : {}),
+		...(typeof raw.planId === "string" && raw.planId.startsWith("p-") ? { planId: raw.planId } : {}),
 		steps,
 		...(typeof raw.thinkingBefore === "string" ? { thinkingBefore: raw.thinkingBefore } : {}),
 		...(typeof raw.submittedAt === "string" ? { submittedAt: raw.submittedAt } : {}),
@@ -263,6 +267,51 @@ export function reconcilePlan(state: PlanState, planFileText: string | null, now
 	return { state: next, changed };
 }
 
+// ── v1.4.68 #47 Phase B: task bridge (approve → step-tasks; off → cancel) ──
+
+/** Board task shape the plan derives from (task-status projection, stable subset). */
+export interface BoardStepTaskLike {
+	id: number;
+	status: string;
+	planId?: string;
+	stepIndex?: number;
+}
+
+/** Bridge request the task ext consumes (~/.pi/agent/plan-bridge/<sessionId>.json). */
+export function planBridgePayload(
+	state: PlanState,
+	sessionId: string,
+	status: "tracking" | "off",
+): { v: 1; sessionId: string; planId: string; status: "tracking" | "off"; planFile?: string; steps: { index: number; text: string }[] } | null {
+	if (!state.planId) return null;
+	return {
+		v: 1,
+		sessionId,
+		planId: state.planId,
+		status,
+		...(state.planFile ? { planFile: state.planFile } : {}),
+		steps: status === "tracking" ? state.steps.map((s) => ({ index: s.index, text: s.text })) : [],
+	};
+}
+
+/** Derive step done-ness from the task board (bridge plans only — planId set).
+ *  done is MONOTONIC: a step completed via a verified task stays done even if
+ *  the board later hides it; without this, a torn projection read would
+ *  regress visible progress. Pure; `changed` drives the appendEntry persist. */
+export function deriveFromTasks(state: PlanState, board: readonly BoardStepTaskLike[]): { state: PlanState; changed: boolean } {
+	if (!state.planId) return { state, changed: false };
+	const mine = board.filter((t) => t.planId === state.planId && typeof t.stepIndex === "number");
+	let changed = false;
+	const steps = state.steps.map((s) => {
+		const t = mine.find((x) => x.stepIndex === s.index);
+		if (!t) return s;
+		if (s.done || t.status !== "completed") return s;
+		changed = true;
+		return { ...s, done: true };
+	});
+	return { state: changed ? { ...state, steps } : state, changed };
+}
+
 // ── #22: status projection the task panel reads ────────────────────────
 
 /** Payload of `<sessionId>.status.json` — the plugin panel renders plan
@@ -275,7 +324,7 @@ export interface PlanStatusPayload {
 	stepsDone: number;
 	stepsTotal: number;
 	/** v1.4.62 (#62): the full step list — the panel renders it as a checklist like task rows. */
-	steps: { index: number; text: string; done: boolean }[];
+	steps: { index: number; text: string; done: boolean; taskRef?: { id: number; status: string } }[];
 	/** v1.4.60 (#62): what the plan is doing RIGHT NOW — first open step. */
 	currentStep: { index: number; text: string } | null;
 	/** v1.4.67 (#47 Phase A): full plan content so the USER can read and
@@ -293,15 +342,20 @@ export function planStatusPayload(
 	sessionId: string,
 	now = new Date().toISOString(),
 	planText?: string,
+	board?: readonly BoardStepTaskLike[],
 ): PlanStatusPayload {
 	const open = state.steps.find((s) => !s.done);
+	const mine = state.planId && board ? board.filter((t) => t.planId === state.planId && typeof t.stepIndex === "number") : [];
 	return {
 		v: 1,
 		sessionId,
 		mode: state.mode,
 		stepsDone: state.steps.filter((s) => s.done).length,
 		stepsTotal: state.steps.length,
-		steps: state.steps.map((s) => ({ index: s.index, text: s.text, done: s.done })),
+		steps: state.steps.map((s) => {
+			const t = mine.find((x) => x.stepIndex === s.index);
+			return { index: s.index, text: s.text, done: s.done, ...(t ? { taskRef: { id: t.id, status: t.status } } : {}) };
+		}),
 		currentStep: open ? { index: open.index, text: open.text } : null,
 		...(state.mode === "awaiting" && planText ? { planText: planText.slice(0, PLAN_TEXT_MAX_CHARS) } : {}),
 		planFile: state.planFile ?? null,

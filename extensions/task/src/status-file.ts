@@ -40,6 +40,9 @@ export interface TaskStatusFile {
 		appealReason?: string;
 		/** v1.4.51 goal membership stamp — the goal engine reads it for the mechanical goal-done check. */
 		goalId?: string;
+		/** v1.4.68 plan bridge (#47 Phase B): step-task stamp — the plan panel derives step status from these. */
+		planId?: string;
+		stepIndex?: number;
 		/** v1.4.38 doneCheck guard: agent rewrite count (cap 2) + trail for the panel chip. */
 		descAmendments?: number;
 		proposals?: Array<{ id: string; at: number; from: string; to: string; reason: string; status: string; decidedAt?: number }>;
@@ -98,6 +101,8 @@ export function buildTaskStatus(state: TaskState, sessionId: string, now = Date.
 			judgeRounds: task.judgeRounds,
 			appealReason: task.appealReason,
 			goalId: task.goalId,
+			planId: task.planId,
+			stepIndex: task.stepIndex,
 			descAmendments: task.descAmendments,
 			proposals: (task.proposals ?? []).slice(-4).map((p) => ({
 				id: p.id,

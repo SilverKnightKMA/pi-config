@@ -54,6 +54,7 @@ import {
 import { ackPayload, applyControlAction, controlFilePath, parseControlPayload } from "./src/control.ts";
 import { EMPTY_STATE, DESC_AMEND_MAX, type TaskProposal, type TaskState, type TaskStatus } from "./src/types.ts";
 import { activeGoal, goalIdActive, tryConsumeLease } from "./src/goal-bridge.ts";
+import { ackPlanBridge, applyPlanBridge, planBridgePath, readPlanBridge } from "./src/plan-bridge.ts";
 
 type UiContext = ExtensionContext;
 
@@ -226,6 +227,24 @@ export default function taskExtension(pi: ExtensionAPI) {
 			}
 		}
 		ackControlFile(payload);
+	}
+
+	/** v1.4.68 #47 Phase B: consume a plan-bridge request written by the plan
+	 *  engine when the USER approves (tracking → one strict judgment-verified
+	 *  step-task per step) or drops (off → cancel still-open step-tasks) a plan.
+	 *  Idempotent by planId+stepIndex — a missed ack never duplicates tasks. */
+	function consumePlanBridge(): void {
+		if (!controlSessionId) return;
+		const payload = readPlanBridge(controlSessionId);
+		if (!payload || payload.consumedAt) return;
+		const next = applyPlanBridge(state, payload, Date.now());
+		if (next !== state) {
+			state = next;
+			pi.appendEntry(TASK_STATE, next);
+			projectStatus();
+			renderWidget();
+		}
+		ackPlanBridge(payload);
 	}
 
 	function extractOutput(result: unknown): string {
@@ -852,6 +871,32 @@ export default function taskExtension(pi: ExtensionAPI) {
 		const parent = (ctx.sessionManager.getHeader?.() as { parentSession?: string } | undefined)?.parentSession;
 		controlSessionId = !parent && statusSessionId ? statusSessionId : "";
 		lastControlSentAt = undefined;
+		// v1.4.68 #47 Phase B: the plan engine writes plan-bridge/<sid>.json on
+		// approve/off — consume at startup (restart case) and watch for live ones.
+		if (controlSessionId) {
+			try {
+				mkdirSync(dirname(planBridgePath(controlSessionId)), { recursive: true });
+			} catch {
+				// best effort
+			}
+			try {
+				let planBridgeDebounce: ReturnType<typeof setTimeout> | undefined;
+				const planBridgeWatcher = watch(dirname(planBridgePath(controlSessionId)), (event, filename) => {
+					if (!filename || !filename.endsWith(`${controlSessionId}.json`)) return;
+					if (planBridgeDebounce) clearTimeout(planBridgeDebounce);
+					planBridgeDebounce = setTimeout(() => {
+						planBridgeDebounce = undefined;
+						consumePlanBridge();
+					}, 150);
+				});
+				planBridgeWatcher.on("error", () => {
+					// best-effort — tools never depend on the watcher
+				});
+			} catch {
+				// no plan-bridge dir → no bridge
+			}
+			consumePlanBridge();
+		}
 		if (controlSessionId) {
 			try {
 				mkdirSync(dirname(controlFilePath(controlSessionId)), { recursive: true });
