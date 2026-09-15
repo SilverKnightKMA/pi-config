@@ -4,8 +4,10 @@ import {
 	goalDone,
 	makeGoalId,
 	memberTasks,
+	creditProgress,
 	recordEpoch,
 	spinning,
+	wakeAccount,
 	confirmGoal,
 	reviseGoal,
 	setProposal,
@@ -196,5 +198,42 @@ describe("goal-state (#37)", () => {
 		expect(reloaded).not.toBeNull();
 		expect(reloaded!.status).toBe("draft");
 		expect(reloaded!.proposal).toBeUndefined();
+	});
+	// #89 (2026-09-16): mid-turn completions must reach the epoch accounting.
+	// Incident: goal auto-stopped "spinning: 2 epochs 0 done" while #34/#43 completed
+	// mid-turn — settle() had absorbed them into board.completed, so the wake delta was 0.
+	test("#89 creditProgress + spinning: pending credit blocks the spinning stop", () => {
+		let st = startGoal("s1", "finish 8 tasks", NOW);
+		st = confirmGoal(st, [34, 43], NOW);
+		st = recordEpoch(st, 1, NOW, 0, 0);
+		st = recordEpoch(st, 2, NOW, 0, 0);
+		expect(spinning(st)).toBe(true); // genuinely stalled → stops (unchanged)
+		const credited = creditProgress(st, 2); // both members completed mid-turn
+		expect(credited.credited).toBe(2);
+		expect(credited.pendingCompleted).toBe(2);
+		expect(spinning(credited)).toBe(false); // #89: progress RIGHT NOW → no stop
+		// no-op when the board has not moved
+		expect(creditProgress(credited, 2)).toBe(credited);
+	});
+	test("#89 wakeAccount flushes pending credit into the consumed epoch record", () => {
+		let st = startGoal("s1", "finish 8 tasks", NOW);
+		st = confirmGoal(st, [34, 43], NOW);
+		st = recordEpoch(st, 1, NOW, 0, 0);
+		st = recordEpoch(st, 2, NOW, 0, 0);
+		st = creditProgress(st, 1); // one member completed mid-turn (settle path)
+		const after = wakeAccount(st, 2, 0, NOW); // wake: second member completed in the last instant
+		expect(after.epoch).toBe(1); // nextEpoch bumped 0→1 (recordEpoch n is a label, not the counter)
+		expect(after.epochs.at(-1)!.completed).toBe(2); // BOTH completions credited
+		expect(after.pendingCompleted).toBe(0); // flushed, not lost
+		expect(after.credited).toBe(2);
+		expect(spinning(after)).toBe(false);
+	});
+	test("#89 sanitize keeps credited/pendingCompleted across the disk roundtrip", () => {
+		let st = startGoal("s1", "a", NOW);
+		st = confirmGoal(st, [1], NOW);
+		st = creditProgress(st, 1);
+		const reloaded = sanitizeGoalState(JSON.parse(JSON.stringify(st)));
+		expect(reloaded!.credited).toBe(1);
+		expect(reloaded!.pendingCompleted).toBe(1);
 	});
 });

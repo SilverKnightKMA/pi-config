@@ -19,8 +19,15 @@
  *
  * Every denial follows the #43 envelope: WHAT / WHY / WHERE / NEXT — the NEXT
  * line always points at a legitimate path, never at evasion.
+ *
+ * unbash is VENDORED (vendor/unbash, ISC, 0-dep, v4.0.11) rather than an npm
+ * dependency: a local package.json+node_modules turns the extension into a
+ * self-contained package boundary and breaks resolution of the pi runtime +
+ * typebox that previously resolved through the host (2026-09-16 incident:
+ * installed-tree load failure killed a 6-researcher pool via missing
+ * safe_bash/message_main). Vendoring keeps the extension a plain source dir.
  */
-import { parse } from "unbash";
+import { parse } from "./vendor/unbash/dist/parser.js";
 
 export interface BashDenial {
 	/** Stable rule id (tests + telemetry). */

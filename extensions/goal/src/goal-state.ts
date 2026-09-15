@@ -65,8 +65,16 @@ export interface GoalState {
 	memberIds: number[];
 	/** Per-epoch accounting (cap GOAL_EPOCH_MAX). */
 	epochs: EpochRec[];
-	/** Board counters at the last settle (baseline for create/complete deltas). */
+	/** Board counters at the last settle (live display counts). */
 	board: { members: number; completed: number };
+	/** #89: member completions already credited to an epoch record. board.completed
+	 *  is a LIVE count (panel display), NOT a credit baseline — using it as the delta
+	 *  base made settle() absorb every mid-turn completion, so wakes recorded 0 done
+	 *  and long-running goals false-stopped as spinning. */
+	credited?: number;
+	/** #89: completions not yet attached to an epoch record (credited during the
+	 *  current epoch; flushed into the next consumed epoch record by the wake). */
+	pendingCompleted?: number;
 	createdAt: string;
 	updatedAt: string;
 	/** Next expected wake (ISO) — written by the driver, display only. */
@@ -172,10 +180,43 @@ export function recordEpoch(state: GoalState, n: number, at: string, created: nu
 	return { ...state, epochs: [...state.epochs, rec].slice(-GOAL_EPOCH_MAX) };
 }
 
-/** Spinning: ≥2 consecutive epochs with 0 tasks completed (creating new tasks does NOT count as progress). */
+/** Spinning: ≥2 consecutive epochs with 0 tasks completed (creating new tasks does NOT count
+ *  as progress). #89: fresh completions credited during the CURRENT epoch sit in
+ *  pendingCompleted — if any exist the goal is making progress RIGHT NOW, never stop. */
 export function spinning(state: GoalState): boolean {
 	const es = state.epochs;
+	if ((state.pendingCompleted ?? 0) > 0) return false;
 	return es.length >= 2 && es[es.length - 1].completed === 0 && es[es.length - 2].completed === 0;
+}
+
+/** #89: Credit freshly-observed member completions (live count vs credited).
+ *  Returns a new state with credited/pendingCompleted advanced — call from settle()
+ *  AFTER each turn and from the wake BEFORE consuming the next epoch. */
+export function creditProgress(state: GoalState, completedNow: number): GoalState {
+	const credited = state.credited ?? 0;
+	if (completedNow <= credited) return state;
+	const delta = completedNow - credited;
+	return { ...state, credited: completedNow, pendingCompleted: (state.pendingCompleted ?? 0) + delta };
+}
+
+/** #89: Wake-side accounting — credit any last-instant completions, then consume the
+ *  next epoch and flush ALL pending completions into its record (they happened during
+ *  the epoch that just closed). */
+export function wakeAccount(
+	state: GoalState,
+	completedNow: number,
+	createdDelta: number,
+	at: string,
+): GoalState {
+	const creditedState = creditProgress(state, completedNow);
+	const consumed = nextEpoch(creditedState, at);
+	return recordEpoch(
+		{ ...consumed, pendingCompleted: 0 },
+		consumed.epoch,
+		consumed.updatedAt,
+		Math.max(0, createdDelta),
+		creditedState.pendingCompleted ?? 0,
+	);
 }
 
 export function sanitizeGoalState(raw: unknown): GoalState | null {
@@ -245,6 +286,8 @@ export function sanitizeGoalState(raw: unknown): GoalState | null {
 			members: typeof boardRaw.members === "number" ? boardRaw.members : memberIds.length,
 			completed: typeof boardRaw.completed === "number" ? boardRaw.completed : 0,
 		},
+		...(typeof raw.credited === "number" && raw.credited >= 0 ? { credited: raw.credited } : {}),
+		...(typeof raw.pendingCompleted === "number" && raw.pendingCompleted >= 0 ? { pendingCompleted: raw.pendingCompleted } : {}),
 		createdAt: typeof raw.createdAt === "string" ? raw.createdAt : "",
 		updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : "",
 		...(typeof raw.wakeAt === "string" ? { wakeAt: raw.wakeAt } : {}),

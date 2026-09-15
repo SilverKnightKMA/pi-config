@@ -32,6 +32,7 @@ import {
 	confirmGoal,
 	setProposal,
 	reviseGoal,
+	creditProgress,
 	goalDone,
 	memberTasks,
 	nextEpoch,
@@ -43,6 +44,7 @@ import {
 	stopGoal,
 	pauseGoal,
 	useLease,
+	wakeAccount,
 	wrapUpReport,
 } from "./src/goal-state.js";
 import { decide as continuationDecide, GOAL_BUDGET } from "../_shared/continuation-driver.ts";
@@ -170,12 +172,15 @@ export default function activate(pi: ExtensionAPI): void {
 		const board = readBoard(sessionId);
 		const members = memberTasks(st, board);
 		const completed = members.filter((t) => t.status === "completed" || t.status === "cancelled").length;
+		// #89: credit fresh completions FIRST — mid-turn progress must be visible to
+		// spinning() or long-running goals false-stop (board.completed stays display-only).
+		const creditedSt = creditProgress(st, completed);
 
-		if (goalDone(st, board)) {
-			wrapUp(pi2, st, "mechanical goal-done: no open task-members left");
+		if (goalDone(creditedSt, board)) {
+			wrapUp(pi2, creditedSt, "mechanical goal-done: no open task-members left");
 			return;
 		}
-		if (spinning(st)) {
+		if (spinning(creditedSt)) {
 			wrapUp(pi2, st, "spinning: 2 consecutive epochs with no task completed");
 			return;
 		}
@@ -189,18 +194,18 @@ export default function activate(pi: ExtensionAPI): void {
 		}
 		clearWake();
 		const waitMs = backoffSec(st.epoch) * 1000;
-		const withBoard: GoalState = { ...st, board: { members: members.length, completed }, wakeAt: new Date(Date.now() + waitMs).toISOString(), updatedAt: now };
+		const withBoard: GoalState = { ...creditedSt, board: { members: members.length, completed }, wakeAt: new Date(Date.now() + waitMs).toISOString(), updatedAt: now };
 		writeGoal(withBoard);
 		wakeTimer = setTimeout(() => {
 			wakeTimer = null;
 			const cur = sessionId ? readGoal(sessionId) : null;
 			if (!cur || cur.status !== "running") return;
-			// epoch consumed on REAL wake; board delta accounted against the previous settle
+			// epoch consumed on REAL wake; #89 wakeAccount credits last-instant completions
+			// then flushes ALL pending credit into the consumed epoch's record
 			const b = readBoard(sessionId);
 			const mem = memberTasks(cur, b);
 			const doneNow = mem.filter((t) => t.status === "completed" || t.status === "cancelled").length;
-			const consumed = nextEpoch(cur, new Date().toISOString());
-			const accounted = recordEpoch(consumed, consumed.epoch, consumed.updatedAt, Math.max(0, mem.length - cur.board.members), Math.max(0, doneNow - cur.board.completed));
+			const accounted = wakeAccount(cur, doneNow, mem.length - cur.board.members, new Date().toISOString());
 			writeGoal(accounted);
 			const open = openIds(mem);
 			const nextId = open[0];
