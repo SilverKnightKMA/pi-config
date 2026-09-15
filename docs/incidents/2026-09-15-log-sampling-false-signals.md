@@ -20,7 +20,7 @@ log. Both produced false verdicts on healthy work.
 - **Follow-up adopted**: pool-item tasks now carry a standing instruction to
   narrate a status line with each tool batch (belt under suspenders).
 
-## Bug 2 — layer-2 judge cites stale mid-development log slices (OPEN)
+## Bug 2 — layer-2 judge cites stale mid-development log slices (FIXED, v1.4.76)
 
 - **Symptom**: 5 plan step-tasks (#68/#71/#72/#73/#75, 2026-09-15 evening) held
   or parked while citing artifacts fixed several turns earlier ("1 fail dispatch
@@ -32,16 +32,31 @@ log. Both produced false verdicts on healthy work.
   query, a minimal grep -c) and FAIL when evidence spans turns or sits behind
   older large outputs. Ordering confusion also observed (judge claimed a seed
   ran after the probe it preceded; filesystem mtimes disproved it).
-- **Working hypothesis**: the judge packet reads a bounded/truncated window of
-  the session transcript (12h session, 2 compactions) and can land mid-history;
-  ordering inside the window is not guaranteed.
+- **Root cause (found 2026-09-16 from the judge session packets, NOT a
+  transcript-window issue — the judge never reads the session transcript; it
+  sees only the pickLogSlice packet of ≤20 entries)**: (A) mixed ordering —
+  relevant hits chronological + rest reverse-chronological in one numbered
+  list with no labels/timestamps, so the judge read packet order as time order;
+  (B) head-truncation — first 3 lines/300 chars shown while suite verdict lines
+  live at the END (same shape as Bug 1's head-window); (C) mid-development
+  failing runs matched the same probe pattern as the final green run and always
+  rode along; (D) write/edit tool calls never entered the run log (bash only),
+  so file-creation evidence was invisible.
+- **Fix (v1.4.76, commit 4449951)**: slice is pure NEWEST-FIRST with HH:MM:SSZ
+  timestamps + explicit header label; outputs render the TAIL (last 3 lines /
+  300 chars); new PATTERN HISTORY section reports older matching runs the cap
+  cut with the superseded-by-newest rule; write/edit tool calls are recorded as
+  runLog entries and are probe-matchable. 4 incident-regression tests in
+  judge.test.ts reproduce the exact #75 packet; 1 wiring test covers write/edit
+  capture.
 - **Mitigation used**: finish every completion with ONE fresh, minimal,
   authoritative probe command in the turn immediately before `task_update`, and
   appeal immediately (do not burn 3 rounds) when the citation names artifacts
   that are already fixed.
-- **Open work**: audit the judge subprocess's transcript-slicing (extensions/
-  task judge path) — likely needs: tail-biased window, explicit ordering
-  guarantees, or passing the evidence text itself instead of re-reading the log.
+- **Postmortem note**: all 5 parked steps were completed later the same night
+  under the OLD judge by shaping evidence as short, last-in-log outputs —
+  confirming the diagnosis mechanically (short heads pass, long/mixed tails
+  fail). The evidence-shaping workaround is no longer needed from v1.4.76 on.
 
 ## Bug 2b — plan-wake counts PARKED step-tasks as actionable open work (OPEN)
 
