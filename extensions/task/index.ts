@@ -172,13 +172,22 @@ export default function taskExtension(pi: ExtensionAPI) {
 	 * (older) snapshot on disk if writes land out of call order. */
 	let statusWriteQueue: Promise<void> = Promise.resolve();
 
-	/** Layer-1 run log: bash tool calls this session really executed (ring, cap
-	 * 200). The extension NEVER executes probe commands — it matches declared
-	 * probes against what the worker ran through its normal bash pipeline, so
-	 * a green probe is proof the command really ran, with no injection surface. */
+	/** Layer-1 run log: bash calls + WRITE-TOOL calls (write/edit — v1.4.76:
+	 * files created via the write tool were invisible to the judge, which held
+	 * completions on "no command shows file creation") this session really
+	 * executed (ring, cap 200). The extension NEVER executes probe commands —
+	 * it matches declared probes against what the worker ran through its
+	 * normal tool pipeline, so a green probe is proof the command really ran,
+	 * with no injection surface. */
 	let runLog: RunLogEntry[] = [];
 	const runLogByCall = new Map<string, RunLogEntry>();
 	const BASH_TOOLS = new Set(["bash", "safe_bash"]);
+	const WRITE_TOOLS = new Set(["write", "edit"]);
+	function pushRunEntry(toolCallId: string, entry: RunLogEntry): void {
+		runLogByCall.set(toolCallId, entry);
+		runLog.push(entry);
+		if (runLog.length > 200) runLog = runLog.slice(-200);
+	}
 
 	/** Session whose control file this process watches (set at session_start). */
 	let controlSessionId = "";
@@ -324,13 +333,21 @@ export default function taskExtension(pi: ExtensionAPI) {
 	}
 
 	pi.on("tool_execution_start", (event) => {
-		const e = event as { toolCallId?: string; toolName?: string; args?: { command?: unknown } };
-		if (!e.toolCallId || !BASH_TOOLS.has(e.toolName ?? "")) return;
-		if (typeof e.args?.command !== "string") return;
-		const entry: RunLogEntry = { tool: e.toolName ?? "", cmd: e.args.command, output: "", ts: Date.now() };
-		runLogByCall.set(e.toolCallId, entry);
-		runLog.push(entry);
-		if (runLog.length > 200) runLog = runLog.slice(-200);
+		const e = event as { toolCallId?: string; toolName?: string; args?: { command?: unknown; path?: unknown; content?: unknown; edits?: unknown } };
+		if (!e.toolCallId) return;
+		if (BASH_TOOLS.has(e.toolName ?? "")) {
+			if (typeof e.args?.command !== "string") return;
+			pushRunEntry(e.toolCallId, { tool: e.toolName ?? "", cmd: e.args.command, output: "", ts: Date.now() });
+			return;
+		}
+		if (WRITE_TOOLS.has(e.toolName ?? "")) {
+			const p = typeof e.args?.path === "string" ? e.args.path : "?";
+			const cmd =
+				e.toolName === "write"
+					? `write ${p} (${typeof e.args?.content === "string" ? Buffer.byteLength(e.args.content, "utf8") : "?"} bytes)`
+					: `edit ${p} (${Array.isArray(e.args?.edits) ? e.args.edits.length : "?"} block(s))`;
+			pushRunEntry(e.toolCallId, { tool: e.toolName ?? "", cmd, output: "", ts: Date.now() });
+		}
 	});
 
 	pi.on("tool_execution_end", (event) => {
@@ -732,11 +749,8 @@ export default function taskExtension(pi: ExtensionAPI) {
 						patch.status = "parked";
 						patch.appealReason = `judge cap: ${roundsUsed} judge rounds without completion`;
 					} else {
-						const logSlice = pickLogSlice(
-							runLog.map((e) => ({ cmd: e.cmd, output: e.output })),
-							probeViews ?? [],
-							evidence,
-						);
+						const mapped = runLog.map((e) => ({ cmd: e.cmd, output: e.output, ts: e.ts }));
+						const logSlice = pickLogSlice(mapped, probeViews ?? [], evidence);
 						// v1.4.38: if this task_update ALSO rewrites the brief, the judge must see the
 						// old sheet + the in-flight rewrite too (updateTask records the real trail right after)
 						let judgeDescHistory = task?.descHistory;
@@ -763,6 +777,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 								lane: spec?.lane ?? "judgment",
 								probes: probeViews,
 								descHistory: judgeDescHistory,
+								fullLog: mapped,
 							},
 							logSlice,
 						);

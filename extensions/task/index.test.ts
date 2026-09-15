@@ -1167,3 +1167,39 @@ describe("v1.4.38 wiring: doneCheck amendment gates", () => {
 		assert.match(out.content[0]!.text, /strict/);
 	});
 });
+
+// ── v1.4.76: write/edit tool calls enter the run log ─────────────────────
+// 2026-09-15 incident bug D: files created via the write tool were invisible
+// to layer-1 probes and the judge — #68 held twice on "no command shows file
+// creation". Now write/edit are recorded like bash calls and probe-matchable.
+
+test("v1.4.76 wiring: write/edit enter runLog and satisfy layer-1 probes", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	const created = (await f.tool("task_create").execute("c1", {
+		subject: "create files",
+		verify: {
+			lane: "state",
+			probes: [{ pattern: "write extensions/lessons/index.ts" }, { pattern: "edit extensions/task/index.ts" }],
+		},
+	}, undefined, undefined, f.ctx)) as { content: { text: string }[] };
+	assert.match(created.content[0]!.text, /Created #1/);
+	await f.tool("task_update").execute("u1", { id: 1, status: "in_progress" }, undefined, undefined, f.ctx);
+	f.handlers.get("tool_execution_start")!({
+		toolCallId: "w1",
+		toolName: "write",
+		args: { path: "extensions/lessons/index.ts", content: "export default 1;\n" },
+	});
+	f.handlers.get("tool_execution_end")!({ toolCallId: "w1", result: { content: [{ type: "text", text: "wrote file" }] } });
+	f.handlers.get("tool_execution_start")!({
+		toolCallId: "e1",
+		toolName: "edit",
+		args: { path: "extensions/task/index.ts", edits: [{ oldText: "a", newText: "b" }] },
+	});
+	f.handlers.get("tool_execution_end")!({ toolCallId: "e1", result: { content: [{ type: "text", text: "edited file" }] } });
+	const out = (await f.tool("task_update").execute("u2", { id: 1, status: "completed", evidence: "files written via write/edit tools" }, undefined, undefined, f.ctx)) as {
+		content: { text: string }[];
+	};
+	assert.match(out.content[0]!.text, /completed/i);
+	assert.doesNotMatch(out.content[0]!.text, /NOT passed layer-1|held/i);
+});

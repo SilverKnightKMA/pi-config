@@ -26,6 +26,11 @@ import { isRecord, type DescAmendment } from "./types.ts";
 export interface LogSliceEntry {
 	cmd: string;
 	output: string;
+	/** epoch ms when the command ran — printed in the packet so the judge can
+	 * order entries by TIME, not by packet position (2026-09-15 incident: a
+	 * mid-development failing run listed after a newer green run read as
+	 * "later log lines show a failing test"). */
+	ts?: number;
 }
 
 export interface JudgeProbeView {
@@ -47,13 +52,20 @@ export interface JudgePacketInput {
 	 * sheet — without this it cannot know the worker rephrased the question.
 	 * Self-serving rewrites right before completion deserve heavier scrutiny. */
 	descHistory?: DescAmendment[];
+	/** v1.4.76: the FULL run log (pre-slice) so PATTERN HISTORY can report
+	 * matching runs the cap cut out. When omitted, no history section. */
+	fullLog?: LogSliceEntry[];
 }
 
 export const MAX_LOG_SLICE = 20;
 export const MAX_JUDGE_ROUNDS = 3;
 
-/** Pick the log lines the judge sees: probe/evidence-relevant first, then the
- *  newest entries as context — R1 (input caps quality) keeps the packet small. */
+/** Pick the log lines the judge sees. v1.4.76 contract (2026-09-15 incident,
+ * 5 falsely-held plan steps): the slice is NEWEST-FIRST everywhere — relevant
+ * entries first but ordered newest→oldest, then newest non-matching context.
+ * Rationale: verdict value concentrates in the newest run of a pattern; older
+ * matching runs are mid-development history and must never appear AFTER a
+ * newer run in packet order (the judge reads packet order as chronology). */
 export function pickLogSlice(
 	log: LogSliceEntry[],
 	probes: JudgeProbeView[],
@@ -65,8 +77,8 @@ export function pickLogSlice(
 	for (const m of evidence.matchAll(/`([^`\n]{4,120})`/g)) claims.push(m[1]);
 	const relevant = (e: LogSliceEntry) =>
 		patterns.some((p) => e.cmd.includes(p)) || claims.some((c) => e.cmd.includes(c) || c.includes(e.cmd));
-	const hits = log.filter(relevant);
-	const rest = [...log].reverse().filter((e) => !relevant(e));
+	const hits = log.filter(relevant).reverse(); // newest first
+	const rest = log.filter((e) => !relevant(e)).reverse();
 	const out: LogSliceEntry[] = [];
 	for (const e of hits) {
 		if (out.length >= cap) break;
@@ -77,6 +89,58 @@ export function pickLogSlice(
 		out.push(e);
 	}
 	return out;
+}
+
+export interface PatternHistoryLine {
+	pattern: string;
+	matched: number;
+	/** times (epoch ms) of matching runs included in the slice */
+	included: number[];
+	/** times (epoch ms) of older matching runs cut by the cap */
+	older: number[];
+}
+
+/** Per probe-pattern run history: tells the judge how many runs matched a
+ * pattern and that older ones exist but are superseded by the newest — so a
+ * stale mid-development failure cannot masquerade as the final state. */
+export function patternHistory(
+	log: LogSliceEntry[],
+	probes: JudgeProbeView[],
+	included: LogSliceEntry[],
+): PatternHistoryLine[] {
+	const includedTs = new Set(included.filter((e) => e.ts !== undefined).map((e) => e.ts as number));
+	const out: PatternHistoryLine[] = [];
+	for (const p of probes) {
+		if (p.pattern.length < 3) continue;
+		const times = log
+			.filter((e) => e.cmd.includes(p.pattern) && e.ts !== undefined)
+			.map((e) => e.ts as number)
+			.sort((a, b) => b - a); // newest first
+		if (times.length < 2) continue; // single run: nothing to contextualize
+		out.push({
+			pattern: p.pattern,
+			matched: times.length,
+			included: times.filter((t) => includedTs.has(t)),
+			older: times.filter((t) => !includedTs.has(t)),
+		});
+	}
+	return out;
+}
+
+function fmtTs(ts: number | undefined): string {
+	return ts === undefined ? "" : ` ${new Date(ts).toISOString().slice(11, 19)}Z`;
+}
+
+/** Render the TAIL of an output: verdict lines of suites/logs live at the
+ * end ("0 fail", "ALL 14 EXTENSIONS LOAD CLEAN", exit codes). The old
+ * head-cut hid them behind the first 3 lines and judges ruled "truncated /
+ * cannot confirm" (2026-09-15 incident, same shape as the v1.4.74 loop-guard
+ * head-window false kill). */
+function renderTail(output: string): string {
+	if (!output) return "";
+	const lines = output.split("\n").filter((l) => l.trim() !== "");
+	if (lines.length === 0) return "";
+	return lines.slice(-3).join(" ⏎ ").slice(-300);
 }
 
 /** Build the judge packet: instructions + task + probes + evidence + numbered log. */
@@ -118,11 +182,23 @@ export function buildJudgePacket(input: JudgePacketInput, log: LogSliceEntry[]):
 	}
 	lines.push("## EVIDENCE (worker's claim — not proof)");
 	lines.push(input.evidence || "(none provided)");
-	lines.push(`## LOG (${log.length} lines, what actually ran)`);
+	lines.push(`## LOG (${log.length} lines, NEWEST FIRST — [0] is the most recent; timestamps HH:MM:SSZ)`);
 	log.forEach((e, i) => {
-		lines.push(`[${i}] cmd: ${e.cmd}`);
-		if (e.output) lines.push(`    out: ${e.output.split("\n").slice(0, 3).join(" ⏎ ").slice(0, 300)}`);
+		lines.push(`[${i}]${fmtTs(e.ts)} cmd: ${e.cmd}`);
+		const tail = renderTail(e.output);
+		if (tail) lines.push(`    out(tail): ${tail}`);
 	});
+	const hist = input.fullLog ? patternHistory(input.fullLog, input.probes ?? [], log) : [];
+	if (hist.length > 0) {
+		lines.push("## PATTERN HISTORY (same probe matched multiple runs)");
+		lines.push(
+			"Older runs are superseded by the newest unless the newest itself fails; mid-development failures commonly appear here.",
+		);
+		for (const h of hist) {
+			const older = h.older.map((t) => new Date(t).toISOString().slice(11, 19) + "Z").join(", ");
+			lines.push(`- "${h.pattern}": ${h.matched} matching runs — newest in LOG above; older not shown: ${older || "(all shown)"}`);
+		}
+	}
 	return lines.join("\n");
 }
 

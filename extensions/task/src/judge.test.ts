@@ -16,7 +16,6 @@ import {
 } from "./judge.ts";
 
 const log = (cmd: string, output = ""): LogSliceEntry => ({ cmd, output });
-
 // ── pickLogSlice ─────────────────────────────────────────────────────────
 
 describe("judge: pickLogSlice", () => {
@@ -52,9 +51,80 @@ describe("judge: buildJudgePacket", () => {
 		assert.match(packet, /done-check: manifest pinned/);
 		assert.match(packet, /\[amber\] pattern="gh pr view"/);
 		assert.match(packet, /observed="OPEN"/);
-		assert.match(packet, /## LOG \(1 lines/);
+		assert.match(packet, /## LOG \(1 lines, NEWEST FIRST/);
 		assert.match(packet, /\[0\] cmd: gh pr view 140/);
 		assert.match(packet, /fabricated ids invalidate/);
+	});
+});
+
+// ── v1.4.76: 2026-09-15 incident regressions (5 falsely-held plan steps) ──
+
+describe("judge: newest-first slice + tail outputs + pattern history (2026-09-15 incident)", () => {
+	const T0 = Date.UTC(2026, 8, 15, 15, 43, 40); // 22:43:40Z aborted foreground bun test
+	const T1 = T0 + 75_000; // 22:44:55Z bg gate launch
+	const T2 = T1 + 50_000; // 22:45:45Z cat gate log — GREEN 678/0
+	const T3 = T2 + 90_000; // 22:47:15Z foreground smoke — GREEN, ALL 14 at END
+	const mk = (cmd: string, output: string, ts: number): LogSliceEntry => ({ cmd, output, ts });
+
+	test("REGRESSION #75: newer green run precedes older aborted run in packet order", () => {
+		const entries = [
+			mk("bun test 2>&1 | tail -4", "Command aborted", T0),
+			mk("setsid nohup bash -c 'bun test...' > /tmp/blk-v1475-gate.log ... & echo bg:$!", "bg:701792", T1),
+			mk("sleep 45; cat /tmp/blk-v1475-gate.log", "678 pass\n 0 fail\n 1601 expect() calls\nRan 678 tests across 53 files. [2.75s]\nFULL-EXIT:0", T2),
+		];
+		const slice = pickLogSlice(entries, [{ pattern: "bun test", expect: "0 fail", status: "green" }], "gate `/tmp/blk-v1475-gate.log` 678 pass");
+		// newest matching first: the green cat must sit BEFORE the older abort
+		assert.equal(slice[0]!.ts, T2);
+		assert.equal(slice[1]!.ts, T1);
+		assert.equal(slice[2]!.ts, T0);
+	});
+
+	test("REGRESSION #75: tail rendering shows the verdict line the head-cut hid", () => {
+		const smokeOut = ["ok        ask-user-question", "ok        bash-long-run-guard", "ok        goal", "ok        lessons", "ok        md-log", "ok        quiz", "ok        zombie-watchdog", "ALL 14 EXTENSIONS LOAD CLEAN"].join("\n");
+		const packet = buildJudgePacket(
+			{ subject: "gate", doneCheck: "smoke green", evidence: "smoke ran", lane: "state", probes: [{ pattern: "smoke-extensions", expect: "ALL 14", status: "green" }] },
+			[mk("bun scripts/smoke-extensions.mjs 2>&1 | tail -16", smokeOut, T3)],
+		);
+		assert.match(packet, /ALL 14 EXTENSIONS LOAD CLEAN/); // was invisible under the head-cut
+		assert.doesNotMatch(packet, /ok        ask-user-question/); // head lines dropped
+		assert.match(packet, /out\(tail\): ok        quiz ⏎ ok        zombie-watchdog ⏎ ALL 14 EXTENSIONS LOAD CLEAN/);
+	});
+
+	test("REGRESSION #75: timestamps + NEWEST FIRST label in the LOG header", () => {
+		const packet = buildJudgePacket(
+			{ subject: "s", doneCheck: "d", evidence: "e", lane: "state" },
+			[mk("cat x", "1", T3)],
+		);
+		assert.match(packet, /NEWEST FIRST — \[0\] is the most recent/);
+		assert.match(packet, /\[0\] 15:47:15Z cmd: cat x/);
+	});
+
+	test("pattern history reports older matching runs the cap cut out", () => {
+		const entries = [
+			mk("bun test a", "1 fail", T0),
+			mk("bun test b", "0 fail", T1),
+			mk("bun test c", "0 fail", T2),
+		];
+		const probes = [{ pattern: "bun test", expect: "0 fail", status: "green" }];
+		const slice = pickLogSlice(entries, probes, "", 2); // cap cuts the oldest
+		assert.equal(slice.length, 2);
+		assert.equal(slice[0]!.ts, T2);
+		const packet = buildJudgePacket(
+			{ subject: "s", doneCheck: "d", evidence: "e", lane: "state", probes, fullLog: entries },
+			slice,
+		);
+		assert.match(packet, /## PATTERN HISTORY/);
+		assert.match(packet, /"bun test": 3 matching runs/);
+		assert.match(packet, /older not shown: 15:43:40Z/);
+		assert.match(packet, /superseded by the newest/);
+	});
+
+	test("no history section when fullLog is not provided (back-compat)", () => {
+		const packet = buildJudgePacket(
+			{ subject: "s", doneCheck: "d", evidence: "e", lane: "state" },
+			[log("x", "y")],
+		);
+		assert.doesNotMatch(packet, /PATTERN HISTORY/);
 	});
 });
 
