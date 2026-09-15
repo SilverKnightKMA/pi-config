@@ -11,6 +11,7 @@ import {
 	sanitizePlanState,
 	replayPlan,
 	slugFromPlan,
+	reconcilePlan,
 } from "./plan";
 
 describe("slugFromPlan", () => {
@@ -170,5 +171,62 @@ describe("plan auto-close (#62)", () => {
 		const txt = planStatusText({ ...base, mode: "complete", completedAt: "2026-09-14T12:00:00Z", steps: base.steps.map((s) => ({ ...s, done: true })) });
 		expect(txt).toContain("COMPLETE 2026-09-14T12:00:00Z");
 		expect(txt).toContain("closed automatically");
+	});
+});
+
+// ── v1.4.67 (#47 Phase A): reconcile drift repair + awaiting planText ────
+
+describe("reconcilePlan drift repair (#47 Phase A)", () => {
+	const stale: import("./plan.ts").PlanState = {
+		mode: "tracking",
+		planFile: ".pi/plans/2026-09-14-old.md",
+		steps: [
+			{ index: 1, text: "a", done: true },
+			{ index: 2, text: "b", done: true },
+		],
+	};
+
+	test("tracking with every step done flips to complete + completedAt", () => {
+		const r = reconcilePlan(stale, null, "2026-09-15T00:00:00Z");
+		expect(r.changed).toBe(true);
+		expect(r.state.mode).toBe("complete");
+		expect(r.state.completedAt).toBe("2026-09-15T00:00:00Z");
+	});
+
+	test("second call is idempotent (no change, keeps completedAt)", () => {
+		const first = reconcilePlan(stale, null, "T1");
+		const second = reconcilePlan(first.state, null, "T2");
+		expect(second.changed).toBe(false);
+		expect(second.state.completedAt).toBe("T1");
+	});
+
+	test("open steps stay tracking", () => {
+		const open = { ...stale, steps: [{ index: 1, text: "a", done: true }, { index: 2, text: "b", done: false }] };
+		const r = reconcilePlan(open, "# p\n1. a\n2. b\n");
+		expect(r.changed).toBe(false);
+		expect(r.state.mode).toBe("tracking");
+	});
+
+	test("empty steps re-derived from the plan file (done:false, stays honest)", () => {
+		const hollow: import("./plan.ts").PlanState = { mode: "tracking", steps: [] };
+		const r = reconcilePlan(hollow, "# Plan\n\nprose\n\n1. first\n2. second\n");
+		expect(r.changed).toBe(true);
+		expect(r.state.steps.map((s) => s.text)).toEqual(["first", "second"]);
+		expect(r.state.steps.every((s) => !s.done)).toBe(true);
+		expect(r.state.mode).toBe("tracking");
+	});
+
+	test("inactive/awaiting never touched", () => {
+		expect(reconcilePlan({ mode: "inactive", steps: [] }, "x").changed).toBe(false);
+		const awaiting = { mode: "awaiting" as const, steps: [{ index: 1, text: "a", done: true }] };
+		expect(reconcilePlan(awaiting, null).changed).toBe(false);
+	});
+
+	test("payload: awaiting carries planText (capped); tracking omits it", () => {
+		const awaiting: import("./plan.ts").PlanState = { mode: "awaiting", steps: [{ index: 1, text: "a", done: false }] };
+		const withText = planStatusPayload(awaiting, "s", "T", "x".repeat(20_000));
+		expect(withText.planText).toHaveLength(12_000);
+		const tracked = planStatusPayload({ ...stale }, "s", "T", "body");
+		expect(tracked.planText).toBeUndefined();
 	});
 });

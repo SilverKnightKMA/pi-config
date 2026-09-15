@@ -60,6 +60,7 @@ import {
 	planFilePath,
 	planStatusText,
 	planStatusPayload,
+	reconcilePlan,
 	replayPlan,
 	slugFromPlan,
 	type PlanControlPayload,
@@ -123,7 +124,17 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 		try {
 			const dir = join(homedir(), ".pi", "agent", PLAN_CONTROL_DIR);
 			mkdirSync(dir, { recursive: true });
-			const payload = planStatusPayload(plan, sessionId);
+			// v1.4.67 (#47 Phase A): awaiting cards carry the full plan text so the
+			// USER can read + approve on the panel without opening the file.
+			let planText: string | undefined;
+			if (plan.mode === "awaiting" && plan.planFile) {
+				try {
+					planText = readFileSync(plan.planFile, "utf8");
+				} catch {
+					// file gone → panel falls back to the step checklist
+				}
+			}
+			const payload = planStatusPayload(plan, sessionId, new Date().toISOString(), planText);
 			const file = join(dir, `${sessionId}.status.json`);
 			const tmp = `${file}.tmp-${process.pid}`;
 			writeFileSync(tmp, JSON.stringify(payload));
@@ -131,6 +142,31 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 		} catch {
 			// never break mode changes
 		}
+	}
+
+	/** v1.4.67 (#47 Phase A): drift repair at load points — see reconcilePlan.
+	 *  Reads the plan file (best effort), reconciles, and persists only when
+	 *  something actually changed; always refreshes the projection so a
+	 *  restart under a NEW engine repairs a projection written by an OLD one
+	 *  (the stuck `tracking 11/11` case) even without a plan event. */
+	function reconcileAndPersist(): void {
+		if (plan.mode === "tracking" || plan.mode === "complete") {
+			let text: string | null = null;
+			if (plan.planFile) {
+				try {
+					text = readFileSync(plan.planFile, "utf8");
+				} catch {
+					// missing file → reconcile with what we have
+				}
+			}
+			const r = reconcilePlan(plan, text);
+			if (r.changed) {
+				plan = r.state;
+				persistPlan();
+				return;
+			}
+		}
+		writePlanStatus();
 	}
 
 	function applyPlanTools(pi2: ExtensionAPI): void {
@@ -246,6 +282,9 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 		}
 		if (!payload) return;
 		const note = runControlAction(payload.action, ctx);
+		// v1.4.67 (#47 Phase A): every control-door touch is a cheap drift-repair
+		// point — repairs a projection frozen by an older engine.
+		reconcileAndPersist();
 		ctx.ui.notify(`plan-control: ${payload.action} — ${note}`, "info");
 		try {
 			writeFileSync(file, `${JSON.stringify({ ...payload, ackAt: new Date().toISOString() }, null, 2)}\n`, "utf8");
@@ -622,6 +661,10 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 		bindControlWatcher(ctx);
 		// A control action may have landed while the process was down.
 		consumeControlFile(sessionId, ctx);
+		// v1.4.67 (#47 Phase A): restart under a new engine must repair a
+		// projection written by an old one (stuck `tracking 11/11`) AND write a
+		// fresh projection even with no plan event.
+		reconcileAndPersist();
 	});
 
 	// pi 0.84.4 names these before_switch/before_fork (upstream zz-read-only-mode

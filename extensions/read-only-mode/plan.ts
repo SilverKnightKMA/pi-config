@@ -45,6 +45,9 @@ export interface PlanState {
 	completedAt?: string;
 }
 
+/** v1.4.67 (#47 Phase A): 12KB cap for the awaiting-card plan text. */
+export const PLAN_TEXT_MAX_CHARS = 12_000;
+
 export function emptyPlan(): PlanState {
 	return { mode: "inactive", steps: [] };
 }
@@ -230,6 +233,36 @@ export function replayPlan(entries: readonly BranchEntryLike[]): PlanState {
 	return state;
 }
 
+/**
+ * v1.4.67 (#47 Phase A): drift repair — the projection used to be written
+ * only on plan EVENTS, so a plan finished under an older engine froze in
+ * `tracking` forever (e.g. 11/11 done, never auto-closed). Reconcile runs at
+ * load points (session_start, control-file consumption):
+ *  - tracking with every step done → flip `complete` + completedAt (the
+ *    appendEntry in persistPlan makes this durable across restarts);
+ *  - tracking/complete with an EMPTY step list → re-derive steps from the
+ *    plan file on disk (state always kept them; this covers very old or
+ *    hand-mangled ledgers). Re-derived steps start `done:false`, so a
+ *    finished-but-empty plan stays honest: it shows 0/N until re-marked.
+ * Pure + idempotent: a second call changes nothing.
+ */
+export function reconcilePlan(state: PlanState, planFileText: string | null, now = new Date().toISOString()): { state: PlanState; changed: boolean } {
+	let next: PlanState = state;
+	let changed = false;
+	if ((next.mode === "tracking" || next.mode === "complete") && next.steps.length === 0 && planFileText) {
+		const steps = parseSteps(planFileText);
+		if (steps.length > 0) {
+			next = { ...next, steps };
+			changed = true;
+		}
+	}
+	if (next.mode === "tracking" && next.steps.length > 0 && next.steps.every((s) => s.done)) {
+		next = { ...next, mode: "complete", completedAt: next.completedAt ?? now };
+		changed = true;
+	}
+	return { state: next, changed };
+}
+
 // ── #22: status projection the task panel reads ────────────────────────
 
 /** Payload of `<sessionId>.status.json` — the plugin panel renders plan
@@ -245,6 +278,10 @@ export interface PlanStatusPayload {
 	steps: { index: number; text: string; done: boolean }[];
 	/** v1.4.60 (#62): what the plan is doing RIGHT NOW — first open step. */
 	currentStep: { index: number; text: string } | null;
+	/** v1.4.67 (#47 Phase A): full plan content so the USER can read and
+	 *  approve ON the card — only sent in `awaiting` mode to keep tracking
+	 *  payloads small. Capped at PLAN_TEXT_MAX_CHARS. */
+	planText?: string;
 	planFile: string | null;
 	submittedAt: string | null;
 	completedAt: string | null;
@@ -255,6 +292,7 @@ export function planStatusPayload(
 	state: PlanState,
 	sessionId: string,
 	now = new Date().toISOString(),
+	planText?: string,
 ): PlanStatusPayload {
 	const open = state.steps.find((s) => !s.done);
 	return {
@@ -265,6 +303,7 @@ export function planStatusPayload(
 		stepsTotal: state.steps.length,
 		steps: state.steps.map((s) => ({ index: s.index, text: s.text, done: s.done })),
 		currentStep: open ? { index: open.index, text: open.text } : null,
+		...(state.mode === "awaiting" && planText ? { planText: planText.slice(0, PLAN_TEXT_MAX_CHARS) } : {}),
 		planFile: state.planFile ?? null,
 		submittedAt: state.submittedAt ?? null,
 		completedAt: state.completedAt ?? null,
