@@ -1,0 +1,14 @@
+{
+  "name": "@learn/subagent-types",
+  "version": "0.1.0",
+  "description": "subagent-types runtime deps — unbash parser for the safe_bash AST guard (#34).",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "unbash": "^4.0.11"
+  },
+  "devDependencies": {
+    "@sinclair/typebox": "^0.34.0",
+    "typescript": "^7.0.2"
+  }
+}

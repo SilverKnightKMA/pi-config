@@ -490,7 +490,7 @@ export default function subagentTypes(pi: ExtensionAPI) {
 	// safe-bash registers the filtered `safe_bash` tool (bash wrapper with
 	// dangerous-command blocking) — loaded here because directory extensions
 	// only mount index.ts.
-	safeBash(pi);
+	safeBash(pi, { getRole: () => myRole });
 	registerReadonlyTools(pi); // grep/find/ls — pi 0.84 omits them from default coding tools
 	const roles = loadRoles();
 	// Main-tool restriction config: workspace overrides user-wide (2026-09-02).
@@ -704,13 +704,27 @@ async function kickOutbound(): Promise<void> {
 			if (myRole && !roles.get(myRole)) {
 				// unknown role → floor only
 				if (!floorTools().includes(toolName)) {
-					return { block: true, reason: `subagent-types: role "${myRole}" is not defined; only read-only tools are available` };
+					// #43 envelope: role-undefined denial names the legitimate door.
+					return {
+						block: true,
+						reason: [
+							`⛔ subagent-types denied — tool "${toolName}" for role "${myRole}"`,
+							`WHY: the role is not defined in agents/ — unknown roles get the read-only floor, and this tool is outside it`,
+							`WHERE: tool_call gate (defense-in-depth layer, before execution)`,
+							`NEXT: the parent should re-spawn with a defined role (see agents/*.md), or message_main asking the parent to run this step itself`,
+						].join("\n"),
+					};
 				}
 				return;
 			}
 			return {
 				block: true,
-				reason: `subagent-types: tool "${toolName}" is not in the allowlist for role "${myRole ?? "unlabelled"}"`,
+				reason: [
+					`⛔ subagent-types denied — tool "${toolName}" is not in the allowlist for role "${myRole ?? "unlabelled"}"`,
+					`WHY: each role carries a fixed toolset (agents/*.md); this tool is outside yours`,
+					`WHERE: tool_call gate (defense-in-depth layer, before execution)`,
+					`NEXT: message_main the result/finding and let the parent (who owns this tool) act on it`,
+				].join("\n"),
 			};
 		}
 		return;
