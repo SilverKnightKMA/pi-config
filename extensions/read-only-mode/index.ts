@@ -70,7 +70,7 @@ import {
 	type PlanControlPayload,
 	type PlanState,
 } from "./plan.ts";
-import { decide, nextStreak, planBudget } from "../continuation-driver.ts";
+import { decide, nextStreak, planBudget } from "../_shared/continuation-driver.ts";
 
 export const COMMAND_NAME = "read-only";
 export const PLAN_COMMAND_NAME = "plan";

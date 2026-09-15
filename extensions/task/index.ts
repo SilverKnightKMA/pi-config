@@ -54,7 +54,7 @@ import {
 import { ackPayload, applyControlAction, controlFilePath, parseControlPayload } from "./src/control.ts";
 import { EMPTY_STATE, DESC_AMEND_MAX, type TaskProposal, type TaskState, type TaskStatus } from "./src/types.ts";
 import { activeGoal, anyGoalRunning, goalIdActive, planContinuationActive, tryConsumeLease } from "./src/goal-bridge.ts";
-import { decide, nextStreak, TASK_BUDGET, continuationOwnedByHigherKind } from "../continuation-driver.ts";
+import { decide, nextStreak, TASK_BUDGET, continuationOwnedByHigherKind } from "../_shared/continuation-driver.ts";
 import { ackPlanBridge, applyPlanBridge, planBridgePath, readPlanBridge } from "./src/plan-bridge.ts";
 
 type UiContext = ExtensionContext;

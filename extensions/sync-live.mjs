@@ -31,7 +31,12 @@ const liveSkills = path.join(homedir(), ".pi/agent/skills");
 
 // Every extension dir in the v1.4.0+ pack (md-log is a dir; visual-tools/web-fetch
 // node_modules are excluded, so rsync --delete is safe for them).
+// _shared: cross-extension modules (continuation-driver.ts). NO index.ts →
+// pi loader ignores it (loader picks up *.ts at top level and */index.ts only —
+// 2026-09-15 incident: root-level continuation-driver.ts was loaded as an
+// extension and crashed RPC).
 const PACKED = [
+	"_shared",
 	"ask-user-question",
 	"goal",
 	"md-log",

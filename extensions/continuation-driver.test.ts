@@ -6,7 +6,7 @@ import {
 	nextStreak,
 	planBudget,
 	type KindFacts,
-} from "./continuation-driver.ts";
+} from "./_shared/continuation-driver.ts";
 
 const facts = (over: Partial<KindFacts>): KindFacts => ({
 	kind: "plan",

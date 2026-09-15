@@ -45,7 +45,7 @@ import {
 	useLease,
 	wrapUpReport,
 } from "./src/goal-state.js";
-import { decide as continuationDecide, GOAL_BUDGET } from "../continuation-driver.ts";
+import { decide as continuationDecide, GOAL_BUDGET } from "../_shared/continuation-driver.ts";
 
 function home(): string {
 	return process.env.HOME ?? homedir();
