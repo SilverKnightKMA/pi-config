@@ -73,6 +73,18 @@ Never scanned yet (open if needed):
 - the context-compaction family beyond our own OM
 - plugins/hooks for other harnesses as a source of borrowable patterns (already touched via separate briefs)
 
+## Memory landscape 360° 2026-09-15 (background research, feeds decision #1A)
+
+- Full-industry memory-layer scan (4 harness native + omp 5 backends + service layer + pi ecosystem delta) run as 3 parallel
+  researchers; master synthesis `learn/memory-landscape-2026-09-15.md` + 3 briefs (`learn/landscape-harness-memory-2026-09-15.md`,
+  `learn/landscape-omp-service-memory-2026-09-15.md`, `learn/landscape-pi-memory-refresh-2026-09-15.md`).
+- Verdicts: Claude Code BORROW (index-small + on-demand), Codex REFERENCE (port gating/redaction only), opencode REFERENCE,
+  Cursor DROP (they removed Memories); omp local/learn BORROW + sharpshooter PORT (friction gate, 120-line caps);
+  mem0 borrow-ideas, Letta/Zep drop, claude-mem PORT-pattern; pi delta: hermes 0.9.9 REFRESH, @aiwayds/pi-topic-memory
+  NEW + borrow 3 pieces (zero-LLM inject, hit-rate log, git-traceable store), OpenViking concept-only (needs server).
+- Key finding: nobody combines deterministic + survive-compaction + headless + no-server — that gap is ours; hybrid (#1A option 1)
+  remains the recommendation, now with 3 concrete port pieces.
+
 ## Sync log 2026-09-15 (mode 3, npm drift after 2026-09-14 sync)
 
 - **@pify/plan-mode 0.4.9→0.4.10** — DROP (shell.ts operator-split fix; region never ported; edge cases gifted to #34)
