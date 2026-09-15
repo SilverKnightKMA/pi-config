@@ -9,7 +9,21 @@
  * pi-web-access is the power toolkit (needs keys for some modes).
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
+import type { Text } from "@earendil-works/pi-tui";
+
+// v1.4.72: pi-tui is not resolvable from the installed extension tree, so the
+// value import is gone — renderers reuse pi's lastComponent and fall back to
+// this self-contained one-liner when it is absent (headless never renders).
+class FallbackText {
+	private s = "";
+	setText(s: string) {
+		this.s = s;
+		return this;
+	}
+	getText() {
+		return this.s;
+	}
+}
 import { Readability } from "@mozilla/readability";
 import { parseHTML } from "linkedom";
 import TurndownService from "turndown";
@@ -571,7 +585,7 @@ export default function (pi: ExtensionAPI) {
 		},
 
 		async execute(_toolCallId, params, signal) {
-			const result = await fetchAndExtract(params.url, signal);
+			const result = await fetchAndExtract(String(params.url ?? ""), signal);
 
 			if (result.error) {
 				throw new Error(`${params.url}: ${result.error}`);
@@ -596,9 +610,7 @@ export default function (pi: ExtensionAPI) {
 		},
 
 		renderCall(args, theme, context) {
-			const text =
-				(context.lastComponent as Text | undefined) ??
-				new Text("", 0, 0);
+			const text = ((context.lastComponent as Text | undefined) ?? new FallbackText()) as unknown as Text;
 			const { url } = args as { url?: string };
 			if (!url) {
 				text.setText(
@@ -617,9 +629,7 @@ export default function (pi: ExtensionAPI) {
 		},
 
 		renderResult(result, { expanded, isPartial }, theme, context) {
-			const text =
-				(context.lastComponent as Text | undefined) ??
-				new Text("", 0, 0);
+			const text = ((context.lastComponent as Text | undefined) ?? new FallbackText()) as unknown as Text;
 
 			if (isPartial) {
 				text.setText(theme.fg("warning", "Fetching…"));

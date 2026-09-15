@@ -20,7 +20,6 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
-import { Type } from "@sinclair/typebox"
 import {
   applyEdit,
   existsSync,
@@ -75,10 +74,14 @@ export default function svgToolsExtension(pi: ExtensionAPI) {
       "height (or viewBox), readable font sizes, and a light or transparent " +
       "background. Writing does NOT render — call render_svg when ready. For a " +
       "small fix, prefer edit_svg over rewriting.",
-    parameters: Type.Object({
-      source: Type.String({ description: "The complete SVG document, from `<svg` to `</svg>`." }),
-    }),
-    async execute(_id, params) {
+    parameters: {
+      type: "object",
+      properties: {
+        source: { type: "string", description: "The complete SVG document, from `<svg` to `</svg>`." },
+      },
+      required: ["source"],
+    },
+    async execute(_id, params: { source?: string }) {
       const source = (params.source ?? "").trim()
       if (!source) throw new Error("`write_svg` requires a non-empty `source`.")
       if (!source.includes("<svg")) throw new Error("`write_svg`: source must be a complete <svg>…</svg> document.")
@@ -103,10 +106,14 @@ export default function svgToolsExtension(pi: ExtensionAPI) {
       "`old_text` must appear EXACTLY ONCE (include surrounding context for " +
       "uniqueness); on 0 or >1 matches the call fails and nothing changes. Call " +
       "write_svg first. Editing does NOT render.",
-    parameters: Type.Object({
-      old_text: Type.String({ description: "Exact substring of the current source to replace (must match once)." }),
-      new_text: Type.String({ description: "Replacement text for `old_text`." }),
-    }),
+    parameters: {
+      type: "object",
+      properties: {
+        old_text: { type: "string", description: "Exact substring of the current source to replace (must match once)." },
+        new_text: { type: "string", description: "Replacement text for `old_text`." },
+      },
+      required: ["old_text", "new_text"],
+    },
     async execute(_id, params) {
       if (!session || !existsSync(session.bodyPath)) {
         throw new Error("edit_svg: no source yet — call write_svg first.")
@@ -136,16 +143,18 @@ export default function svgToolsExtension(pi: ExtensionAPI) {
       "topic slug: that publishes the PNG into <cwd>/viz with a unique " +
       "filename and returns the filename to embed. On a render error this returns " +
       "the error text instead of an image — fix with edit_svg and re-render.",
-    parameters: Type.Object({
-      save_as: Type.Optional(
-        Type.String({
+    parameters: {
+      type: "object",
+      properties: {
+        save_as: {
+          type: "string",
           description:
             "Short kebab-case topic slug (e.g. 'number-line'). When set, the " +
             "rendered PNG is published to <cwd>/viz as viz-<slug>-<timestamp>.png " +
             "and the filename is returned. Omit for a preview-only render.",
-        }),
-      ),
-    }),
+        },
+      },
+    },
     async execute(_id, params) {
       if (!session || !existsSync(session.bodyPath)) {
         throw new Error("render_svg: no source yet — call write_svg first.")
