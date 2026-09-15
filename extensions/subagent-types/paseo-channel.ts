@@ -308,7 +308,13 @@ export async function getActivityDigest(endpoint: McpEndpoint, agentId: string, 
 	const d = r.data as { updateCount?: unknown; content?: unknown } | null;
 	if (!d || typeof d !== "object") return null;
 	const updateCount = typeof d.updateCount === "number" ? d.updateCount : -1;
-	const content = typeof d.content === "string" ? d.content.slice(0, 4000) : "";
+	// Keep the TAIL, not the head. The curated content opens with the frozen
+	// task prompt (often >3KB on its own); slicing from index 0 fingerprinted
+	// the frozen prefix forever, so any silent-but-working child (thinking +
+	// tool calls, no narrated text) was declared "no progress" and killed by
+	// the loop-guard after exactly `repeat` growth ticks. New activity appends
+	// at the END — the tail is the part that must stay inside the window.
+	const content = typeof d.content === "string" ? d.content.slice(-4000) : "";
 	return { updateCount, content };
 }
 

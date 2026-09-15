@@ -2,7 +2,7 @@ import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pushToQueue, drainQueue, queueFile, renderForPrompt, markKick, flushKicks, pendingKickIds, type ChannelMessage } from "./paseo-channel.ts";
+import { pushToQueue, drainQueue, queueFile, renderForPrompt, markKick, flushKicks, pendingKickIds, getActivityDigest, type ChannelMessage } from "./paseo-channel.ts";
 
 let base: string;
 beforeEach(() => {
@@ -15,6 +15,44 @@ afterEach(() => {
 function msg(i: number, over: Partial<ChannelMessage> = {}): ChannelMessage {
 	return { id: `m${i}`, from: `child-${i}`, fromRole: "scout", text: `hello ${i}`, ts: `t${i}`, kind: "message", ...over };
 }
+
+describe("getActivityDigest — fingerprint window must be the TAIL (loop-guard false-positive regression, 2026-09-15)", () => {
+	test("content longer than the cap keeps the mutating tail, not the frozen task-prompt head", async () => {
+		// Shape seen live from the daemon: curated content = frozen task prompt
+		// (~3.4KB) + narration + tool markers. New activity appends at the END.
+		const frozenHead = "FROZEN-TASK-PROMPT-".repeat(300); // 5.1KB of never-changing head
+		const digestOf = (tail: string) => frozenHead + tail;
+		let current = digestOf("[Web search] round-1");
+		const server = Bun.serve({
+			port: 0,
+			async fetch(req) {
+				const body = (await req.json()) as { method: string };
+				if (body.method === "tools/call") {
+					const frame = { jsonrpc: "2.0", id: 1, result: { structuredContent: { updateCount: 7, content: current } } };
+					return new Response(`data: ${JSON.stringify(frame)}\n\n`, { headers: { "Content-Type": "text/event-stream" } });
+				}
+				return new Response("not found", { status: 404 });
+			},
+		});
+		const ep = { url: `http://localhost:${server.port}/mcp`, token: "t" } as never;
+		try {
+			// Round 1: child has done one search.
+			const a = await getActivityDigest(ep, "kid-1");
+			expect(a?.updateCount).toBe(7);
+			expect(a?.content.endsWith("[Web search] round-1")).toBe(true);
+			expect(a?.content.startsWith("FROZEN-TASK")).toBe(false); // head must be cut away
+			expect(a!.content.length).toBeLessThanOrEqual(4000);
+			// Round 2: more activity appended — the fingerprint window must change,
+			// otherwise the loop-guard kills a healthy silent child (repeat=3).
+			current = digestOf("[Web fetch] docs page (round-2 appended activity)");
+			const b = await getActivityDigest(ep, "kid-1");
+			expect(b?.content).not.toBe(a?.content);
+			expect(b?.content.endsWith("(round-2 appended activity)")).toBe(true);
+		} finally {
+			server.stop(true);
+		}
+	});
+});
 
 describe("file queue — push/drain roundtrip", () => {
 	test("push then drain returns entries in order", () => {
