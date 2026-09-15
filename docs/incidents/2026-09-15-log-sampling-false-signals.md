@@ -43,6 +43,23 @@ log. Both produced false verdicts on healthy work.
   task judge path) — likely needs: tail-biased window, explicit ordering
   guarantees, or passing the evidence text itself instead of re-reading the log.
 
+## Bug 2b — plan-wake counts PARKED step-tasks as actionable open work (OPEN)
+
+- **Symptom**: after 5 plan steps were parked (user-only reopen), the plan
+  wake loop kept nudging "continue with task_update on #<parked-id>" — the
+  model cannot act on parked tasks by design; each such wake is pure noise.
+- **Root cause**: `openStepTasks()` (read-only-mode/index.ts) filters only
+  `completed`/`cancelled`; `parked` and `held` both count as open work for the
+  wake message AND for the budget. Held is legitimately model-actionable;
+  parked is not.
+- **Required fix shape** (follow-up task #80, needs the full ship ritual):
+  wake-eligibility should exclude `parked` (pending/in_progress/held stay),
+  while the AUTO-CLOSE gate must NOT — a plan whose remaining steps are all
+  parked must stay open on the panel and wrap up with an "awaiting the user"
+  message instead of reconciling closed. Anti-spin already stops the loop at
+  streak 3 (one-round lag observed: it fires the wake before counting it),
+  so the residual noise is bounded (~1-2 wakes), not unbounded.
+
 ## Shared lesson (now in the global lessons tier)
 
 Both bugs are the same shape: a supervision component samples a long log at a
