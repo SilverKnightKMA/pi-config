@@ -53,7 +53,8 @@ import {
 } from "./src/judge.ts";
 import { ackPayload, applyControlAction, controlFilePath, parseControlPayload } from "./src/control.ts";
 import { EMPTY_STATE, DESC_AMEND_MAX, type TaskProposal, type TaskState, type TaskStatus } from "./src/types.ts";
-import { activeGoal, goalIdActive, tryConsumeLease } from "./src/goal-bridge.ts";
+import { activeGoal, anyGoalRunning, goalIdActive, planContinuationActive, tryConsumeLease } from "./src/goal-bridge.ts";
+import { decide, nextStreak, TASK_BUDGET, continuationOwnedByHigherKind } from "../continuation-driver.ts";
 import { ackPlanBridge, applyPlanBridge, planBridgePath, readPlanBridge } from "./src/plan-bridge.ts";
 
 type UiContext = ExtensionContext;
@@ -197,6 +198,64 @@ export default function taskExtension(pi: ExtensionAPI) {
 		} catch {
 			// best-effort ack
 		}
+	}
+
+	/** v1.4.69 (#61 Phase C): task continuation — wake when in_progress work
+	 *  remains at settle (budget 10 per episode, anti-spin 3, ladder 5→80s).
+	 *  Yields while goal/plan own main's wake cadence (single-waker priority). */
+	let taskWakeTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function clearTaskWake(): void {
+		if (taskWakeTimer) {
+			clearTimeout(taskWakeTimer);
+			taskWakeTimer = null;
+		}
+	}
+
+	function taskSettle(): void {
+		clearTaskWake();
+		if (!controlSessionId) return;
+		if (continuationOwnedByHigherKind(anyGoalRunning(), planContinuationActive(controlSessionId))) return;
+		const open = state.tasks.filter((t) => t.status === "in_progress");
+		if (open.length === 0) {
+			if (state.wake) {
+				state = { ...state, wake: undefined };
+				pi.appendEntry(TASK_STATE, state);
+			}
+			return;
+		}
+		const sig = open.map((t) => `${t.id}:${t.status}:${t.updatedAt}`).join(",");
+		const prev = state.wake && state.wake.signature === sig ? state.wake : { rounds: 0, noProgress: 0, signature: sig };
+		const d = decide({ kind: "task", active: true, openWork: open.length, rounds: prev.rounds, budget: TASK_BUDGET, noProgressStreak: prev.noProgress });
+		if (d.action !== "wake") {
+			try {
+				pi.sendMessage({
+					customType: "task-wake",
+					content: `[task] continuation wrapped up — ${d.reason}. #${open.map((t) => t.id).join(" #")} still in_progress; the user decides next (park with a reason or keep going manually).`,
+					display: true,
+				});
+			} catch {
+				// display best effort
+			}
+			return;
+		}
+		taskWakeTimer = setTimeout(() => {
+			taskWakeTimer = null;
+			if (!controlSessionId) return;
+			if (continuationOwnedByHigherKind(anyGoalRunning(), planContinuationActive(controlSessionId))) return;
+			const nowOpen = state.tasks.filter((t) => t.status === "in_progress");
+			if (nowOpen.length === 0) return;
+			const nowSig = nowOpen.map((t) => `${t.id}:${t.status}:${t.updatedAt}`).join(",");
+			const next = { rounds: (state.wake && state.wake.signature === nowSig ? state.wake.rounds : 0) + 1, noProgress: nextStreak(state.wake && state.wake.signature === nowSig ? state.wake.noProgress : 0, state.wake?.signature ?? "", nowSig), signature: nowSig };
+			state = { ...state, wake: next };
+			pi.appendEntry(TASK_STATE, state);
+			projectStatus();
+			pi.sendUserMessage(
+				`[task wake ${next.rounds}/${TASK_BUDGET}] #${nowOpen.map((t) => t.id).join(" #")} still in_progress — continue with task_update (real evidence; the judge gates completion) or park with a reason if genuinely blocked. Do not re-declare completed without evidence.`,
+				{ deliverAs: "followUp" },
+			);
+			taskSettle();
+		}, d.delaySec * 1000);
 	}
 
 	/** Apply a plugin/user action from the control file (watch callback). */
@@ -918,6 +977,17 @@ export default function taskExtension(pi: ExtensionAPI) {
 
 		projectStatus();
 		renderWidget(ctx);
+		// v1.4.69 (#61 Phase C): restart-back-up — resume the task wake loop if
+		// in_progress work remains and no higher kind owns the cadence.
+		setTimeout(() => taskSettle(), 3_000);
+	});
+
+	pi.on("input", () => clearTaskWake());
+
+	pi.on("agent_settled", () => {
+		// v1.4.69 (#61 Phase C): in_progress work at settle → continuation wake
+		// (2s grace — mirrors goal; a higher kind owning cadence cancels inside).
+		setTimeout(() => taskSettle(), 2_000);
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {

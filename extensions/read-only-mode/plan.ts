@@ -41,6 +41,13 @@ export interface PlanState {
 	/** v1.4.68 (#47 Phase B): stamped at approve when the task bridge is on —
 	 *  step-tasks carry it back so the plan derives progress from the board. */
 	planId?: string;
+	/** v1.4.69 (#61 Phase C): continuation counters for the plan wake loop —
+	 *  rounds consumed, consecutive no-progress wakes, board signature, and the
+	 *  scheduled wake time (restart-back-up). Persisted via the plan ledger. */
+	wakeRounds?: number;
+	wakeNoProgress?: number;
+	wakeSignature?: string;
+	wakeAt?: string;
 	steps: PlanStep[];
 	thinkingBefore?: string;
 	submittedAt?: string;
@@ -220,6 +227,10 @@ export function sanitizePlanState(raw: unknown): PlanState | null {
 		mode: mode as PlanMode,
 		...(typeof raw.planFile === "string" && raw.planFile ? { planFile: raw.planFile } : {}),
 		...(typeof raw.planId === "string" && raw.planId.startsWith("p-") ? { planId: raw.planId } : {}),
+		...(typeof raw.wakeRounds === "number" && raw.wakeRounds >= 0 ? { wakeRounds: Math.min(99, Math.floor(raw.wakeRounds)) } : {}),
+		...(typeof raw.wakeNoProgress === "number" && raw.wakeNoProgress >= 0 ? { wakeNoProgress: Math.min(99, Math.floor(raw.wakeNoProgress)) } : {}),
+		...(typeof raw.wakeSignature === "string" ? { wakeSignature: raw.wakeSignature.slice(0, 500) } : {}),
+		...(typeof raw.wakeAt === "string" ? { wakeAt: raw.wakeAt } : {}),
 		steps,
 		...(typeof raw.thinkingBefore === "string" ? { thinkingBefore: raw.thinkingBefore } : {}),
 		...(typeof raw.submittedAt === "string" ? { submittedAt: raw.submittedAt } : {}),

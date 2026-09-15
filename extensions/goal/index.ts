@@ -45,6 +45,7 @@ import {
 	useLease,
 	wrapUpReport,
 } from "./src/goal-state.js";
+import { decide as continuationDecide, GOAL_BUDGET } from "../continuation-driver.ts";
 
 function home(): string {
 	return process.env.HOME ?? homedir();
@@ -178,8 +179,12 @@ export default function activate(pi: ExtensionAPI): void {
 			wrapUp(pi2, st, "spinning: 2 consecutive epochs with no task completed");
 			return;
 		}
-		if (st.epoch >= 20) {
-			wrapUp(pi2, st, "epoch budget exhausted (20/20)");
+		// v1.4.69 (#61 Phase C): budget decision now routes through the shared
+		// continuation driver (goal keeps its stricter spinning=2 pre-check above;
+		// no-progress tracking stays goal-local via epochs, so the driver sees 0).
+		const wd = continuationDecide({ kind: "goal", active: true, openWork: openIds(members).length, rounds: st.epoch, budget: GOAL_BUDGET, noProgressStreak: 0 });
+		if (wd.action === "wrapup") {
+			wrapUp(pi2, st, st.epoch >= GOAL_BUDGET ? "epoch budget exhausted (20/20)" : wd.reason);
 			return;
 		}
 		clearWake();

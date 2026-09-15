@@ -69,6 +69,7 @@ import {
 	type PlanControlPayload,
 	type PlanState,
 } from "./plan.ts";
+import { decide, nextStreak, planBudget } from "../continuation-driver.ts";
 
 export const COMMAND_NAME = "read-only";
 export const PLAN_COMMAND_NAME = "plan";
@@ -181,6 +182,73 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 		} catch {
 			// best effort — the task ext consumer is idempotent
 		}
+	}
+
+	// ── v1.4.69 #61 Phase C: plan continuation (wake loop, shared driver) ───
+	let planWakeTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function clearPlanWake(): void {
+		if (planWakeTimer) {
+			clearTimeout(planWakeTimer);
+			planWakeTimer = null;
+		}
+	}
+
+	function openStepTasks(): BoardStepTaskLike[] {
+		if (!plan.planId) return [];
+		return readBoard().filter(
+			(t) => t.planId === plan.planId && typeof t.stepIndex === "number" && t.status !== "completed" && t.status !== "cancelled",
+		);
+	}
+
+	/** Settled while a bridged plan still has open step-tasks → schedule the
+	 *  next wake (shared driver: budget shrinks with open steps, anti-spin 3,
+	 *  ladder 5→80s). Wrap-up stops the loop and tells the timeline why — the
+	 *  plan STAYS on the panel for the user; no silent state change. */
+	function planSettle(): void {
+		clearPlanWake();
+		if (plan.mode !== "tracking" || !plan.planId || process.env.PLAN_TASK_BRIDGE === "0") return;
+		const open = openStepTasks();
+		if (open.length === 0) {
+			reconcileAndPersist(); // all step-tasks done → auto-close path
+			return;
+		}
+		const sig = open.map((t) => `${t.id}:${t.status}`).join(",");
+		const d = decide({ kind: "plan", active: true, openWork: open.length, rounds: plan.wakeRounds ?? 0, budget: planBudget(open.length), noProgressStreak: plan.wakeNoProgress ?? 0 });
+		if (d.action !== "wake") {
+			try {
+				pi.sendMessage({
+					customType: "plan-status",
+					content: `[plan] continuation wrapped up — ${d.reason}. ${open.length} open step-task(s) remain; the user decides next (the plan stays on the panel).`,
+					display: true,
+				});
+			} catch {
+				// display best effort
+			}
+			return;
+		}
+		plan.wakeAt = new Date(Date.now() + d.delaySec * 1000).toISOString();
+		persistPlan();
+		planWakeTimer = setTimeout(() => {
+			planWakeTimer = null;
+			if (plan.mode !== "tracking" || !plan.planId) return;
+			const nowOpen = openStepTasks();
+			if (nowOpen.length === 0) {
+				reconcileAndPersist();
+				return;
+			}
+			const nowSig = nowOpen.map((t) => `${t.id}:${t.status}`).join(",");
+			plan.wakeNoProgress = nextStreak(plan.wakeNoProgress ?? 0, plan.wakeSignature ?? "", nowSig);
+			plan.wakeSignature = nowSig;
+			plan.wakeRounds = (plan.wakeRounds ?? 0) + 1;
+			persistPlan();
+			const next = nowOpen[0];
+			pi.sendUserMessage(
+				`[plan wake ${plan.wakeRounds}/${planBudget(nowOpen.length)}] ${nowOpen.length} open step-task(s) — continue with task_update on #${next.id}${next.status === "pending" ? " (start it: status in_progress)" : ""}; evidence gates every completion (the judge can hold it). If a step is genuinely blocked, park it with a reason instead of spinning.`,
+				{ deliverAs: "followUp" },
+			);
+			planSettle(); // schedule the next round from the updated counters
+		}, d.delaySec * 1000);
 	}
 
 	/** v1.4.67 (#47 Phase A) + v1.4.68 (Phase B): drift repair at load points —
@@ -758,6 +826,20 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 		// projection written by an old one (stuck `tracking 11/11`) AND write a
 		// fresh projection even with no plan event.
 		reconcileAndPersist();
+		// v1.4.69 (#61 Phase C): restart-back-up — a bridged plan with open
+		// step-tasks resumes its wake loop (wakeAt in the past → soon).
+		if (plan.mode === "tracking" && plan.planId && process.env.PLAN_TASK_BRIDGE !== "0" && openStepTasks().length > 0) {
+			const past = plan.wakeAt ? Date.parse(plan.wakeAt) < Date.now() : true;
+			setTimeout(() => planSettle(), past ? 5_000 : Math.max(1_000, Math.min(60_000, plan.wakeAt ? Date.parse(plan.wakeAt) - Date.now() : 5_000)));
+		}
+	});
+
+	pi.on("input", () => clearPlanWake());
+
+	pi.on("agent_settled", () => {
+		// v1.4.69 (#61 Phase C): the plan continuation loop owns the wake cadence
+		// while open step-tasks remain (2s grace like goal — let the loop settle).
+		setTimeout(() => planSettle(), 2_000);
 	});
 
 	// pi 0.84.4 names these before_switch/before_fork (upstream zz-read-only-mode

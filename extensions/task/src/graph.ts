@@ -330,7 +330,13 @@ export function sanitizeState(data: Record<string, unknown>): TaskState {
   }
   const maxId = tasks.reduce((m, t) => Math.max(m, t.id), 0);
   const nextId = typeof data.nextId === "number" ? Math.max(data.nextId, maxId + 1) : maxId + 1;
-  return { tasks: rebuildReverseLinks(tasks), nextId };
+  // v1.4.69 (#61 Phase C): keep the wake counters across sanitize round-trips.
+  const w = (typeof data.wake === "object" && data.wake !== null ? data.wake : {}) as Record<string, unknown>;
+  const wake =
+    typeof w.rounds === "number" && typeof w.noProgress === "number" && typeof w.signature === "string"
+      ? { rounds: Math.max(0, Math.floor(w.rounds)), noProgress: Math.max(0, Math.floor(w.noProgress)), signature: w.signature.slice(0, 500) }
+      : undefined;
+  return { tasks: rebuildReverseLinks(tasks), nextId, ...(wake ? { wake } : {}) };
 }
 
 // ── #45: field-level CHANGES for update cards ──────────────────────────

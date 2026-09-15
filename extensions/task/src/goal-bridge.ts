@@ -77,6 +77,37 @@ export type LeaseConsume =
 	| { ok: true; goalId: string }
 	| { ok: false; reason: string };
 
+/** v1.4.69 (#61 Phase C): any goal running ANYWHERE (single-waker priority —
+	 *  the task wake loop yields while a goal owns main's cadence). */
+export function anyGoalRunning(): boolean {
+	try {
+		for (const f of readdirSync(join(home(), ".pi", "agent", "goal-state"))) {
+			if (!f.endsWith(".json")) continue;
+			const g = readGoal(f.replace(/\.json$/, ""));
+			if (g && g.status === "running") return true;
+		}
+	} catch {
+		// no dir → no goal
+	}
+	return false;
+}
+
+/** v1.4.69 (#61 Phase C): a bridged plan with open steps owns the cadence —
+	 *  reads the plan ext's status projection (mode tracking + planId + steps
+	 *  remaining). The task wake loop yields to it (priority: goal > plan > task). */
+export function planContinuationActive(sessionId: string): boolean {
+	if (!sessionId) return false;
+	try {
+		const raw = JSON.parse(readFileSync(join(home(), ".pi", "agent", "plan-control", `${sessionId}.status.json`), "utf8")) as Record<string, unknown>;
+		if (raw.mode !== "tracking" || typeof raw.planId !== "string" || !raw.planId.startsWith("p-")) return false;
+		const done = typeof raw.stepsDone === "number" ? raw.stepsDone : 0;
+		const total = typeof raw.stepsTotal === "number" ? raw.stepsTotal : 0;
+		return total > 0 && done < total;
+	} catch {
+		return false;
+	}
+}
+
 /** Consume the lease (exactly once per goal) — the appeal path when judge/cap blocks a done-check amend.
  *  Strict tasks do NOT go through here (the user-only door stays). */
 export function tryConsumeLease(sessionId: string, note: string, taskId?: string): LeaseConsume {

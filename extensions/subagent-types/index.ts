@@ -280,6 +280,31 @@ export function goalWakeActive(dir?: string): boolean {
 	return false;
 }
 
+/** v1.4.69 (#61 Phase C): is any bridged plan still waking (mode tracking +
+ *  planId + steps remaining — reads the plan ext's status projections).
+ *  Auto-ping yields to the plan continuation loop too (single-waker priority:
+ *  goal > plan > task). */
+export function planWakeActive(dir?: string): boolean {
+	const d = dir ?? join(process.env.HOME ?? homedir(), ".pi", "agent", "plan-control");
+	try {
+		for (const f of readdirSync(d)) {
+			if (!f.endsWith(".status.json")) continue;
+			try {
+				const st = JSON.parse(readFileSync(join(d, f), "utf8")) as { mode?: unknown; planId?: unknown; stepsDone?: unknown; stepsTotal?: unknown };
+				if (st?.mode !== "tracking" || typeof st?.planId !== "string" || !st.planId.startsWith("p-")) continue;
+				const done = typeof st?.stepsDone === "number" ? (st.stepsDone as number) : 0;
+				const total = typeof st?.stepsTotal === "number" ? (st.stepsTotal as number) : 0;
+				if (total > 0 && done < total) return true;
+			} catch {
+				// junk file — skip
+			}
+		}
+	} catch {
+		// no dir — no plan
+	}
+	return false;
+}
+
 /** Identity mapping retained for call sites; .md files now use live names. */
 export function mapToolName(tool: string): string {
 	return tool;
@@ -580,12 +605,13 @@ async function kickOutbound(): Promise<void> {
 	// message_main still pings its parent — one line, no payload — so main can
 	// wake and pull the transcript itself (see shouldAutoPing for history).
 	//
-	// v1.4.51 single-waker (#37): while a goal IS running on main, the goal loop owns
-	// main's wake cadence (epoch + backoff) — auto-ping yields, avoiding two
-	// wakers racing over one idle main. The child result gets pulled in by the next
-	// goal-epoch settle (board/projection); the only loss is one epoch of latency.
+	// v1.4.51 single-waker (#37) + v1.4.69 (#61 Phase C): while a goal OR a
+	// bridged plan with open steps IS running on main, that kind's continuation
+	// loop owns main's wake cadence — auto-ping yields, avoiding two wakers
+	// racing over one idle main. The child result gets pulled in by the next
+	// wake settle (board/projection); the only loss is one round of latency.
 	async function autoPingOnSettle(): Promise<void> {
-		if (goalWakeActive()) return;
+		if (goalWakeActive() || planWakeActive()) return;
 		const self = resolveSelf(sessionIdRef.value);
 		// Pool children skip the backstop entirely — their pool driver in main
 		// owns the wake (one aggregate, not one ping per child; v1.4.44).

@@ -90,6 +90,10 @@ export const DESC_AMEND_MAX = 2;
 export interface TaskState {
   tasks: Task[];
   nextId: number;
+  /** v1.4.69 (#61 Phase C): continuation counters for the task wake loop —
+   *  reset whenever the in_progress set changes (new episode). Persisted in
+   *  the task ledger (single root snapshot, last wins). */
+  wake?: { rounds: number; noProgress: number; signature: string };
 }
 
 export const EMPTY_STATE: TaskState = { tasks: [], nextId: 1 };

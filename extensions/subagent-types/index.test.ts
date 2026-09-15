@@ -18,7 +18,7 @@ import { writeFileSync, mkdirSync, rmSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { goalWakeActive } from "./index.ts";
+import { goalWakeActive, planWakeActive } from "./index.ts";
 
 describe("goalWakeActive (v1.4.51 single-waker)", () => {
 	test("dir with a running goal → true; only paused/done → false; no dir → false", () => {
@@ -33,6 +33,24 @@ describe("goalWakeActive (v1.4.51 single-waker)", () => {
 		expect(goalWakeActive(dir)).toBe(true); // junk file does not break the scan
 		rmSync(dir, { recursive: true, force: true });
 		expect(goalWakeActive(join(dir))).toBe(false); // dir gone
+	});
+});
+
+describe("planWakeActive (v1.4.69 #61 Phase C single-waker)", () => {
+	test("bridged plan with open steps → true; all-done / non-bridged / no dir → false", () => {
+		const dir = mkdtempSync(join(tmpdir(), "pwake-"));
+		expect(planWakeActive(dir)).toBe(false); // empty dir
+		writeFileSync(join(dir, "a.status.json"), JSON.stringify({ mode: "tracking", planId: "p-s1-1", stepsDone: 3, stepsTotal: 11 }));
+		expect(planWakeActive(dir)).toBe(true); // open steps remain
+		writeFileSync(join(dir, "b.status.json"), JSON.stringify({ mode: "tracking", planId: "p-s2-1", stepsDone: 11, stepsTotal: 11 }));
+		writeFileSync(join(dir, "c.status.json"), JSON.stringify({ mode: "tracking", stepsDone: 2, stepsTotal: 5 })); // no planId → not bridged
+		writeFileSync(join(dir, "d.status.json"), JSON.stringify({ mode: "complete", planId: "p-s3-1", stepsDone: 5, stepsTotal: 5 }));
+		writeFileSync(join(dir, "junk.status.json"), "{not json");
+		expect(planWakeActive(dir)).toBe(true); // junk + non-eligible do not break the scan
+		rmSync(join(dir, "a.status.json")); // remove the only eligible one
+		expect(planWakeActive(dir)).toBe(false);
+		rmSync(dir, { recursive: true, force: true });
+		expect(planWakeActive(dir)).toBe(false); // dir gone
 	});
 });
 

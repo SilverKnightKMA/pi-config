@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { activeGoal, goalIdActive, tryConsumeLease } from "./goal-bridge.ts";
+import { activeGoal, anyGoalRunning, goalIdActive, planContinuationActive, tryConsumeLease } from "./goal-bridge.ts";
 
 const HOME = mkdtempSync(join(tmpdir(), "goal-bridge-"));
 const SID = "sess-1111";
@@ -54,5 +54,32 @@ describe("task⇄goal bridge (v1.4.51 #37)", () => {
 		const r = tryConsumeLease(SID, "note", "#1");
 		expect(r.ok).toBe(false);
 		if (!r.ok) expect(r.reason).toContain("not granted");
+	});
+});
+
+describe("continuation priority helpers (v1.4.69 #61 Phase C)", () => {
+	function writePlanFile(sid: string, body: Record<string, unknown>): void {
+		const dir = join(HOME, ".pi", "agent", "plan-control");
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(join(dir, `${sid}.status.json`), JSON.stringify(body), "utf8");
+	}
+
+	test("anyGoalRunning: true while running, false when done/all gone", () => {
+		writeGoalFile("running", { granted: true, used: 0 });
+		expect(anyGoalRunning()).toBe(true);
+		writeGoalFile("done", { granted: true, used: 0 });
+		expect(anyGoalRunning()).toBe(false);
+	});
+
+	test("planContinuationActive: bridged+open → true; all-done / non-bridged / wrong session / missing file → false", () => {
+		expect(planContinuationActive(SID)).toBe(false); // no file yet
+		writePlanFile(SID, { mode: "tracking", planId: "p-sess-1", stepsDone: 2, stepsTotal: 6 });
+		expect(planContinuationActive(SID)).toBe(true);
+		writePlanFile(SID, { mode: "tracking", planId: "p-sess-1", stepsDone: 6, stepsTotal: 6 });
+		expect(planContinuationActive(SID)).toBe(false); // all done
+		writePlanFile(SID, { mode: "tracking", stepsDone: 1, stepsTotal: 6 });
+		expect(planContinuationActive(SID)).toBe(false); // no planId → not bridged
+		writePlanFile("other-session", { mode: "tracking", planId: "p-other-1", stepsDone: 0, stepsTotal: 3 });
+		expect(planContinuationActive(SID)).toBe(false); // wrong session is invisible to this one
 	});
 });
