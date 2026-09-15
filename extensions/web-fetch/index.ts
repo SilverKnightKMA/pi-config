@@ -8,9 +8,8 @@
  * modes. No overlap conflict — this extension is the simple keyless fetcher;
  * pi-web-access is the power toolkit (needs keys for some modes).
  */
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Type } from "typebox";
-import { Text } from "@mariozechner/pi-tui";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { Readability } from "@mozilla/readability";
 import { parseHTML } from "linkedom";
 import TurndownService from "turndown";
@@ -563,9 +562,13 @@ export default function (pi: ExtensionAPI) {
 		promptSnippet:
 			"Fetch a URL and extract readable content as markdown. Supports HTML pages, PDFs, and plain text.",
 
-		parameters: Type.Object({
-			url: Type.String({ description: "URL to fetch" }),
-		}),
+		parameters: {
+			type: "object",
+			properties: {
+				url: { type: "string", description: "URL to fetch" },
+			},
+			required: ["url"],
+		},
 
 		async execute(_toolCallId, params, signal) {
 			const result = await fetchAndExtract(params.url, signal);
