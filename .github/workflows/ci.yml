@@ -20,3 +20,21 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun test
+
+  installed-tree-smoke:
+    # v1.4.72/#01a093d5 crash class: an extension that fails to import kills
+    # pi at session start (exit 1) and the daemon spawn-retries. The repo
+    # working tree can MASK this class two ways: gitignored local
+    # node_modules, and bun's fallback to the global install cache on dev
+    # machines with a warm ~/.bun/install/cache. A fresh clone on a cold
+    # CI runner has neither — byte-for-byte what managed-pi-extensions puts
+    # on the host. This job is the bar: if an extension cannot load there,
+    # it will not load on the host either.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      - name: Clone-fresh tree, run the extension load smoke (no bun install)
+        run: |
+          git clone --depth 1 file://"$PWD" /tmp/host-tree
+          bun scripts/smoke-extensions.mjs /tmp/host-tree/extensions

@@ -8,6 +8,14 @@
 //   bun scripts/smoke-extensions.mjs                     # repo extensions/
 //   bun scripts/smoke-extensions.mjs ~/.pi/agent/extensions   # installed tree, BEFORE a daemon restart
 // Exit code: 0 = all clean, 1 = at least one failed load.
+//
+// WARNING (learned 2026-09-15): on a dev machine with a warm
+// ~/.bun/install/cache, bun silently resolves missing bare imports from the
+// GLOBAL CACHE when no local node_modules exists — a fresh clone can pass
+// locally and still fail on the host/CI (cold cache, or partial local
+// node_modules disables the fallback). CI runs this against a fresh clone on
+// a cold runner (ci.yml: installed-tree-smoke) — that is the authoritative
+// green. A local pass is only meaningful when it FAILS.
 
 import { readdirSync, statSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
