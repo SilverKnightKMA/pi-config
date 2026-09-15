@@ -86,5 +86,10 @@ Never scanned yet (open if needed):
   markers — convergence toward our OM, but notes stay session-scoped (no cross-session store without
   the still-UI-gated consolidate). Headless `/memory` + consolidate-confirm limitation appears
   unchanged. The 4-direction decision (#1A) should be re-presented with these facts.
+- **re-eval input COMPLETE 2026-09-15**: delta brief written to
+  `learn/pify-memory-eval-0.9.2-addendum-2026-09-15.md` (mode-2 addendum on the delta, template
+  sections, deviations declared: main-agent diff not researcher). Recommendation unchanged
+  (hybrid direction 1, now cheaper with upstream's exact session_compact + buildContextEntries
+  dedupe recipe). Awaiting user decision on #1A.
 - GitHub repos of amosblomqvist: all 4 tracked repos frozen at registry refs (ls-remote 2026-09-15);
   1 untracked repo seen: `pi-dictate` (pushed 2026-08-31, dictation ext — not ported, no eval needed)
