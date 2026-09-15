@@ -75,3 +75,12 @@ needs a session restart, never just unsetting the variable mid-run.
    them.
 3. Entries whose condition is met are removed in a single hard cut: delete the
    env read, the guarded branch, its tests, and this row in one commit.
+
+## BASH_LONG_RUN_GUARD (v1.4.71, default on)
+
+`extensions/bash-long-run-guard` blocks silent foreground bash calls in the
+recurring "Command aborted" class (test suites, installs, sleeps ≥3s, polling
+loops) and answers with the background recipe (`setsid nohup … > /tmp/blk-*.log`)
+instead. The tool channel intermittently kills such calls a few seconds in —
+daemon restarts do not fix it. Set `BASH_LONG_RUN_GUARD=0` to restore raw
+behavior.
