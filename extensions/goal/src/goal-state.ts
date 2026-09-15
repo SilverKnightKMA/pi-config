@@ -1,14 +1,14 @@
 /**
- * goal — #37, thiết kế chốt 2026-09-13 (7 mảnh + lease mặc định).
- * Pure module: không pi import, không fs, không network. index.ts làm I/O.
+ * goal — #37, design locked 2026-09-13 (7 pieces + default lease).
+ * Pure module: no pi import, no fs, no network. index.ts does the I/O.
  *
- * Triết lý: goal = phiên làm việc KHÔNG giám sát (đêm, 20 epoch tự đánh thức).
- * Mọi thứ model tự quyết đều có giới hạn cứng (epoch cap, lease 1 lần) và
- * đều lộ ra wrap-up sáng hôm sau cho user soi.
+ * Philosophy: a goal = an UNSUPERVISED work session (overnight, 20 self-wake epochs).
+ * Everything the model decides on its own has hard limits (epoch cap, 1-use lease)
+ * and all of it surfaces in the next morning's wrap-up for the user to inspect.
  */
 
 export const GOAL_EPOCH_MAX = 20;
-/** Backoff ladder (giây) giữa các epoch — kiên nhẫn tăng dần, cap 80s. */
+/** Backoff ladder (seconds) between epochs — ramps up patiently, cap 80s. */
 export const GOAL_BACKOFF_LADDER = [5, 10, 20, 40, 80] as const;
 
 export type GoalStatus = "draft" | "running" | "paused" | "done" | "stopped";
@@ -19,28 +19,28 @@ export interface LeaseUse {
 	note: string;
 }
 
-/** Lease (user chốt 13/09): MẶC ĐẶN granted khi start; dùng tối đa 1 lần;
- *  model không tự cấp; chết khi goal kết thúc; mọi lần dùng vào log + wrap-up. */
+/** Lease (user locked in 13/09): granted by DEFAULT at start; usable at most once;
+ *  the model cannot grant it itself; it dies when the goal ends; every use lands in the log + wrap-up. */
 export interface GoalLease {
 	granted: boolean;
 	used: number;
 	log: LeaseUse[];
 }
 
-/** Bảng đề xuất scope cho pha init (draft) — model soạn, user duyệt. */
+/** Scope proposal table for the init phase (draft) — the model drafts it, the user approves. */
 export interface GoalProposal {
-	/** Anchor tả ĐÍCH BẰNG KẾT QUẢ (không phải danh sách task). */
+	/** Anchor describing the DESTINATION AS AN OUTCOME (not a task list). */
 	anchor: string;
-	/** Task id đề xuất VÀO scope (rỗng = mọi task đang mở). */
+	/** Task ids proposed INTO scope (empty = every currently open task). */
 	includeIds: number[];
-	/** Task id đề xuất BỎ (chỉ hợp lệ khi includeIds rỗng). */
+	/** Task ids proposed to DROP (only valid when includeIds is empty). */
 	excludeIds: number[];
-	/** Lý do từng lựa chọn (hiện trong bảng chat + card duyệt). */
+	/** Reason for each choice (shown in the chat table + approval card). */
 	rationale: string;
 	proposedAt: string;
 }
 
-/** Một epoch đã tiêu: kế toán tạo/hoàn thành task-member (chống self-feeding). */
+/** A consumed epoch: accounting of task-member creation/completion (guards against self-feeding). */
 export interface EpochRec {
 	n: number;
 	at: string;
@@ -51,25 +51,25 @@ export interface EpochRec {
 export interface GoalState {
 	v: 1;
 	sessionId: string;
-	/** Id định danh goal run (g-<sid8>-<ts36>) — task stamp tham chiếu về đây. */
+	/** Goal run identifier (g-<sid8>-<ts36>) — task stamps reference back here. */
 	goalId: string;
 	anchor: string;
 	status: GoalStatus;
-	/** DRAFT (#v1.4.52): bảng đề xuất scope chờ user duyệt trên panel.
-	 *  Model chỉ ghi được qua tool goal_propose — KHÔNG tự start được. */
+	/** DRAFT (#v1.4.52): scope proposal table awaiting user approval on the panel.
+	 *  The model can only write it via the goal_propose tool — it CANNOT self-start. */
 	proposal?: GoalProposal;
-	/** Số epoch tự đánh thức đã tiêu. */
+	/** Self-wake epochs consumed so far. */
 	epoch: number;
 	lease: GoalLease;
-	/** Snapshot id các task mở lúc start (membership = snapshot ∪ stamped goalId). */
+	/** Snapshot of open task ids at start (membership = snapshot ∪ stamped goalId). */
 	memberIds: number[];
-	/** Kế toán từng epoch (cap GOAL_EPOCH_MAX). */
+	/** Per-epoch accounting (cap GOAL_EPOCH_MAX). */
 	epochs: EpochRec[];
-	/** Bộ đếm board lần settle gần nhất (chuẩn để tính delta tạo/xong). */
+	/** Board counters at the last settle (baseline for create/complete deltas). */
 	board: { members: number; completed: number };
 	createdAt: string;
 	updatedAt: string;
-	/** Epoch tiếp theo dự kiến đánh thức (ISO) — driver ghi, chỉ để hiển thị. */
+	/** Next expected wake (ISO) — written by the driver, display only. */
 	wakeAt?: string;
 }
 
@@ -107,7 +107,7 @@ export function startGoal(
 	};
 }
 
-/** Model ghi bảng đề xuất (chỉ hợp lệ khi draft). Pure validation + return state mới. */
+/** The model records the proposal table (only valid while in draft). Pure validation + returns the new state. */
 export function setProposal(state: GoalState, p: GoalProposal, now: string): GoalState {
 	const trimmed: GoalProposal = {
 		anchor: p.anchor.trim().slice(0, 2000),
@@ -119,8 +119,8 @@ export function setProposal(state: GoalState, p: GoalProposal, now: string): Goa
 	return { ...state, status: "draft", proposal: trimmed, updatedAt: now };
 }
 
-/** User bấm ✓ duyệt: draft → running, membership KHÓA theo bảng đã duyệt.
- *  openIds là snapshot task mở tại lúc confirm (nếu includeIds rỗng = mọi task mở trừ exclude). */
+/** User clicks ✓ approve: draft → running, membership LOCKED to the approved table.
+ *  openIds is the snapshot of open tasks at confirm time (if includeIds is empty = every open task except excludes). */
 export function confirmGoal(state: GoalState, openIds: number[], now: string): GoalState {
 	const p = state.proposal;
 	const memberIds = p && p.includeIds.length > 0
@@ -139,37 +139,37 @@ export function confirmGoal(state: GoalState, openIds: number[], now: string): G
 	};
 }
 
-/** User bấm ↺ sửa lại: về draft, xóa bảng cũ (model đề xuất lại). */
+/** User clicks ↺ revise: back to draft, the old table is cleared (the model re-proposes). */
 export function reviseGoal(state: GoalState, now: string): GoalState {
 	return { ...state, status: "draft", proposal: undefined, updatedAt: now };
 }
 
-/** Task-board record tối thiểu để goal nhìn từ ngoài (đọc projection, không import task ext). */
+/** Minimal task-board record so the goal can see in from outside (reads the projection, does not import the task ext). */
 export interface BoardTaskLike {
 	id: number;
 	status: string;
 	goalId?: string;
 }
 
-/** Membership: snapshot ∪ task stamp goalId này (task sinh trong goal LÀ thành viên). */
+/** Membership: snapshot ∪ tasks stamped with this goalId (tasks born inside the goal ARE members). */
 export function memberTasks(state: GoalState, tasks: BoardTaskLike[]): BoardTaskLike[] {
 	const snap = new Set(state.memberIds);
 	return tasks.filter((t) => snap.has(t.id) || t.goalId === state.goalId);
 }
 
-/** Goal-done cơ khí: KHÔNG còn member nào mở (pending/in_progress/parked đều là mở). */
+/** Mechanical goal-done: NO open members left (pending/in_progress/parked all count as open). */
 export function goalDone(state: GoalState, tasks: BoardTaskLike[]): boolean {
 	const open = memberTasks(state, tasks).filter((t) => t.status !== "completed" && t.status !== "cancelled");
 	return open.length === 0;
 }
 
-/** Kế toán epoch từ delta board; trả state mới đã push record (cap GOAL_EPOCH_MAX). */
+/** Epoch accounting from the board delta; returns the new state with the record pushed (cap GOAL_EPOCH_MAX). */
 export function recordEpoch(state: GoalState, n: number, at: string, created: number, completed: number): GoalState {
 	const rec: EpochRec = { n, at, created: Math.max(0, created), completed: Math.max(0, completed) };
 	return { ...state, epochs: [...state.epochs, rec].slice(-GOAL_EPOCH_MAX) };
 }
 
-/** Spinning: ≥2 epoch liền mà 0 task hoàn thành (tạo task mới KHÔNG tính tiến độ). */
+/** Spinning: ≥2 consecutive epochs with 0 tasks completed (creating new tasks does NOT count as progress). */
 export function spinning(state: GoalState): boolean {
 	const es = state.epochs;
 	return es.length >= 2 && es[es.length - 1].completed === 0 && es[es.length - 2].completed === 0;
@@ -226,18 +226,18 @@ export function sanitizeGoalState(raw: unknown): GoalState | null {
 	};
 }
 
-/** Driver gọi trước khi đánh thức: còn chạy mới wake. */
+/** Driver calls before waking: only wake while still running. */
 export function shouldWake(state: GoalState): boolean {
 	return state.status === "running";
 }
 
-/** Tiêu 1 epoch sau khi đã đánh thức. Chạm cap → done (epoch cạn). */
+/** Consume 1 epoch after waking. Hitting the cap → done (epochs exhausted). */
 export function nextEpoch(state: GoalState, now: string): GoalState {
 	const epoch = state.epoch + 1;
 	return { ...state, epoch, status: epoch >= GOAL_EPOCH_MAX ? "done" : state.status, updatedAt: now };
 }
 
-/** Backoff sau epoch thứ n (0-based) — giây, cap cuối thang. */
+/** Backoff after epoch n (0-based) — seconds, capped at the end of the ladder. */
 export function backoffSec(epoch: number): number {
 	const i = Math.max(0, Math.min(epoch, GOAL_BACKOFF_LADDER.length - 1));
 	return GOAL_BACKOFF_LADDER[i];
@@ -255,13 +255,13 @@ export function stopGoal(state: GoalState, now: string): GoalState {
 	return { ...state, status: "stopped", updatedAt: now };
 }
 
-/** Dùng lease — đường appeal duy nhất cho phiên không giám sát.
- *  Chỉ 1 lần/goal, chỉ khi còn granted, chỉ khi goal chưa kết thúc. */
+/** Use the lease — the only appeal path for an unsupervised session.
+ *  Once per goal, only while still granted, only while the goal has not ended. */
 export function useLease(state: GoalState, note: string, now: string, taskId?: string): LeaseResult {
-	if (!state.lease.granted) return { ok: false, reason: "lease không được cấp cho goal này" };
-	if (state.lease.used >= 1) return { ok: false, reason: "lease đã dùng 1/1 lần — chặn như plan-strict" };
+	if (!state.lease.granted) return { ok: false, reason: "lease not granted for this goal" };
+	if (state.lease.used >= 1) return { ok: false, reason: "lease already used 1/1 times — blocked like plan-strict" };
 	if (state.status === "done" || state.status === "stopped") {
-		return { ok: false, reason: `goal đã ${state.status} — lease chết theo goal` };
+		return { ok: false, reason: `goal already ${state.status} — the lease dies with the goal` };
 	}
 	const entry: LeaseUse = { at: now, ...(taskId ? { taskId } : {}), note: note.slice(0, 400) };
 	return {
@@ -270,20 +270,20 @@ export function useLease(state: GoalState, note: string, now: string, taskId?: s
 	};
 }
 
-/** Báo cáo sáng hôm sau — lease LUÔN lộ, phong bì có bị xé là thấy ngay. */
+/** Next-morning report — the lease ALWAYS surfaces; tear open the envelope and it is right there. */
 export function wrapUpReport(state: GoalState): string {
 	const leaseLine =
 		state.lease.used === 0
-			? `lease: CHƯA DÙNG${state.lease.granted ? "" : " (không được cấp)"}`
-			: `lease: ĐÃ DÙNG ${state.lease.used}/1 lần`;
+			? `lease: NOT USED YET${state.lease.granted ? "" : " (not granted)"}`
+			: `lease: USED ${state.lease.used}/1 times`;
 	const uses = state.lease.log.map((l) => `  • ${l.at}${l.taskId ? ` task ${l.taskId}` : ""} — ${l.note}`).join("\n");
 	const created = state.epochs.reduce((s, e) => s + e.created, 0);
 	const done = state.epochs.reduce((s, e) => s + e.completed, 0);
-	const tail = state.epochs.slice(-5).map((e) => `  ep${e.n}: +${e.created} tạo / ${e.completed} xong`).join("\n");
+	const tail = state.epochs.slice(-5).map((e) => `  ep${e.n}: +${e.created} created / ${e.completed} done`).join("\n");
 	return [
 		`GOAL wrap-up — ${state.status}`,
 		`anchor: ${state.anchor}`,
-		`epoch: ${state.epoch}/${GOAL_EPOCH_MAX} · task: ${created} tạo / ${done} xong / ${state.board.members} member`,
+		`epoch: ${state.epoch}/${GOAL_EPOCH_MAX} · tasks: ${created} created / ${done} done / ${state.board.members} members`,
 		...(state.memberIds.length > 0 ? [`snapshot: #${state.memberIds.slice(0, 30).join(" #")}${state.memberIds.length > 30 ? " …" : ""}`] : []),
 		...(tail ? [tail] : []),
 		leaseLine,

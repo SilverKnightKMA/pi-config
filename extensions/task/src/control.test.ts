@@ -49,13 +49,13 @@ describe("control: applyControlAction — reopen (v1.4.35)", () => {
 		let state = seeded();
 		const done = updateTask(state, 1, { status: "in_progress" }, 1);
 		state = done.state;
-		const closed = updateTask(state, 1, { status: "completed", evidence: "đã xong (e2e)" }, 2);
+		const closed = updateTask(state, 1, { status: "completed", evidence: "done (e2e)" }, 2);
 		state = closed.state;
 		const r = applyControlAction(state, { v: 1, action: "reopen", id: 1 }, 3);
 		assert.equal(r.applied, true);
 		const t = r.state.tasks.find((x) => x.id === 1)!;
 		assert.equal(t.status, "in_progress");
-		assert.equal(t.evidence, "đã xong (e2e)");
+		assert.equal(t.evidence, "done (e2e)");
 	});
 
 	test("reopen of a completed task with a re-opened blocker falls back to pending", () => {
@@ -65,7 +65,7 @@ describe("control: applyControlAction — reopen (v1.4.35)", () => {
 		state = b.state;
 		state = updateTask(state, 1, { status: "completed", evidence: "ok1" }, 1).state;
 		state = updateTask(state, 2, { status: "completed", evidence: "ok2" }, 1).state;
-		// blocker được user mở lại → task 2 giờ có blocker mở
+		// blocker reopened by the user → task 2 now has an open blocker
 		state = applyControlAction(state, { v: 1, action: "reopen", id: 1 }, 2).state;
 		const r = applyControlAction(state, { v: 1, action: "reopen", id: 2 }, 3);
 		assert.equal(r.applied, true);
@@ -76,7 +76,7 @@ describe("control: applyControlAction — reopen (v1.4.35)", () => {
 		const state = seeded();
 		const r = applyControlAction(state, { v: 1, action: "reopen", id: 1 }, 1);
 		assert.equal(r.applied, false);
-		assert.match(r.note, /không cần reopen/);
+		assert.match(r.note, /no reopen needed/);
 	});
 });
 
@@ -84,7 +84,7 @@ describe("control: applyControlAction", () => {
 	test("unpark reopens a parked task as in_progress and clears the appeal reason", () => {
 		let state = seeded();
 		state = updateTask(state, 1, { evidence: "e" }, 1).state;
-		state = updateTask(state, 1, { status: "parked", appealReason: "tranh chấp" }, 2).state;
+		state = updateTask(state, 1, { status: "parked", appealReason: "dispute" }, 2).state;
 		const r = applyControlAction(state, { v: 1, action: "unpark", id: 1 }, 3);
 		assert.equal(r.applied, true);
 		const t = r.state.tasks[0]!;
@@ -100,14 +100,14 @@ describe("control: applyControlAction", () => {
 		state = updateTask(state, 2, { status: "parked", appealReason: "x" }, 2).state;
 		const r = applyControlAction(state, { v: 1, action: "unpark", id: 2 }, 3);
 		assert.equal(r.state.tasks[1]!.status, "pending");
-		assert.match(r.note, /pending — còn blocker/);
+		assert.match(r.note, /pending — still blocked/);
 	});
 
 	test("unpark refuses a task that is not parked", () => {
 		const state = seeded();
 		const r = applyControlAction(state, { v: 1, action: "unpark", id: 1 }, 2);
 		assert.equal(r.applied, false);
-		assert.match(r.note, /không ở trạng thái parked/);
+		assert.match(r.note, /not in parked status/);
 	});
 
 	test("strict flips the flag without touching verifyAmendments", () => {
@@ -115,8 +115,8 @@ describe("control: applyControlAction", () => {
 		const r = applyControlAction(state, { v: 1, action: "strict", id: 1, value: true }, 2);
 		assert.equal(r.applied, true);
 		assert.equal(r.state.tasks[0]!.verify!.strict, true);
-		assert.equal(r.state.tasks[0]!.verifyAmendments, 0); // không tốn budget amend (vẫn 0 từ lúc tạo)
-		// và hạ cũng được — qua bridge (user)
+		assert.equal(r.state.tasks[0]!.verifyAmendments, 0); // does not consume the amend budget (still 0 from create)
+		// lowering works too — via the bridge (user)
 		const r2 = applyControlAction(r.state, { v: 1, action: "strict", id: 1, value: false }, 3);
 		assert.equal(r2.state.tasks[0]!.verify!.strict, false);
 	});
@@ -125,12 +125,12 @@ describe("control: applyControlAction", () => {
 		const state = seeded();
 		const r = applyControlAction(state, { v: 1, action: "strict", id: 1, value: true }, 2);
 		assert.equal(r.applied, false);
-		assert.match(r.note, /không có verify spec/);
+		assert.match(r.note, /has no verify spec/);
 	});
 });
 
-// v1.4.37: user mở lại (unpark/reopen) = cấp chu kỳ phán mới — reset counter,
-// không thì cap 3 vòng cũ park lại ngay không gọi judge (live #13 2026-09-12)
+// v1.4.37: the user reopening (unpark/reopen) = a fresh judging cycle — reset counters,
+// otherwise the old 3-round cap re-parks immediately without calling the judge (live #13 2026-09-12)
 describe("control: un-park/reopen resets the judge cycle", () => {
 	it("unpark resets judgeRounds + failStreak on a capped parked task", () => {
 		const base: TaskState = EMPTY_STATE;
@@ -159,12 +159,12 @@ describe("control: un-park/reopen resets the judge cycle", () => {
 // ── v1.4.38 doneCheck guard (amend) ─────────────────────────────────────
 describe("control: doneCheck amend (user-only door, v1.4.38)", () => {
 	test("valid amend payload parses; empty/malformed description rejected", () => {
-		const ok = parseControlPayload('{"v":1,"action":"amend","id":5,"description":"  mới  "}');
+		const ok = parseControlPayload('{"v":1,"action":"amend","id":5,"description":"  new  "}');
 		assert.equal(ok?.action, "amend");
-		assert.equal(ok?.description, "mới");
+		assert.equal(ok?.description, "new");
 		assert.equal(parseControlPayload('{"v":1,"action":"amend","id":5,"description":""}'), null);
 		assert.equal(parseControlPayload('{"v":1,"action":"amend","id":5}'), null);
-		// length cap 2000 chống phình packet
+		// length cap 2000 guards against packet bloat
 		const long = parseControlPayload(`{"v":1,"action":"amend","id":5,"description":"${"x".repeat(3000)}"}`);
 		assert.equal(long?.description.length, 2000);
 	});
@@ -173,16 +173,16 @@ describe("control: doneCheck amend (user-only door, v1.4.38)", () => {
 		const state = seeded();
 		const res = applyControlAction(
 			state,
-			{ v: 1, action: "amend", id: 1, description: "đề mới của user" },
+			{ v: 1, action: "amend", id: 1, description: "user's new brief" },
 			Date.now(),
 		);
 		assert.equal(res.applied, true);
 		const t = res.state.tasks[0]!;
-		assert.equal(t.description, "đề mới của user");
+		assert.equal(t.description, "user's new brief");
 		assert.equal(t.descHistory?.length, 1);
 		assert.equal(t.descHistory?.[0]?.by, "user");
 		assert.equal(t.descHistory?.[0]?.from, "done-check");
-		assert.equal(t.descAmendments, undefined); // user sửa không đếm
+		assert.equal(t.descAmendments, undefined); // user edits do not count
 	});
 
 	test("amend with identical description is a no-op", () => {
@@ -195,12 +195,12 @@ describe("control: doneCheck amend (user-only door, v1.4.38)", () => {
 describe("graph: descAmend accounting (v1.4.38)", () => {
 	test("agent rewrite increments descAmendments and trails old→new; user rewrite trails but does not count", () => {
 		const state = seeded();
-		const a1 = updateTask(state, 1, { description: "đề agent lần 1", descAmend: { by: "agent" } }, 2);
+		const a1 = updateTask(state, 1, { description: "agent brief v1", descAmend: { by: "agent" } }, 2);
 		assert.equal(a1.state.tasks[0]?.descAmendments, 1);
-		const a2 = updateTask(a1.state, 1, { description: "đề user", descAmend: { by: "user" } }, 3);
-		assert.equal(a2.state.tasks[0]?.descAmendments, 1, "user amend không tốn ngân sách");
+		const a2 = updateTask(a1.state, 1, { description: "user brief", descAmend: { by: "user" } }, 3);
+		assert.equal(a2.state.tasks[0]?.descAmendments, 1, "user amend costs no budget");
 		assert.equal(a2.state.tasks[0]?.descHistory?.length, 2);
-		assert.equal(a2.state.tasks[0]?.descHistory?.[1]?.from, "đề agent lần 1");
+		assert.equal(a2.state.tasks[0]?.descHistory?.[1]?.from, "agent brief v1");
 	});
 
 	test("descHistory capped at 5 entries, each side truncated to 400 chars", () => {
@@ -232,41 +232,41 @@ describe("graph: descAmend accounting (v1.4.38)", () => {
 	});
 });
 
-describe("proposal-decide (v1.4.53 — bảng duyệt khi amend bị chặn)", () => {
+describe("proposal-decide (v1.4.53 — approval board when amend is blocked)", () => {
 	function stateWithProposal(strict = false): TaskState {
-		let st = createTask(EMPTY_STATE, "t", "đề gốc", [], 1000, strict ? { lane: "state", strict: true, probes: [{ pattern: "ls", expect: "x" }] } : undefined).state!;
+		let st = createTask(EMPTY_STATE, "t", "original brief", [], 1000, strict ? { lane: "state", strict: true, probes: [{ pattern: "ls", expect: "x" }] } : undefined).state!;
 		const t = st.tasks[0];
-		st.tasks[0] = { ...t, proposals: [{ id: "p1", at: 2000, from: "đề gốc", to: "đề mới", reason: "cap 2/2", status: "pending" }] };
+		st.tasks[0] = { ...t, proposals: [{ id: "p1", at: 2000, from: "original brief", to: "new brief", reason: "cap 2/2", status: "pending" }] };
 		return st;
 	}
-	test("apply: đề mới áp dụng, KHÔNG tốn descAmendments, descHistory ghi user-proposal", () => {
+	test("apply: new brief applied, does NOT consume descAmendments, descHistory records user-proposal", () => {
 		const st = stateWithProposal();
 		const r = applyControlAction(st, { v: 1, action: "proposal-decide", id: 1, proposalId: "p1", decision: "apply" }, 3000);
 		expect(r.applied).toBe(true);
 		const t = r.state.tasks[0];
-		expect(t.description).toBe("đề mới");
+		expect(t.description).toBe("new brief");
 		expect(t.descAmendments ?? 0).toBe(0);
 		expect(t.descHistory?.at(-1)?.by).toBe("user-proposal");
 		expect(t.proposals?.[0].status).toBe("applied");
 		expect(t.proposals?.[0].decidedAt).toBe(3000);
 	});
-	test("reject: đề giữ nguyên, proposal đánh dấu rejected + note", () => {
+	test("reject: brief unchanged, proposal marked rejected + note", () => {
 		const st = stateWithProposal();
-		const r = applyControlAction(st, { v: 1, action: "proposal-decide", id: 1, proposalId: "p1", decision: "reject", note: "thiếu căn cứ" }, 3000);
+		const r = applyControlAction(st, { v: 1, action: "proposal-decide", id: 1, proposalId: "p1", decision: "reject", note: "insufficient grounds" }, 3000);
 		expect(r.applied).toBe(true);
 		const t = r.state.tasks[0];
-		expect(t.description).toBe("đề gốc");
+		expect(t.description).toBe("original brief");
 		expect(t.proposals?.[0].status).toBe("rejected");
-		expect(t.proposals?.[0].note).toBe("thiếu căn cứ");
+		expect(t.proposals?.[0].note).toBe("insufficient grounds");
 	});
-	test("id không đúng / đã quyết rồi → không áp", () => {
+	test("wrong id / already decided → not applied", () => {
 		const st = stateWithProposal();
 		expect(applyControlAction(st, { v: 1, action: "proposal-decide", id: 1, proposalId: "pX", decision: "apply" }, 3000).applied).toBe(false);
 		const done = applyControlAction(st, { v: 1, action: "proposal-decide", id: 1, proposalId: "p1", decision: "apply" }, 3000);
 		const again = applyControlAction(done.state, { v: 1, action: "proposal-decide", id: 1, proposalId: "p1", decision: "apply" }, 3500);
 		expect(again.applied).toBe(false);
 	});
-	test("parseControlPayload: đủ cặp mới qua, thiếu decision rớt", () => {
+	test("parseControlPayload: full pair passes, missing decision fails", () => {
 		const ok = parseControlPayload(JSON.stringify({ v: 1, action: "proposal-decide", id: 1, proposalId: "p1", decision: "apply" }));
 		expect(ok?.action).toBe("proposal-decide");
 		expect(ok?.decision).toBe("apply");

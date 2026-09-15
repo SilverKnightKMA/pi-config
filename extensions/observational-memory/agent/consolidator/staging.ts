@@ -144,8 +144,8 @@ export function countWords(text: string): number {
 }
 
 /** Words ≈ tokens × 3/4; floor 50 guards against absurdly small budgets.
- * v1.4.62: bỏ tolerance 1.25 (port-side) — upstream pi-observational-memory
- * hướng dẫn ~750 từ cho 1,000 tok, không có đệm. Gate giờ khớp prompt + hiển thị. */
+ * v1.4.62: drop the 1.25 tolerance (port-side) — upstream pi-observational-memory
+ * guides ~750 words per 1,000 tok, no padding. The gate now matches prompt + display. */
 export function journeyWordBudget(targetTokens: number, tolerance = 1): number {
 	return Math.max(50, Math.round((targetTokens * 3 * tolerance) / 4));
 }

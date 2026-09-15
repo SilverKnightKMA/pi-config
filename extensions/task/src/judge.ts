@@ -219,8 +219,8 @@ export function verdictConsequence(
 		return {
 			action: "refuse-unavailable",
 			message:
-				"[layer-2] judge KHÔNG khả dụng (spawn lỗi/timeout/relay) — completion bị từ chối (fail-closed). " +
-				"Thử lại sau; nếu kẹt lâu thì appeal (task_update appeal=\"lý do\") để PARK chờ user.",
+				"[layer-2] judge unavailable (spawn error/timeout/relay) — completion refused (fail-closed). " +
+				"Try again later; if stuck for long, appeal (task_update appeal=\"reason\") to PARK and wait for the user.",
 			failStreak: prev.failStreak,
 			judgeRounds: prev.judgeRounds,
 		};
@@ -228,7 +228,7 @@ export function verdictConsequence(
 	if (rounds >= MAX_JUDGE_ROUNDS && verdict.verdict !== "pass") {
 		return {
 			action: "park-cap",
-			message: `[layer-2] đủ ${MAX_JUDGE_ROUNDS} vòng phán mà chưa xong — PARK chờ user. Lý do vòng cuối: ${verdict.reason}`,
+			message: `[layer-2] ${MAX_JUDGE_ROUNDS} judge rounds spent without completion — PARK awaiting the user. Last-round reason: ${verdict.reason}`,
 			failStreak: prev.failStreak,
 			judgeRounds: rounds,
 		};
@@ -244,7 +244,7 @@ export function verdictConsequence(
 	if (verdict.verdict === "insufficient_evidence") {
 		return {
 			action: "need-evidence",
-			message: `[layer-2] chưa đủ bằng chứng để phán (${verdict.confidence}) — ${verdict.reason}. Bổ sung evidence cụ thể (lệnh đã chạy, output, file) rồi khai completed lại.`,
+			message: `[layer-2] not enough evidence to rule (${verdict.confidence}) — ${verdict.reason}. Add concrete evidence (commands run, output, files), then declare completed again.`,
 			failStreak: 0,
 			judgeRounds: rounds,
 		};
@@ -255,21 +255,21 @@ export function verdictConsequence(
 		if (streak >= 2) {
 			return {
 				action: "demote",
-				message: `[layer-2] judge phán FAIL (conf cao) ${streak} lần liên tiếp — demote về in_progress. Lý do: ${verdict.reason}`,
+				message: `[layer-2] judge rules FAIL (high conf) ${streak} consecutive times — demote to in_progress. Reason: ${verdict.reason}`,
 				failStreak: 0,
 				judgeRounds: rounds,
 			};
 		}
 		return {
 			action: "fail-streak",
-			message: `[layer-2] judge phán FAIL (conf cao, lần ${streak}/2) — completion từ chối, chưa demote. Lý do: ${verdict.reason}. Sửa việc rồi khai lại; không đồng ý thì appeal.`,
+			message: `[layer-2] judge rules FAIL (high conf, attempt ${streak}/2) — completion refused, no demote yet. Reason: ${verdict.reason}. Fix the work and re-declare; if you disagree, appeal.`,
 			failStreak: streak,
 			judgeRounds: rounds,
 		};
 	}
 	return {
 		action: "need-evidence",
-		message: `[layer-2] judge phán FAIL nhưng conf ${verdict.confidence} — xử như thiếu bằng chứng, không demote. Lý do: ${verdict.reason}. Bổ sung evidence rồi khai lại.`,
+		message: `[layer-2] judge rules FAIL but confidence ${verdict.confidence} — treated as insufficient evidence, no demotion. Reason: ${verdict.reason}. Add evidence, then re-declare.`,
 		failStreak: 0,
 		judgeRounds: rounds,
 	};

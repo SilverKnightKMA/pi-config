@@ -45,11 +45,11 @@ export interface Task {
   /** v1.4.38 doneCheck guard: how many times the AGENT rewrote the description
    * (cap DESC_AMEND_MAX — beyond that only the user bridge may amend). */
   descAmendments?: number;
-  /** v1.4.53 proposal channel: đề xuất sửa đề chờ user duyệt trên panel.
-   *  Amend bị chặn (strict/cap) KHÔNG throw nữa — ghi proposal, user quyết định. */
+  /** v1.4.53 proposal channel: a done-check amendment awaiting user approval on the panel.
+   *  A blocked amend (strict/cap) no longer throws — it records a proposal, the user decides. */
   proposals?: TaskProposal[];
-  /** v1.4.51 goal membership: task tạo khi goal active được stamp goalId
-   * (snapshot ∪ stamped = membership; goal-done check cơ khí theo tập này). */
+  /** v1.4.51 goal membership: a task created while a goal is active gets goalId stamped
+   * (snapshot ∪ stamped = membership; the goal-done check is mechanical over this set). */
   goalId?: string;
   /** v1.4.38: append-only diff trail of description rewrites (agent AND user),
    * capped length; the judge packet carries this so layer-2 can weigh
@@ -59,7 +59,7 @@ export interface Task {
   updatedAt: number;
 }
 
-/** Một đề xuất sửa đề: model soạn, user duyệt (panel) mới áp dụng. */
+/** A done-check amendment proposal: drafted by the model, applied only once the user approves (panel). */
 export interface TaskProposal {
 	id: string;
 	at: number;

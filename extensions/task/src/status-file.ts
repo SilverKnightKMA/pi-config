@@ -38,7 +38,7 @@ export interface TaskStatusFile {
 		failStreak?: number;
 		judgeRounds?: number;
 		appealReason?: string;
-		/** v1.4.51 goal membership stamp — goal engine đọc để goal-done check cơ khí. */
+		/** v1.4.51 goal membership stamp — the goal engine reads it for the mechanical goal-done check. */
 		goalId?: string;
 		/** v1.4.38 doneCheck guard: agent rewrite count (cap 2) + trail for the panel chip. */
 		descAmendments?: number;

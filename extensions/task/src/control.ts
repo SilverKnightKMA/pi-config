@@ -4,8 +4,8 @@
  * PARK is one-way for the model: task_update may put a task INTO parked
  * (appeal, round cap) but may never take it OUT — otherwise the worker just
  * un-parks itself and the user never sees the dispute (user report
- * 2026-09-09: "nếu bị park thì phải là mình xử lý bằng tay, chứ agent vẫn có
- * quyền cập nhật thì nó bypass"). Same doctrine for strict v2 (settled
+ * 2026-09-09: "if something is parked I must handle it by hand — if the
+ * agent still has update rights it just bypasses"). Same doctrine for strict v2 (settled
  * 03:38): raising strict is safe for anyone, LOWERING strict is user-only —
  * so the verify-amendment path may not drop strict either.
  *
@@ -60,7 +60,7 @@ export function parseControlPayload(raw: string): TaskControlFile | null {
 	if (d.action !== "unpark" && d.action !== "strict" && d.action !== "reopen" && d.action !== "amend" && d.action !== "proposal-decide") return null;
 	if (typeof d.id !== "number" || !Number.isInteger(d.id) || d.id <= 0) return null;
 	if (d.value !== undefined && typeof d.value !== "boolean") return null;
-	// proposal-decide (v1.4.53): user bấm ✓/✗ trên đề xuất sửa đề
+	// proposal-decide (v1.4.53): the user clicks ✓/✗ on a done-check amendment proposal
 	if (d.action === "proposal-decide") {
 		if (typeof d.proposalId !== "string" || !d.proposalId) return null;
 		if (d.decision !== "apply" && d.decision !== "reject") return null;
@@ -75,7 +75,7 @@ export function parseControlPayload(raw: string): TaskControlFile | null {
 			ackAt: typeof d.ackAt === "string" ? d.ackAt : undefined,
 		};
 	}
-	// amend: đề mới phải là chuỗi không rỗng, cắt 2000 ký tự (chống phình packet)
+	// amend: the new brief must be a non-empty string, truncated to 2000 chars (guards against packet bloat)
 	if (d.action === "amend") {
 		if (typeof d.description !== "string" || !d.description.trim()) return null;
 		return {
@@ -110,12 +110,13 @@ export function applyControlAction(state: TaskState, payload: TaskControlFile, n
 	if (!task) return { state, note: `no task #${payload.id}`, applied: false };
 	if (payload.action === "unpark") {
 		if (task.status !== "parked") {
-			return { state, note: `#${payload.id} không ở trạng thái parked`, applied: false };
+			return { state, note: `#${payload.id} not in parked status`, applied: false };
 		}
-		// unpark về in_progress; còn blocker thì về pending (blocked task không
-		// được in_progress — cùng luật tool layer). User chủ động mở lại = user cấp
-		// chu kỳ phán MỚI: reset judgeRounds/failStreak, nếu không cap 3 vòng cũ sẽ
-		// park lại ngay mà không gọi judge (live incident task #13 2026-09-12).
+		// unpark goes to in_progress; with an open blocker it goes to pending (a
+		// blocked task may not be in_progress — same law as the tool layer). The
+		// user proactively reopening = the user grants a NEW judging cycle: reset
+		// judgeRounds/failStreak, otherwise the old 3-round cap re-parks it
+		// immediately without calling the judge (live incident task #13 2026-09-12).
 		const index = new Map(state.tasks.map((t) => [t.id, t] as const));
 		const blocked = openBlockers(task, index).length > 0;
 		const result = updateTask(
@@ -125,16 +126,16 @@ export function applyControlAction(state: TaskState, payload: TaskControlFile, n
 			now,
 		);
 		if (result.error) return { state, note: result.error, applied: false };
-		return { state: result.state, note: `#${payload.id} mở lại (${blocked ? "pending — còn blocker" : "in_progress"})`, applied: true };
+		return { state: result.state, note: `#${payload.id} reopened (${blocked ? "pending — still blocked" : "in_progress"})`, applied: true };
 	}
 	if (payload.action === "reopen") {
 		// Force reopen (v1.4.35, user request 2026-09-10): user-only button for
 		// tasks the model closed — evidence stays on record; status rolls back
 		// (blocked → pending, else in_progress). Model keeps its own chat-path
-		// reopen via task_update (only PARKED is one-way). Cùng luật reset chu kỳ
-		// phán như unpark — tránh cap 3 vòng cũ park lại task user vừa mở.
+		// reopen via task_update (only PARKED is one-way). Same cycle-reset rule
+		// as unpark — avoids the old 3-round cap re-parking a task the user just reopened.
 		if (task.status !== "completed" && task.status !== "cancelled" && task.status !== "parked") {
-			return { state, note: `#${payload.id} đang mở (${task.status}) — không cần reopen`, applied: false };
+			return { state, note: `#${payload.id} already open (${task.status}) — no reopen needed`, applied: false };
 		}
 		const index = new Map(state.tasks.map((t) => [t.id, t] as const));
 		const blocked = openBlockers(task, index).length > 0;
@@ -145,13 +146,13 @@ export function applyControlAction(state: TaskState, payload: TaskControlFile, n
 			now,
 		);
 		if (result.error) return { state, note: result.error, applied: false };
-		return { state: result.state, note: `#${payload.id} reopen (${blocked ? "pending — còn blocker" : "in_progress"})`, applied: true };
+		return { state: result.state, note: `#${payload.id} reopen (${blocked ? "pending — still blocked" : "in_progress"})`, applied: true };
 	}
 	if (payload.action === "proposal-decide") {
-		// v1.4.53: user duyệt/từ chối đề xuất sửa đề trên panel.
-		// apply = đường user-amend: KHÔNG tiêu descAmendments cap, descHistory by 'user-proposal'.
+		// v1.4.53: the user approves/rejects a done-check amendment proposal on the panel.
+		// apply = the user-amend path: does NOT consume the descAmendments cap, descHistory by 'user-proposal'.
 		const p = (task.proposals ?? []).find((x) => x.id === payload.proposalId && x.status === "pending");
-		if (!p) return { state, note: `#${payload.id} không có proposal ${payload.proposalId ?? "?"} đang chờ`, applied: false };
+		if (!p) return { state, note: `#${payload.id} has no pending proposal ${payload.proposalId ?? "?"}`, applied: false };
 		const decided = (task.proposals ?? []).map((x) =>
 			x.id === p.id ? { ...x, status: payload.decision === "apply" ? ("applied" as const) : ("rejected" as const), decidedAt: now, note: payload.note } : x,
 		);
@@ -162,27 +163,27 @@ export function applyControlAction(state: TaskState, payload: TaskControlFile, n
 				proposals: decided,
 			}, now);
 			if (result.error) return { state, note: result.error, applied: false };
-			return { state: result.state, note: `#${payload.id} ĐÃ DUYỆT đề xuất ${p.id} — đề mới áp dụng (không tốn cap)`, applied: true };
+			return { state: result.state, note: `#${payload.id} APPROVED proposal ${p.id} — new brief applied (no cap consumed)`, applied: true };
 		}
 		const result = updateTask(state, payload.id, { proposals: decided }, now);
 		if (result.error) return { state, note: result.error, applied: false };
-		return { state: result.state, note: `#${payload.id} TỪ CHỐI đề xuất ${p.id}${payload.note ? ` (ghi chú: ${payload.note})` : ""} — đề giữ nguyên`, applied: true };
+		return { state: result.state, note: `#${payload.id} REJECTED proposal ${p.id}${payload.note ? ` (note: ${payload.note})` : ""} — brief unchanged`, applied: true };
 	}
 	if (payload.action === "amend") {
-		// v1.4.38 doneCheck guard — cửa user-only khi agent hết hạn mức (cap
-		// DESC_AMEND_MAX) hoặc task strict. User là người giữ hợp đồng: sửa không
-		// tốn ngân sách nhưng VẪN ghi descHistory (by user) để judge thấy toàn bộ
-		// đời sống của tờ đề, không chỉ bản cuối.
+		// v1.4.38 doneCheck guard — the user-only door when the agent is out of
+		// budget (cap DESC_AMEND_MAX) or the task is strict. The user owns the
+		// contract: edits cost no budget but STILL record descHistory (by user)
+		// so the judge sees the brief's entire life, not just the final version.
 		const next = payload.description ?? "";
 		if (!next || next === task.description) {
-			return { state, note: `#${payload.id} đề mới trùng hoặc rỗng — bỏ qua`, applied: false };
+			return { state, note: `#${payload.id} new description identical or empty — skipped`, applied: false };
 		}
 		const result = updateTask(state, payload.id, { description: next, descAmend: { by: "user" } }, now);
 		if (result.error) return { state, note: result.error, applied: false };
-		return { state: result.state, note: `#${payload.id} doneCheck user đã sửa (trail giữ tờ cũ)`, applied: true };
+		return { state: result.state, note: `#${payload.id} doneCheck edited by user (trail keeps the old sheet)`, applied: true };
 	}
 	// action === "strict"
-	if (!task.verify) return { state, note: `#${payload.id} không có verify spec`, applied: false };
+	if (!task.verify) return { state, note: `#${payload.id} has no verify spec`, applied: false };
 	const target = payload.value === undefined ? true : payload.value;
 	const result = updateTask(state, payload.id, { strictOverride: target }, now);
 	if (result.error) return { state, note: result.error, applied: false };

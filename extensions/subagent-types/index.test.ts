@@ -21,18 +21,18 @@ import { tmpdir } from "node:os";
 import { goalWakeActive } from "./index.ts";
 
 describe("goalWakeActive (v1.4.51 single-waker)", () => {
-	test("dir có goal running → true; chỉ paused/done → false; không dir → false", () => {
+	test("dir with a running goal → true; only paused/done → false; no dir → false", () => {
 		const dir = mkdtempSync(join(tmpdir(), "gwake-"));
-		expect(goalWakeActive(dir)).toBe(false); // dir rỗng
+		expect(goalWakeActive(dir)).toBe(false); // empty dir
 		writeFileSync(join(dir, "a.json"), JSON.stringify({ status: "paused" }));
 		writeFileSync(join(dir, "b.json"), JSON.stringify({ status: "done" }));
 		expect(goalWakeActive(dir)).toBe(false);
 		writeFileSync(join(dir, "c.json"), JSON.stringify({ status: "running" }));
 		expect(goalWakeActive(dir)).toBe(true);
-		writeFileSync(join(dir, "rác.json"), "{not json");
-		expect(goalWakeActive(dir)).toBe(true); // file rác không phá quét
+		writeFileSync(join(dir, "junk.json"), "{not json");
+		expect(goalWakeActive(dir)).toBe(true); // junk file does not break the scan
 		rmSync(dir, { recursive: true, force: true });
-		expect(goalWakeActive(join(dir))).toBe(false); // dir biến mất
+		expect(goalWakeActive(join(dir))).toBe(false); // dir gone
 	});
 });
 

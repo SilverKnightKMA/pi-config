@@ -217,10 +217,10 @@ export default function taskExtension(pi: ExtensionAPI) {
 			pi.appendEntry(TASK_STATE, state);
 			projectStatus();
 			renderWidget();
-			// v1.4.53: vòng kín — báo ngược về model để làm tiếp, không phải dò
+			// v1.4.53: closed loop — report back to the model so it can continue, no polling
 			if (payload.action === "proposal-decide") {
 				pi.sendUserMessage(
-					`[task-proposal] #${payload.id} ${payload.decision === "apply" ? "user ĐÃ DUYỆT" : "user TỪ CHỐI"} đề xuất sửa đề${payload.note ? ` (ghi chú: ${payload.note})` : ""}. ${payload.decision === "apply" ? "Đề mới đã áp dụng — làm tiếp theo đề mới." : "Đề giữ nguyên — tiếp tục theo đề cũ hoặc hỏi user làm rõ."}`,
+					`[task-proposal] #${payload.id} ${payload.decision === "apply" ? "user APPROVED" : "user REJECTED"} the done-check amendment proposal${payload.note ? ` (note: ${payload.note})` : ""}. ${payload.decision === "apply" ? "New brief applied — continue with the new brief." : "Brief unchanged — continue under the old brief or ask the user to clarify."}`,
 					{ deliverAs: "followUp" },
 				);
 			}
@@ -311,8 +311,8 @@ export default function taskExtension(pi: ExtensionAPI) {
 				t.audit ? `audit:${t.audit.verdict}` : "",
 				t.judgeRounds ? `judge-rounds:${t.judgeRounds}` : "",
 				t.failStreak ? `fail-streak:${t.failStreak}` : "",
-				t.status === "parked" ? `parked:${(t.appealReason ?? "chờ user").slice(0, 60)}` : "",
-				t.status === "held" ? `HELD judge ${t.judgeRounds ?? 1}/3 — cần evidence thật, đừng khai lại y nguyên` : "",
+				t.status === "parked" ? `parked:${(t.appealReason ?? "awaiting user").slice(0, 60)}` : "",
+				t.status === "held" ? `HELD judge ${t.judgeRounds ?? 1}/3 — needs real evidence, do not re-declare verbatim` : "",
 			]
 				.filter(Boolean)
 				.join(" · ");
@@ -357,20 +357,20 @@ export default function taskExtension(pi: ExtensionAPI) {
 				Type.Object({
 					lane: Type.Optional(
 						Type.Union([Type.Literal("state"), Type.Literal("judgment")], {
-							description: "state = có lệnh/file tự kiểm được; judgment = chỉ phán được",
+							description: "state = self-checkable via commands/files; judgment = only judgeable",
 						}),
 					),
 					probes: Type.Optional(
 						Type.Array(
 							Type.Object({
 								pattern: Type.String({
-									description: "Chuỗi phải xuất hiện trong lệnh bash worker THẬT SỰ chạy",
+									description: "Substring that must appear in a bash command the worker ACTUALLY runs",
 								}),
 								expect: Type.Optional(
-									Type.String({ description: "Chuỗi phải có trong output thật của lệnh đó" }),
+									Type.String({ description: "Substring that must appear in that command's real output" }),
 								),
 							}),
-							{ description: "Red-green: mỗi probe phải ĐỎ lúc tạo (chưa khớp sổ ghi lệnh)" },
+							{ description: "Red-green: each probe must be RED at create (not yet matched in the run log)" },
 						),
 					),
 					strict: Type.Optional(Type.Boolean()),
@@ -394,13 +394,13 @@ export default function taskExtension(pi: ExtensionAPI) {
 					const rg = redGreenCheck(verifySpec, runLog);
 					if (!rg.ok) {
 						throw new Error(
-							`[verify] probe không hợp lệ lúc tạo:\n${rg.reasons.join("\n")}\nHãy khai probe mà việc CHƯA làm thì nó ĐỎ (fail-to-pass), ví dụ lệnh kiểm sẽ chạy lúc xong việc.`,
+							`[verify] invalid probe at create:\n${rg.reasons.join("\n")}\nDeclare a probe that is RED while the work is NOT done (fail-to-pass), e.g. the check command you will run when the work is finished.`,
 						);
 					}
 				}
 			}
-			// v1.4.51 goal membership: task tạo khi goal active → stamp goalId
-			// (membership = snapshot ∪ stamped; goal-done check cơ khí theo tập này).
+			// v1.4.51 goal membership: a task created while a goal is active → stamp goalId
+			// (membership = snapshot ∪ stamped; the goal-done check is mechanical over this set).
 			const goal = statusSessionId ? activeGoal(statusSessionId) : null;
 			const result = createTask(
 				state,
@@ -415,7 +415,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 			commit(ctx as UiContext, result.state);
 			const warn = result.warnings.length > 0 ? `\nWarnings: ${result.warnings.join(" ")}` : "";
 			const verifyNote = verifySpec
-				? `\nVerify: lane=${verifySpec.lane}${verifySpec.probes.length > 0 ? `, ${verifySpec.probes.length} probe` : ""}${verifySpec.strict ? ", STRICT" : ""} — layer-1 audit sẽ chạy lúc khai completed (probe phải xanh trong sổ ghi lệnh).`
+				? `\nVerify: lane=${verifySpec.lane}${verifySpec.probes.length > 0 ? `, ${verifySpec.probes.length} probe` : ""}${verifySpec.strict ? ", STRICT" : ""} — layer-1 audit runs when you declare completed (probes must be green in the run log).`
 				: "";
 			return {
 				content: [{ type: "text", text: `Created #${result.task!.id}: ${result.task!.subject}${warn}${verifyNote}` }],
@@ -458,10 +458,10 @@ export default function taskExtension(pi: ExtensionAPI) {
 			description: Type.Optional(Type.String()),
 			blockedBy: Type.Optional(Type.Array(Type.Number())),
 			evidence: Type.Optional(Type.String({ description: "Required when completing" })),
-			amendReason: Type.Optional(Type.String({ description: "v1.4.53: lý do đề xuất sửa đề (hiện trong bảng duyệt) — ghi rõ khi bị chặn" })),
+			amendReason: Type.Optional(Type.String({ description: "v1.4.53: reason for the done-check amendment proposal (shown in the approval panel) — state it clearly when blocked" })),
 			appeal: Type.Optional(
 				Type.String({
-					escription: "Worker phản đối phán quyết verify/judge → PARK chờ user; nêu lý do cụ thể",
+					escription: "Worker disputes the verify/judge verdict → PARK awaiting the user; state a specific reason",
 				}),
 			),
 			verify: Type.Optional(
@@ -498,14 +498,14 @@ export default function taskExtension(pi: ExtensionAPI) {
 		) {
 			turnsSinceTaskTool = 0;
 			const patch: UpdatePatch = {};
-			// v1.4.51 no-reopen-in-goal: completed là một chiều trong goal — dao động
-			// (xong → mở lại → làm lại) tiêu epoch vô nghĩa. Escape hợp lệ: TẠO task
-			// mới có stamp (mảnh việc thật), không phải reopen (#43 envelope).
+			// v1.4.51 no-reopen-in-goal: completed is one-way inside a goal — flip-flopping
+			// (done → reopened → redone) burns meaningless epochs. The valid escape: CREATE a
+			// new stamped task (real work), not a reopen (#43 envelope).
 			if (params.status !== undefined) {
 				const cur = state.tasks.find((t) => t.id === params.id);
 				if (cur && cur.status === "completed" && params.status !== "completed" && cur.goalId && goalIdActive(cur.goalId)) {
 					throw new Error(
-						`[task] #${params.id} thuộc goal ${cur.goalId} (đang chạy) — completed là một chiều trong goal. Việc phát sinh: tạo task mới (tự được stamp vào goal), không reopen.`,
+						`[task] #${params.id} belongs to goal ${cur.goalId} (running) — completed is one-way inside a goal. Follow-up work: create a new task (auto-stamped into the goal), do not reopen.`,
 					);
 				}
 				patch.status = params.status;
@@ -515,35 +515,36 @@ export default function taskExtension(pi: ExtensionAPI) {
 			if (params.blockedBy !== undefined) patch.blockedBy = params.blockedBy;
 			if (params.evidence !== undefined) patch.evidence = params.evidence;
 
-			// PARK là một chiều với model (v1.4.28): được đưa VÀO park (appeal/cap)
-			// nhưng không tự ra khỏi — worker tự un-park = bypass toàn bộ phán quyết
-			// (user report 2026-09-09). Cửa ra duy nhất: nút panel (user) → control
-			// file → consumeControlFile ở trên. Cancel task đang chờ user cũng chặn
-			// (hủy = giấu tranh chấp).
+			// PARK is one-way for the model (v1.4.28): the model may put a task INTO park
+			// (appeal/cap) but never take it out — a worker un-parking itself bypasses the
+			// entire verdict (user report 2026-09-09). The only way out: the panel button
+			// (user) → control file → consumeControlFile above. Cancelling a task awaiting
+			// the user is blocked too (cancelling = hiding the dispute).
 			const existingForLock = state.tasks.find((t) => t.id === params.id);
 			if (existingForLock?.status === "parked" && params.status !== undefined && params.status !== "parked") {
 				throw new Error(
-					`[task] #${params.id} đang PARKED (dừng chờ user) — model không tự mở lại/hủy được. User bấm "mở lại" trên task panel (control-file bridge), hoặc user nói trực tiếp trong chat.`,
+					`[task] #${params.id} is PARKED (stopped, awaiting the user) — the model cannot un-park or cancel it itself. The user clicks "reopen" on the task panel (control-file bridge), or says so directly in chat.`,
 				);
 			}
 
-			// v1.4.38 doneCheck guard — học sinh được đổi đề nhưng không được đổi kín:
-			// mọi sửa description của model được ghi trail (descHistory: tờ cũ → tờ mới,
-			// updateTask qua descAmend), cap DESC_AMEND_MAX lần; task strict cấm hẳn.
-			// Cửa còn lại khi hết hạn mức: user (control-file action 'amend' trên panel,
-			// cùng pattern unpark/strict/reopen). Lý do sống: judge chỉ thấy tờ đề
-			// HIỆN TẠI — agent giữ quyền đổi đề = điều khiển phán quyết (task #13 lesson).
+			// v1.4.38 doneCheck guard — the agent may rephrase the brief but not swap it
+			// out: every model edit to description is trailed (descHistory: old sheet →
+			// new sheet, updateTask via descAmend), capped at DESC_AMEND_MAX; strict tasks
+			// forbid it outright. The remaining door once the budget is gone: the user
+			// (control-file action 'amend' on the panel, same pattern as
+			// unpark/strict/reopen). Why it lives: the judge only sees the CURRENT sheet —
+			// an agent free to rewrite the brief controls the verdict (task #13 lesson).
 			if (params.description !== undefined) {
 				const t = state.tasks.find((t) => t.id === params.id);
 				if (t && params.description.trim() !== t.description) {
-					// v1.4.53 proposal channel: amend bị chặn KHÔNG còn là đường chết.
-					// (1) còn quota → sửa như thường; (2) goal lease chưa dùng → lease;
-					// (3) còn lại → GHI ĐỀ XUẤT chờ user duyệt trên panel (strict cũng
-					// được đề xuất — đề xuất = hỏi user, không phải tự sửa).
+					// v1.4.53 proposal channel: a blocked amend is NO LONGER a dead end.
+					// (1) quota left → edit as usual; (2) unused goal lease → lease;
+					// (3) otherwise → RECORD A PROPOSAL awaiting user approval on the panel
+					// (strict tasks may propose too — a proposal = asking the user, not self-editing).
 					const recordProposal = (blockedWhy: string): string => {
 						const to = (params.description ?? "").trim().slice(0, 2000);
 						const dup = (t.proposals ?? []).find((p) => p.status === "pending" && p.to === to);
-						if (dup) return `đề xuất ${dup.id} đã đang chờ duyệt (nội dung trùng) — không ghi thêm`;
+						if (dup) return `proposal ${dup.id} is already pending approval (identical content) — not recording another`;
 						const p: TaskProposal = {
 							id: `p${Date.now().toString(36)}`,
 							at: Date.now(),
@@ -553,25 +554,25 @@ export default function taskExtension(pi: ExtensionAPI) {
 							status: "pending",
 						};
 						patch.proposals = [...(t.proposals ?? []), p].slice(-4);
-						return `đã ghi đề xuất ${p.id} — user duyệt ở bảng đề xuất trên task panel (✓/✗); đề CHƯA đổi`;
+						return `recorded proposal ${p.id} — the user decides in the proposals panel on the task panel (✓/✗); brief NOT changed yet`;
 					};
 					if (t.verify?.strict === true) {
-						const note = recordProposal("strict — chỉ user được sửa đề");
+						const note = recordProposal("strict — only the user may edit the brief");
 						return {
-							content: [{ type: "text", text: `[task] #${params.id} ${note}. Lý do chặn: strict — doneCheck do user giữ. Sau khi user duyệt, engine sẽ áp + báo lại.` }],
+							content: [{ type: "text", text: `[task] #${params.id} ${note}. Block reason: strict — the doneCheck is user-controlled. Once the user approves, the engine will apply it and report back.` }],
 							details: {},
 						};
 					}
 					const used = t.descAmendments ?? 0;
 					if (used >= DESC_AMEND_MAX) {
-						// v1.4.51 goal lease: appeal đúng 1 lần/goal khi goal đang chạy.
+						// v1.4.51 goal lease: appeal exactly once per goal while the goal is running.
 						const lease = statusSessionId
-							? tryConsumeLease(statusSessionId, `#${params.id} descAmend ${used}/${DESC_AMEND_MAX} — appeal qua goal lease`)
-							: { ok: false as const, reason: "không có goal đang chạy" };
+							? tryConsumeLease(statusSessionId, `#${params.id} descAmend ${used}/${DESC_AMEND_MAX} — appeal via goal lease`)
+							: { ok: false as const, reason: "no goal running" };
 						if (!lease.ok) {
 							const note = recordProposal(`cap ${used}/${DESC_AMEND_MAX} — ${lease.reason}`);
 							return {
-								content: [{ type: "text", text: `[task] #${params.id} ${note}. Lý do chặn: doneCheck đã bị model sửa ${used}/${DESC_AMEND_MAX} lần (judge chỉ thấy đề hiện tại). Goal lease: ${lease.reason}.` }],
+								content: [{ type: "text", text: `[task] #${params.id} ${note}. Block reason: the doneCheck was already amended by the model ${used}/${DESC_AMEND_MAX} times (the judge only sees the current brief). Goal lease: ${lease.reason}.` }],
 								details: {},
 							};
 						}
@@ -582,20 +583,20 @@ export default function taskExtension(pi: ExtensionAPI) {
 				}
 			}
 
-			// Verify-spec amendment: escape hatch khi probe khai sai (chứ không
-			// phải để hạ mức kiểm). Tối đa 2 lần, mỗi lần đếm và ghi vào projection.
+			// Verify-spec amendment: an escape hatch for wrongly declared probes (NOT a
+			// way to lower the bar). Max 2 times, each counted and written to the projection.
 			if (params.verify !== undefined) {
 				const existingTask = state.tasks.find((t) => t.id === params.id);
 				const count = existingTask?.verifyAmendments ?? 0;
 				if (count >= 2) {
 					throw new Error(
-						`[verify] spec của #${params.id} đã amend ${count} lần — chờ user hoặc layer-2 phân xử, không amend thêm.`,
+						`[verify] spec of #${params.id} already amended ${count} times — wait for the user or layer-2 adjudication; no further amendments.`,
 					);
 				}
 				const parsed = parseVerify(params.verify);
 				if (parsed.error || !parsed.spec) throw new Error(`[verify] ${parsed.error}`);
-				// strict v2 (user chốt 03:38): nâng strict ai cũng được, HẠ chỉ user —
-				// amendment không được dùng để tắt strict của task đang có
+				// strict v2 (user settled 03:38): anyone may RAISE strict, LOWERING is user-only —
+				// an amendment may not turn off strict on an existing task
 				if (existingTask?.verify?.strict === true && parsed.spec.strict !== true) {
 					parsed.spec.strict = true;
 				}
@@ -603,14 +604,15 @@ export default function taskExtension(pi: ExtensionAPI) {
 			}
 
 			// Completion verification (design: pify-pending row 9, settled
-			// 2026-09-09). appeal bất kỳ lúc nào → PARK chờ user (escape valve cho
-			// mọi ngõ cụt, kể cả judge fail-closed). Ngược lại khi completed:
-			// - layer 1 ($0, deterministic): state-lane yêu mọi probe XANH; ĐỎ = lỗi
-			//   worker (từ chối, không cần judge); VÀNG = spec-fault → judge phân xử
-			// - layer 2 (judge, model khác họ GLM): judgment-lane luôn chạy; state-lane
-			//   chạy khi VÀNG hoặc strict. Hệ quả theo verdictConsequence: demote sau
-			//   2 fail-conf-cao liên tiếp, conf thấp → xin thêm evidence, PARK khi đủ
-			//   3 vòng, judge chết → từ chối (fail-closed, không đổi state).
+			// 2026-09-09). appeal at any time → PARK awaiting the user (escape valve
+			// for every dead end, including judge fail-closed). Otherwise on completed:
+			// - layer 1 ($0, deterministic): state-lane requires every probe GREEN;
+			//   RED = worker fault (refuse, no judge needed); AMBER = spec-fault → judge adjudicates
+			// - layer 2 (judge, a model from a different family than GLM): judgment-lane
+			//   always runs; state-lane runs on AMBER or strict. Consequences per
+			//   verdictConsequence: demote after 2 consecutive high-conf fails, low conf
+			//   → ask for more evidence, PARK at 3 rounds, judge dead → refuse
+			//   (fail-closed, no state change).
 			if (params.appeal !== undefined) {
 				patch.status = "parked";
 				patch.appealReason = params.appeal.trim().slice(0, 500);
@@ -631,34 +633,34 @@ export default function taskExtension(pi: ExtensionAPI) {
 					}));
 					if (audit.verdict === "fail") {
 						throw new Error(
-							`[verify] #${params.id} CHƯA qua kiểm chứng layer-1:\n${summarizeAudit(audit)}\nLàm xong việc rồi chạy lệnh kiểm (qua bash thật, để sổ ghi có bằng chứng) rồi khai completed lại; nếu probe khai sai thì amend verify (tối đa 2 lần).`,
+							`[verify] #${params.id} has NOT passed layer-1 verification:\n${summarizeAudit(audit)}\nFinish the work, then run the check command (through real bash, so the run log holds the evidence), then declare completed again; if the probe was declared wrong, amend verify (max 2 times).`,
 						);
 					}
 					if (audit.verdict === "pass" && !spec.strict) {
 						patch.audit = { at: Date.now(), verdict: "pass", summary: summarizeAudit(audit) };
 					} else {
-						// VÀNG (spec-fault) hoặc strict-green → layer-2 phán
+						// AMBER (spec-fault) or strict-green → layer-2 rules
 						judgeNeeded = true;
 					}
 				} else if (spec) {
-					// lane=judgment (hoặc state không probe — floor ép thành judgment)
+					// lane=judgment (or state with no probes — the floor forces judgment)
 					judgeNeeded = true;
 				}
 
 				if (judgeNeeded) {
 					const roundsUsed = task?.judgeRounds ?? 0;
 					if (roundsUsed >= MAX_JUDGE_ROUNDS) {
-						// đủ vòng phán rồi — park ngay, không tốn thêm judge call
+						// rounds exhausted — park immediately, no more judge calls
 						patch.status = "parked";
-						patch.appealReason = `judge cap: đã ${roundsUsed} vòng phán chưa hoàn thành`;
+						patch.appealReason = `judge cap: ${roundsUsed} judge rounds without completion`;
 					} else {
 						const logSlice = pickLogSlice(
 							runLog.map((e) => ({ cmd: e.cmd, output: e.output })),
 							probeViews ?? [],
 							evidence,
 						);
-						// v1.4.38: nếu task_update này CŨNG đổi đề, judge phải thấy cả tờ cũ
-						// + lần đổi đang bay (updateTask sẽ ghi trail thật ngay sau đó)
+						// v1.4.38: if this task_update ALSO rewrites the brief, the judge must see the
+						// old sheet + the in-flight rewrite too (updateTask records the real trail right after)
 						let judgeDescHistory = task?.descHistory;
 						if (
 							task &&
@@ -694,7 +696,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 							judgeRounds: roundsUsed,
 						});
 						if (conseq.action === "refuse-unavailable") {
-							// fail-closed: không đổi state, không tốn vòng
+							// fail-closed: no state change, no round spent
 							throw new Error(conseq.message);
 						}
 						patch.judgeRounds = conseq.judgeRounds;
@@ -709,12 +711,12 @@ export default function taskExtension(pi: ExtensionAPI) {
 							patch.appealReason = conseq.message.slice(0, 500);
 							patch.audit = { at: Date.now(), verdict: "judge-insufficient", summary: conseq.message };
 						} else if (conseq.action === "need-evidence") {
-							// v1.4.65 #64: judge giữ completion → status HELD (thay vì giữ nguyên) —
-							// task_list + nudge hiện rõ "đã khai, bị giữ, cần evidence thật".
+							// v1.4.65 #64: judge holds the completion → status HELD (instead of leaving it
+							// as-is) — task_list + nudge now clearly say "declared, held, needs real evidence".
 							patch.status = "held";
 							patch.audit = { at: Date.now(), verdict: "judge-insufficient", summary: conseq.message };
 						} else {
-							// fail-streak: refused, chưa demote — v1.4.65 #64: cũng HELD
+							// fail-streak: refused, no demote yet — v1.4.65 #64: also HELD
 							patch.status = "held";
 							patch.audit = { at: Date.now(), verdict: "judge-fail", summary: conseq.message };
 						}
@@ -732,32 +734,32 @@ export default function taskExtension(pi: ExtensionAPI) {
 			const auditNote = result.task!.audit ? `\nAudit: ${result.task!.audit.summary.replace(/\n/g, "; ")}` : "";
 			const parkedNote =
 				result.task!.status === "parked"
-					? `\nPARKED (dừng chờ user): ${result.task!.appealReason ?? "—"} — chỉ USER mở lại được: nút "mở lại (user)" trên panel task (ghi file ~/.pi/agent/task-control/<sessionId>.json) hoặc nói trực tiếp trong chat. Model không thể tự mở.`
+					? `\nPARKED (stopped, awaiting the user): ${result.task!.appealReason ?? "—"} — only the USER can reopen: the "reopen (user)" button on the task panel (writes file ~/.pi/agent/task-control/<sessionId>.json) or say so directly in chat. The model cannot reopen it itself.`
 					: "";
 			const strictNote =
 				params.status === "completed" && result.task!.verify?.strict
-					? "\n(STRICT task — layer-2 judge đã phán theo audit ở trên)"
+					? "\n(STRICT task — layer-2 judge ruled per the audit above)"
 					: "";
-			// #59 (user 2026-09-14): completion bị GIỮ phải tự phô bày — gate nào giữ,
-			// vòng judge thứ mấy, và NEXT hợp lệ. Envelope chuẩn #43: thiếu dòng này
-			// model chỉ thấy "→ pending" và khai lại mò vài lần.
+			// #59 (user 2026-09-14): a HELD completion must expose itself — which gate
+			// holds it, which judge round, and the valid NEXT. Standard #43 envelope:
+			// without this line the model only sees "→ pending" and blindly re-declares a few times.
 			const heldNote =
 				params.status === "completed" && result.task!.status !== "completed" && result.task!.status !== "parked"
-					? `\n⏸ Completion HELD — #${result.task!.id} CHƯA hoàn thành (vòng judge ${result.task!.judgeRounds ?? 0}/${MAX_JUDGE_ROUNDS}). ` +
-					  `Đừng khai lại y nguyên: bỏ phiếu lại cũng bị giữ. ` +
-					  `NEXT: (1) làm đúng việc gate yêu cầu — chạy lệnh probe THẬT qua bash (sổ ghi lệnh bắt bằng chứng) / bổ sung evidence cụ thể: lệnh + output + file, rồi khai completed lại; ` +
-					  `(2) probe khai sai → amend verify (task_update verify=..., ≤2 lần); ` +
-					  `(3) tranh chấp phán quyết → appeal="lý do cụ thể" → PARK chờ user.`
+					? `\n⏸ Completion HELD — #${result.task!.id} is NOT complete (judge round ${result.task!.judgeRounds ?? 0}/${MAX_JUDGE_ROUNDS}). ` +
+					  `Do not re-declare verbatim: re-voting gets held too. ` +
+					  `NEXT: (1) do what the gate actually requires — run the REAL probe command via bash (the run log captures the evidence) / add concrete evidence: command + output + file, then declare completed again; ` +
+					  `(2) probe declared wrong → amend verify (task_update verify=..., ≤2 times); ` +
+					  `(3) dispute the verdict → appeal="specific reason" → PARK for the user.`
 					: "";
 			// #45: field-level CHANGES block (self-explaining harness, same family
 			// as the #43 denial envelope) — model sees it, panel card rides it.
 			const fields = fieldChanges(prevTask, result.task!);
-			// v1.4.64 (#64): status không đổi thì "#N → pending" đọc như no-op/bị bật lại
-			// (user nhìn card, model đọc tool result post-compaction) — nói rõ CÁI GÌ đổi.
+			// v1.4.64 (#64): with status unchanged, "#N → pending" reads like a no-op/bounce
+			// (user sees the card, the model reads the tool result post-compaction) — say clearly WHAT changed.
 			const sameStatus = prevStatus !== null && prevStatus === result.task!.status;
 			const statusNote =
 				sameStatus && fields.length > 0
-					? ` — status không đổi; đổi: ${fields.slice(0, 2).map((f) => f.field).join(", ")}`
+					? ` — status unchanged; changed: ${fields.slice(0, 2).map((f) => f.field).join(", ")}`
 					: "";
 			const changesNote =
 				fields.length > 0
@@ -845,8 +847,8 @@ export default function taskExtension(pi: ExtensionAPI) {
 		runLog = [];
 		runLogByCall.clear();
 
-		// v1.4.28 control bridge: user-only actions (unpark / strict) từ Paseo
-		// panel. Chỉ main chat watch (giống snip) — worker session không có file.
+		// v1.4.28 control bridge: user-only actions (unpark / strict) from the Paseo
+		// panel. Only the main chat watches (like snip) — worker sessions have no file.
 		const parent = (ctx.sessionManager.getHeader?.() as { parentSession?: string } | undefined)?.parentSession;
 		controlSessionId = !parent && statusSessionId ? statusSessionId : "";
 		lastControlSentAt = undefined;

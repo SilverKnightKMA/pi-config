@@ -45,7 +45,7 @@ describe("judge: pickLogSlice", () => {
 describe("judge: buildJudgePacket", () => {
 	test("packet carries task, probes, evidence and a numbered log", () => {
 		const packet = buildJudgePacket(
-			{ subject: "bump pin", doneCheck: "manifest pinned + PR merged", evidence: "`gh pr merge` xong", lane: "state", probes: [{ pattern: "gh pr view", expect: "MERGED", status: "amber", observed: "OPEN" }] },
+			{ subject: "bump pin", doneCheck: "manifest pinned + PR merged", evidence: "`gh pr merge` done", lane: "state", probes: [{ pattern: "gh pr view", expect: "MERGED", status: "amber", observed: "OPEN" }] },
 			[log("gh pr view 140", "state OPEN")],
 		);
 		assert.match(packet, /subject: bump pin/);
@@ -130,7 +130,7 @@ describe("judge: verdictConsequence", () => {
 		const c = verdictConsequence(verdict({ verdict: "fail", confidence: "low" }), { failStreak: 1, judgeRounds: 0 });
 		assert.equal(c.action, "need-evidence");
 		assert.equal(c.failStreak, 0);
-		assert.match(c.message, /không demote/);
+		assert.match(c.message, /no demotion/);
 	});
 
 	test("insufficient evidence → ask for evidence", () => {
@@ -150,24 +150,18 @@ describe("judge: verdictConsequence", () => {
 	});
 });
 
-// ── v1.4.38: packet phải đưa judge cả tờ đề cũ ─────────────────────────
+// ── v1.4.38: the packet must give the judge the old sheet too ────────────────
 describe("judge: buildJudgePacket — doneCheck amendments (v1.4.38)", () => {
 	it("renders the amendment trail so the judge sees rewrites", () => {
 		const packet = buildJudgePacket(
-			{
-				subject: "s",
-				doneCheck: "chạy echo ok là xong",
-				evidence: "e",
-				lane: "judgment",
-				descHistory: [
-					{ at: 1, by: "agent", from: "deploy production + curl 200", to: "chạy echo ok là xong" },
-				],
-			},
+			{ subject: "s", doneCheck: "running echo ok means done", evidence: "e", lane: "judgment", descHistory: [
+				{ at: 1, by: "agent", from: "deploy production + curl 200", to: "running echo ok means done" },
+			] },
 			[],
 		);
 		assert.ok(packet.includes("## DONE-CHECK AMENDMENTS"));
 		assert.ok(packet.includes("deploy production + curl 200"));
-		assert.ok(packet.includes("chạy echo ok là xong"));
+		assert.ok(packet.includes("running echo ok means done"));
 		assert.ok(packet.includes("1 time(s), 1 by the worker"));
 	});
 

@@ -527,8 +527,8 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 			}
 			const r = markStepDone(plan, params.index, params.evidence);
 			if (!r.ok) return { content: [{ type: "text" as const, text: r.error }], details: {} };
-			// v1.4.60 (#62, user 2026-09-14): hết bước mở → TỰ ĐÓNG — plan không treo
-			// tracking mãi nữa; /plan off chỉ còn là lệnh dọn tay.
+			// v1.4.60 (#62, user 2026-09-14): last open step done → AUTO-CLOSE — the plan no longer
+			// hangs in tracking forever; /plan off is now just a manual cleanup command.
 			let closedNow = false;
 			if (r.open === 0 && plan.mode === "tracking") {
 				plan.mode = "complete";
@@ -539,7 +539,7 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 			const openList = plan.steps.filter((s) => !s.done).map((s) => `#${s.index} ${s.text}`).join("\n");
 			if (closedNow) {
 				return {
-					content: [{ type: "text" as const, text: `Step #${params.index} done — ${r.total}/${r.total} complete.\n🎉 PLAN COMPLETE — auto-closed ${plan.completedAt}; tracking kết thúc, plan file giữ nguyên trong thư viện (${plan.planFile ?? ".pi/plans/"}). Không cần /plan off.` }],
+					content: [{ type: "text" as const, text: `Step #${params.index} done — ${r.total}/${r.total} complete.\n🎉 PLAN COMPLETE — auto-closed ${plan.completedAt}; tracking ends, the plan file stays in the library (${plan.planFile ?? ".pi/plans/"}). No need for /plan off.` }],
 					details: { open: 0, total: r.total, complete: true },
 				};
 			}

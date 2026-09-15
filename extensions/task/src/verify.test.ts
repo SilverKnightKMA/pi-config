@@ -63,7 +63,7 @@ describe("redGreenCheck (define time)", () => {
 		const spec = parseVerify({ probes: [{ pattern: "gh pr view 139", expect: "MERGED" }] }).spec!;
 		const rg = redGreenCheck(spec, [entry("gh pr view 139", "state MERGED")]);
 		assert.equal(rg.ok, false);
-		assert.ok(rg.reasons[0]!.includes("không phân biệt"));
+		assert.ok(rg.reasons[0]!.includes("cannot discriminate"));
 	});
 
 	test("amber (ran, expect mismatched) still discriminates → accepted", () => {
@@ -97,7 +97,7 @@ describe("auditCompletion (layer 1)", () => {
 		const audit = auditCompletion(spec, [entry("npm install")]);
 		assert.equal(audit.verdict, "fail");
 		assert.equal(audit.results[0]!.status, "red");
-		assert.match(summarizeAudit(audit), /CHƯA THẤY/);
+		assert.match(summarizeAudit(audit), /NOT seen/);
 	});
 
 	test("ran but expect mismatched → spec-fault with observed output", () => {
@@ -106,7 +106,7 @@ describe("auditCompletion (layer 1)", () => {
 		assert.equal(audit.verdict, "spec-fault");
 		assert.equal(audit.results[0]!.status, "amber");
 		assert.ok(audit.results[0]!.observed!.includes("OPEN"));
-		assert.match(summarizeAudit(audit), /KHÔNG chứa/);
+		assert.match(summarizeAudit(audit), /NOT contain/);
 	});
 
 	test("expect-less probe is green when the command ran", () => {

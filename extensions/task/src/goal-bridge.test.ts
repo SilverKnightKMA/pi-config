@@ -20,39 +20,39 @@ beforeAll(() => { process.env.HOME = HOME; });
 afterAll(() => { rmSync(HOME, { recursive: true, force: true }); });
 
 describe("task⇄goal bridge (v1.4.51 #37)", () => {
-	test("không có goal → activeGoal null, consume từ chối", () => {
+	test("no goal → activeGoal null, consume refused", () => {
 		expect(activeGoal(SID)).toBeNull();
 		const r = tryConsumeLease(SID, "note");
 		expect(r.ok).toBe(false);
-		if (!r.ok) expect(r.reason).toContain("không có goal");
+		if (!r.ok) expect(r.reason).toContain("no goal running");
 	});
 
-	test("goal running: lease dùng đúng 1 lần, lần 2 chặn, log có taskId", () => {
+	test("goal running: lease usable exactly once, second use blocked, log carries taskId", () => {
 		writeGoalFile("running", { granted: true, used: 0 });
 		expect(goalIdActive("g-sess1111-1000")).toBe(true);
-		const r1 = tryConsumeLease(SID, "judge đòi đề khác", "#9");
+		const r1 = tryConsumeLease(SID, "judge demands a different brief", "#9");
 		expect(r1.ok).toBe(true);
 		if (r1.ok) expect(r1.goalId).toBe("g-sess1111-1000");
-		const r2 = tryConsumeLease(SID, "lần nữa", "#9");
+		const r2 = tryConsumeLease(SID, "once more", "#9");
 		expect(r2.ok).toBe(false);
 		if (!r2.ok) expect(r2.reason).toContain("1/1");
-		// log ghi taskId
+		// the log records taskId
 		const raw = JSON.parse(readFileSync(join(HOME, ".pi/agent/goal-state", `${SID}.json`), "utf8"));
 		expect(raw.lease.used).toBe(1);
 		expect(raw.lease.log[0].taskId).toBe("#9");
 	});
 
-	test("goal done → lease chết, goalIdActive false (được reopen lại)", () => {
+	test("goal done → lease dead, goalIdActive false (reopen allowed again)", () => {
 		writeGoalFile("done", { granted: true, used: 0 });
 		expect(goalIdActive("g-sess1111-1000")).toBe(false);
-		const r = tryConsumeLease(SID, "muộn rồi", "#9");
+		const r = tryConsumeLease(SID, "too late", "#9");
 		expect(r.ok).toBe(false);
 	});
 
-	test("lease không được cấp → từ chối ngay", () => {
+	test("lease not granted → refused immediately", () => {
 		writeGoalFile("running", { granted: false, used: 0 });
 		const r = tryConsumeLease(SID, "note", "#1");
 		expect(r.ok).toBe(false);
-		if (!r.ok) expect(r.reason).toContain("không được cấp");
+		if (!r.ok) expect(r.reason).toContain("not granted");
 	});
 });

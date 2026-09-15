@@ -163,7 +163,7 @@ export interface UpdatePatch {
    * Agent rewrites count against DESC_AMEND_MAX; user rewrites are free but
    * still land in descHistory so the trail is complete. */
   descAmend?: { by: "agent" | "user" | "goal-lease" | "user-proposal" };
-	/** v1.4.53: replace toàn bộ mảng proposals (ghi đề xuất mới / quyết định). */
+	/** v1.4.53: replace the entire proposals array (record a new proposal / decision). */
 	proposals?: TaskProposal[];
 }
 
@@ -253,7 +253,7 @@ export function replayBranch(entries: BranchEntryLike[]): TaskState {
   return state;
 }
 
-const STATUSES = new Set(["pending", "in_progress", "held", "completed", "cancelled", "parked"]); // v1.4.65 #64: held = judge giữ completion
+const STATUSES = new Set(["pending", "in_progress", "held", "completed", "cancelled", "parked"]); // v1.4.65 #64: held = judge holds completion
 
 function numbers(value: unknown): number[] {
   return Array.isArray(value) ? value.filter((n): n is number => typeof n === "number") : [];
@@ -356,7 +356,7 @@ export function fieldChanges(prev: Task | undefined, next: Task): FieldChange[] 
 	if (prev.description !== next.description) {
 		const amended = (next.descAmendments ?? 0) > (prev.descAmendments ?? 0);
 		out.push({
-			field: amended ? "doneCheck (đã sửa đề x/2 — tờ cũ giữ trong trail)" : "doneCheck",
+			field: amended ? "doneCheck (brief amended x/2 — old sheet kept in trail)" : "doneCheck",
 			from: trunc(prev.description),
 			to: trunc(next.description),
 		});
@@ -376,7 +376,7 @@ export function fieldChanges(prev: Task | undefined, next: Task): FieldChange[] 
 		out.push({ field: "status", from: prev.status, to: next.status });
 	}
 	if (next.appealReason && prev.appealReason !== next.appealReason) {
-		out.push({ field: "PARK lý do", to: trunc(next.appealReason) });
+		out.push({ field: "PARK reason", to: trunc(next.appealReason) });
 	}
 	if ((prev.judgeRounds ?? 0) !== (next.judgeRounds ?? 0)) {
 		out.push({ field: "judgeRounds", from: String(prev.judgeRounds ?? 0), to: String(next.judgeRounds ?? 0) });

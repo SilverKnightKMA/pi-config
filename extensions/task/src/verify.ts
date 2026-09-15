@@ -154,7 +154,7 @@ function excerpt(output: string): string {
 /**
  * A probe is valid at define time only if it is NOT already green: work has
  * not happened yet, so a matching command+expect in the run log means the
- * probe cannot discriminate done/not-done (fail-to-pass structure, à la
+ * probe cannot discriminate done/not-done (fail-to-pass structure, like
  * SWE-bench). Amber (ran, expect mismatched) still discriminates → accepted.
  */
 export function redGreenCheck(
@@ -167,7 +167,7 @@ export function redGreenCheck(
 		if (entry === null) continue;
 		if (probe.expect === undefined || entry.output.includes(probe.expect)) {
 			reasons.push(
-				`probe "${probe.pattern}"${probe.expect ? ` expect "${probe.expect}"` : ""} đã XANH ngay lúc tạo — không phân biệt được xong/chưa xong`,
+				`probe "${probe.pattern}"${probe.expect ? ` expect "${probe.expect}"` : ""} is already GREEN at create — cannot discriminate done/not-done`,
 			);
 		}
 	}
@@ -186,9 +186,9 @@ export function auditCompletion(spec: VerifySpec, runLog: RunLogEntry[]): AuditO
 
 export function summarizeAudit(audit: AuditOutcome): string {
 	const lines = audit.results.map((r) => {
-		if (r.status === "green") return `✓ "${r.pattern}" ran${r.expect ? `, output chứa "${r.expect}"` : ""}`;
-		if (r.status === "red") return `✗ "${r.pattern}" — CHƯA THẤY lệnh này trong sổ ghi session. Hãy chạy nó (qua bash thật) rồi khai xong lại.`;
-		return `⚠ "${r.pattern}" đã chạy nhưng output KHÔNG chứa "${r.expect}". Thực tế: ${r.observed ?? ""} — hoặc việc chưa đạt, hoặc probe khai sai (amend verify, tối đa 2 lần).`;
+		if (r.status === "green") return `✓ "${r.pattern}" ran${r.expect ? `, output contains "${r.expect}"` : ""}`;
+		if (r.status === "red") return `✗ "${r.pattern}" — command NOT seen in the session run log. Run it (via real bash), then declare completion again.`;
+		return `⚠ "${r.pattern}" ran but output does NOT contain "${r.expect}". Actual: ${r.observed ?? ""} — either the work is not done, or the probe was declared wrong (amend verify, max 2 times).`;
 	});
 	return lines.join("\n");
 }

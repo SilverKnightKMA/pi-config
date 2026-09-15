@@ -260,8 +260,8 @@ export function buildAutoPing(role: string, agentId: string, title: string | und
 	return `[auto-report] Subagent ${who} (${agentId}) finished and went idle without calling message_main. Use paseo_activity(agentId) if you need its result.`;
 }
 
-/** v1.4.51: có goal run nào đang running không (đọc goal-state dir —
- * file bridge, không import goal ext). Auto-ping nhường goal wake. */
+/** v1.4.51: is any goal run currently running (reads the goal-state dir —
+ * file bridge, no goal ext import). Auto-ping yields to goal wake. */
 export function goalWakeActive(dir?: string): boolean {
 	const d = dir ?? join(process.env.HOME ?? homedir(), ".pi", "agent", "goal-state");
 	try {
@@ -271,11 +271,11 @@ export function goalWakeActive(dir?: string): boolean {
 				const st = JSON.parse(readFileSync(join(d, f), "utf8")) as { status?: unknown };
 				if (st?.status === "running") return true;
 			} catch {
-				// file rác — bỏ qua
+				// junk file — skip
 			}
 		}
 	} catch {
-		// không có dir — không có goal
+		// no dir — no goal
 	}
 	return false;
 }
@@ -580,10 +580,10 @@ async function kickOutbound(): Promise<void> {
 	// message_main still pings its parent — one line, no payload — so main can
 	// wake and pull the transcript itself (see shouldAutoPing for history).
 	//
-	// v1.4.51 single-waker (#37): khi CÓ goal đang chạy ở main, goal loop sở hữu
-	// nhịp đánh thức main (epoch + backoff) — auto-ping nhường quyền, tránh hai
-	// waker đua nhau trên một main idle. Child result được goal epoch kéo ở lượt
-	// settle kế tiếp (board/projection), mất mát chỉ là độ trễ 1 epoch.
+	// v1.4.51 single-waker (#37): while a goal IS running on main, the goal loop owns
+	// main's wake cadence (epoch + backoff) — auto-ping yields, avoiding two
+	// wakers racing over one idle main. The child result gets pulled in by the next
+	// goal-epoch settle (board/projection); the only loss is one epoch of latency.
 	async function autoPingOnSettle(): Promise<void> {
 		if (goalWakeActive()) return;
 		const self = resolveSelf(sessionIdRef.value);

@@ -1,23 +1,23 @@
 
-test("v1.4.65 #64: held — judge giữ completion, chặn dependent, không ready, sanitize giữ được", () => {
+test("v1.4.65 #64: held — judge holds completion, blocks dependents, never ready, survives sanitize", () => {
 	let s = EMPTY_STATE;
 	s = createTask(s, "blocker", "", [], 1).state; // #1
 	s = createTask(s, "dep", "", [1], 2).state; // #2 blocked by #1
-	// pending → held (engine judge branch; qua updateTask như patch.status thường)
+	// pending → held (engine judge branch; via updateTask like any patch.status)
 	const held = updateTask(s, 1, { status: "held" }, 5);
 	assert.equal(held.task!.status, "held");
 	assert.equal(held.error, null);
-	// held vẫn chặn dependent (openBlockers filter âm — held không phải completed/cancelled)
+	// held still blocks dependents (openBlockers counts it — held is not completed/cancelled)
 	const idx = new Map(held.state.tasks.map((t) => [t.id, t]));
 	assert.ok(openBlockers(held.state.tasks[1]!, idx).includes(1));
-	// held KHÔNG vào ready set
+	// held is NOT in the ready set
 	assert.ok(readyTasks(held.state).every((t) => t.id !== 1));
-	// held → in_progress được (model làm tiếp)
+	// held → in_progress allowed (model keeps working)
 	assert.equal(updateTask(held.state, 1, { status: "in_progress" }, 6).task!.status, "in_progress");
-	// held → completed cần evidence
+	// held → completed requires evidence
 	const noEv = updateTask(held.state, 1, { status: "completed" }, 7);
 	assert.match(noEv.error ?? "", /requires evidence/);
-	// sanitizeState không đánh rơi held
+	// sanitizeState does not drop held
 	const st = sanitizeState({ tasks: held.state.tasks, nextId: 3 });
 	assert.equal(st.tasks[0]!.status, "held");
 });
@@ -28,8 +28,8 @@ import { createTask, fieldChanges, MAX_FIELD_CHANGES, openBlockers, readyTasks, 
 import { EMPTY_STATE } from "./types.ts";
 
 describe("goal membership (v1.4.51 #37)", () => {
-	test("createTask stamp goalId; sanitizeState lược goalId rác, giữ dạng g-", () => {
-		const r = createTask(EMPTY_STATE, "xong việc đêm", "", [], 1, undefined, "g-abcd1234-777");
+	test("createTask stamps goalId; sanitizeState drops junk goalIds, keeps the g- form", () => {
+		const r = createTask(EMPTY_STATE, "finished overnight work", "", [], 1, undefined, "g-abcd1234-777");
 		expect(r.task?.goalId).toBe("g-abcd1234-777");
 		const raw = { tasks: [{ id: 1, subject: "a", description: "", status: "pending", goalId: "nope" }], nextId: 2 };
 		expect(sanitizeState(raw).tasks[0].goalId).toBeUndefined();
@@ -42,7 +42,7 @@ describe("goal membership (v1.4.51 #37)", () => {
 
 describe("fieldChanges (#45 — update card shows WHAT changed)", () => {
 	const empty: TaskState = { tasks: [], nextId: 1 };
-	const base = createTask(empty, "Việc A", "đề gốc", [], 1);
+	const base = createTask(empty, "Task A", "original brief", [], 1);
 	if (base.error || !base.task) throw new Error("setup failed");
 	const t0 = base.task;
 
@@ -51,19 +51,19 @@ describe("fieldChanges (#45 — update card shows WHAT changed)", () => {
 	});
 
 	test("subject + blockedBy change → exactly those fields, status omitted", () => {
-		const next = { ...t0, subject: "Việc A (đã đổi)", blockedBy: [7, 8] };
+		const next = { ...t0, subject: "Task A (changed)", blockedBy: [7, 8] };
 		const out = fieldChanges(t0, next);
 		expect(out.map((f) => f.field)).toEqual(["subject", "blockedBy"]);
-		expect(out[0]).toMatchObject({ from: "Việc A", to: "Việc A (đã đổi)" });
+		expect(out[0]).toMatchObject({ from: "Task A", to: "Task A (changed)" });
 		expect(out[1]).toMatchObject({ from: "—", to: "7,8" });
 	});
 
 	test("doneCheck rewrite by agent → amend marker surfaces the trail", () => {
-		const next = { ...t0, description: "đề mới", descAmendments: 1 };
+		const next = { ...t0, description: "new brief", descAmendments: 1 };
 		const out = fieldChanges(t0, next);
-		expect(out[0].field).toContain("đã sửa đề");
-		expect(out[0].from).toBe("đề gốc");
-		expect(out[0].to).toBe("đề mới");
+		expect(out[0].field).toContain("brief amended");
+		expect(out[0].from).toBe("original brief");
+		expect(out[0].to).toBe("new brief");
 	});
 
 	test("status-only flip → single status line (old card's only content)", () => {

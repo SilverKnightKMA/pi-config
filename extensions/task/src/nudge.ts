@@ -27,10 +27,10 @@ export interface NudgeInput {
 }
 
 export function shouldNudge(input: NudgeInput): boolean {
-  // v1.4.63 (#61/#63, user 00:5x): chỉ nhắc khi CÓ task đang làm (in_progress).
-  // Board toàn pending (đợi user quyết / deferred) không phải "quên cập nhật"
-  // — nhắc mỗi lượt thành noise; cùng điều kiện in_progress như wake của #61.
-  // v1.4.65 #64: held (judge giữ completion) cũng là việc đang làm — nudge được.
+  // v1.4.63 (#61/#63, user 00:5x): only nudge when there IS work in progress (in_progress).
+  // An all-pending board (awaiting user decisions / deferred) is not "forgot to update"
+  // — nudging every turn becomes noise; same in_progress condition as #61's wake.
+  // v1.4.65 #64: held (judge holding completion) is also active work — it gets nudged.
   const working = input.state.tasks.filter((t) => t.status === "in_progress" || t.status === "held");
   if (working.length === 0) return false;
   if (input.lastTurnTextOnly && input.turnsSinceTaskTool >= 1) return true;

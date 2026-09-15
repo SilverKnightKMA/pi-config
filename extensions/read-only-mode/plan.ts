@@ -241,7 +241,7 @@ export interface PlanStatusPayload {
 	mode: PlanState["mode"];
 	stepsDone: number;
 	stepsTotal: number;
-	/** v1.4.62 (#62): danh sách bước nguyên vẹn — panel render checklist như task rows. */
+	/** v1.4.62 (#62): the full step list — the panel renders it as a checklist like task rows. */
 	steps: { index: number; text: string; done: boolean }[];
 	/** v1.4.60 (#62): what the plan is doing RIGHT NOW — first open step. */
 	currentStep: { index: number; text: string } | null;

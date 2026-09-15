@@ -29,7 +29,7 @@ same commit as the markers update (no dual path).
 | Env var | Default | Meaning |
 |---|---|---|
 | `OM_RUNS_SWEEP_DAYS` | 7 | Age at which unconsumed `.runs/result.json` files are swept (GC `80c2683`) |
-| `SNIP_CONTROL_TTL_DAYS` | 30 | số ngày file control snip không chạm được thì sweep (0 = tắt); #53 residue 249 chip |
+| `SNIP_CONTROL_TTL_DAYS` | 30 | days after which an untouched snip control file gets swept (0 = off); #53 residue 249 chip |
 | `SUBAGENT_MAX_CONCURRENT` | 2 | Concurrency cap for spawned subagents (`3a956db`) |
 | `SUBAGENT_WAIT_MS` | 4000 | Settle-wait before deferred kick machinery engages |
 

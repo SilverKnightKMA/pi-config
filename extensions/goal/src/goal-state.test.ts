@@ -25,7 +25,7 @@ import {
 const NOW = "2026-09-14T00:00:00.000Z";
 
 describe("goal-state (#37)", () => {
-	test("start (v1.4.52): lease granted, epoch 0, DRAFT — chạy chỉ sau confirm", () => {
+	test("start (v1.4.52): lease granted, epoch 0, DRAFT — runs only after confirm", () => {
 		const st = startGoal("s1", "port X", NOW);
 		expect(st.lease.granted).toBe(true);
 		expect(st.lease.used).toBe(0);
@@ -33,24 +33,24 @@ describe("goal-state (#37)", () => {
 		expect(st.status).toBe("draft");
 	});
 
-	test("lease: đúng 1 lần, lần 2 chặn cứng, chết khi goal xong", () => {
+	test("lease: exactly once, second attempt hard-blocked, dies when the goal ends", () => {
 		let st = startGoal("s1", "a", NOW);
-		const r1 = useLease(st, "judge đòi doneCheck khác", NOW, "#9");
+		const r1 = useLease(st, "judge demands a different doneCheck", NOW, "#9");
 		expect(r1.ok).toBe(true);
 		if (r1.ok) {
 			expect(r1.state.lease.used).toBe(1);
 			expect(r1.state.lease.log[0]?.note).toContain("judge");
 			st = r1.state;
 		}
-		const r2 = useLease(st, "lần nữa", NOW);
+		const r2 = useLease(st, "one more", NOW);
 		expect(r2.ok).toBe(false);
 		if (!r2.ok) expect(r2.reason).toContain("1/1");
 		const dead = stopGoal(st, NOW);
-		const r3 = useLease(dead, "sau khi stop", NOW);
+		const r3 = useLease(dead, "after stop", NOW);
 		expect(r3.ok).toBe(false);
 	});
 
-	test("epoch cap: chạm 20 → done, không đánh thức nữa", () => {
+	test("epoch cap: hitting 20 → done, no more wakes", () => {
 		let st = confirmGoal(setProposal(startGoal("s1", "a", NOW), { anchor: "a", includeIds: [1], excludeIds: [], rationale: "r", proposedAt: NOW }), [1], NOW);
 		for (let i = 0; i < GOAL_EPOCH_MAX - 1; i++) st = nextEpoch(st, NOW);
 		expect(st.status).toBe("running");
@@ -67,27 +67,27 @@ describe("goal-state (#37)", () => {
 		expect(backoffSec(99)).toBe(80);
 	});
 
-	test("pause/resume; wrap-up luôn lộ lease", () => {
+	test("pause/resume; wrap-up always exposes the lease", () => {
 		const st = pauseGoal(startGoal("s1", "a", NOW), NOW);
 		expect(shouldWake(st)).toBe(false);
 		expect(resumeGoal(st, NOW).status).toBe("running");
-		expect(wrapUpReport(st)).toContain("CHƯA DÙNG");
-		const used = useLease(startGoal("s2", "a", NOW), "đổi doneCheck theo judge", NOW, "#12");
+		expect(wrapUpReport(st)).toContain("NOT USED YET");
+		const used = useLease(startGoal("s2", "a", NOW), "change doneCheck per judge", NOW, "#12");
 		if (used.ok) {
 			const r2 = wrapUpReport(used.state);
-			expect(r2).toContain("ĐÃ DÙNG 1/1");
+			expect(r2).toContain("USED 1/1");
 			expect(r2).toContain("#12");
 		}
 	});
 
-	test("v1.4.51 membership động: snapshot ∪ stamped; done khi sạch nợ", () => {
+	test("v1.4.51 dynamic membership: snapshot ∪ stamped; done when the board is clear", () => {
 		const st = startGoal("s1", "a", NOW, { memberIds: [1, 2] });
-		// board: 1 xong, 2 mở, 3 stamped chưa xong (sinh trong goal), 4 ngoài goal
+		// board: 1 done, 2 open, 3 stamped not done (born inside the goal), 4 outside the goal
 		const board = [
 			{ id: 1, status: "completed" },
 			{ id: 2, status: "in_progress" },
 			{ id: 3, status: "pending", goalId: st.goalId },
-			{ id: 4, status: "pending", goalId: "g-khac-999" },
+			{ id: 4, status: "pending", goalId: "g-other-999" },
 		];
 		expect(memberTasks(st, board).map((t) => t.id)).toEqual([1, 2, 3]);
 		expect(goalDone(st, board)).toBe(false);
@@ -98,17 +98,17 @@ describe("goal-state (#37)", () => {
 		])).toBe(true);
 	});
 
-	test("v1.4.51 spinning: 2 epoch liền 0 completed → dừng sớm", () => {
+	test("v1.4.51 spinning: 2 consecutive epochs with 0 completed → stop early", () => {
 		let st = startGoal("s1", "a", NOW, { memberIds: [1] });
 		st = recordEpoch(st, 1, NOW, 3, 0);
-		expect(spinning(st)).toBe(false); // mới 1 epoch
+		expect(spinning(st)).toBe(false); // only 1 epoch so far
 		st = recordEpoch(st, 2, NOW, 2, 0);
-		expect(spinning(st)).toBe(true); // tạo 5 task nhưng 0 xong
+		expect(spinning(st)).toBe(true); // 5 tasks created but 0 done
 		st = recordEpoch(st, 3, NOW, 0, 1);
-		expect(spinning(st)).toBe(false); // có task xong → tiến độ thật
+		expect(spinning(st)).toBe(false); // a task done → real progress
 	});
 
-	test("v1.4.51 goalId unique + wrap-up kế toán tạo/xong", () => {
+	test("v1.4.51 goalId unique + wrap-up create/done accounting", () => {
 		const a = makeGoalId("s1", NOW);
 		const b = makeGoalId("s1", new Date(Date.parse(NOW) + 5).toISOString());
 		expect(a).not.toBe(b);
@@ -116,12 +116,12 @@ describe("goal-state (#37)", () => {
 		let st = startGoal("s1", "a", NOW, { memberIds: [1, 2, 3] });
 		st = recordEpoch(st, 1, NOW, 2, 1);
 		const r = wrapUpReport(st);
-		expect(r).toContain("2 tạo / 1 xong / 3 member");
-		expect(r).toContain("ep1: +2 tạo / 1 xong");
+		expect(r).toContain("2 created / 1 done / 3 members");
+		expect(r).toContain("ep1: +2 created / 1 done");
 		expect(r).toContain("snapshot: #1 #2 #3");
 	});
 
-	test("sanitize: null với rác; clip log về 8; epoch clamp", () => {
+	test("sanitize: null on junk; clip log to 8; epoch clamp", () => {
 		expect(sanitizeGoalState(null)).toBeNull();
 		expect(sanitizeGoalState({ v: 2 })).toBeNull();
 		const st = sanitizeGoalState({
@@ -138,31 +138,31 @@ describe("goal-state (#37)", () => {
 	});
 });
 
-describe("goal v1.4.52 — draft init + confirm khóa membership", () => {
+	describe("goal v1.4.52 — draft init + confirm locks membership", () => {
 	const NOW = "2026-09-14T10:00:00Z";
-	test("startGoal mặc định draft; goal_propose chỉ ghi bảng, không chạy", () => {
-		const st = startGoal("s1", "yêu cầu thô", NOW);
+	test("startGoal defaults to draft; goal_propose only records the table, does not run", () => {
+		const st = startGoal("s1", "raw request", NOW);
 		expect(st.status).toBe("draft");
-		const withP = setProposal(st, { anchor: "repo xanh + test pass", includeIds: [3, 3, 7, 0], excludeIds: [], rationale: "3&7 liên quan X", proposedAt: NOW });
+		const withP = setProposal(st, { anchor: "repo green + tests pass", includeIds: [3, 3, 7, 0], excludeIds: [], rationale: "3&7 related to X", proposedAt: NOW });
 		expect(withP.status).toBe("draft");
-		expect(withP.proposal?.includeIds).toEqual([3, 7]); // dedupe + lọc id<=0
+		expect(withP.proposal?.includeIds).toEqual([3, 7]); // dedupe + drop id<=0
 		expect(withP.epoch).toBe(0);
 	});
-	test("confirmGoal: include mode lọc theo task còn mở; exclude mode lấy phần bù", () => {
+	test("confirmGoal: include mode filters to still-open tasks; exclude mode takes the complement", () => {
 		const st = startGoal("s1", "a", NOW);
-		const p = setProposal(st, { anchor: "xong", includeIds: [1, 2, 99], excludeIds: [], rationale: "r", proposedAt: NOW });
+		const p = setProposal(st, { anchor: "done", includeIds: [1, 2, 99], excludeIds: [], rationale: "r", proposedAt: NOW });
 		const run = confirmGoal(p, [1, 2, 4, 5], NOW);
 		expect(run.status).toBe("running");
-		expect(run.memberIds).toEqual([1, 2]); // 99 không mở → loại
+		expect(run.memberIds).toEqual([1, 2]); // 99 not open → dropped
 		expect(run.proposal).toBeUndefined();
-		const p2 = setProposal(st, { anchor: "xong", includeIds: [], excludeIds: [4], rationale: "r", proposedAt: NOW });
+		const p2 = setProposal(st, { anchor: "done", includeIds: [], excludeIds: [4], rationale: "r", proposedAt: NOW });
 		expect(confirmGoal(p2, [1, 2, 4, 5], NOW).memberIds).toEqual([1, 2, 5]);
 	});
-	test("reviseGoal về draft xóa bảng; anchor đề xuất thắng anchor thô khi confirm", () => {
-		const st = startGoal("s1", "thô", NOW);
-		const p = setProposal(st, { anchor: "đích đẹp", includeIds: [1], excludeIds: [], rationale: "r", proposedAt: NOW });
+	test("reviseGoal returns to draft and clears the table; the proposed anchor beats the raw anchor on confirm", () => {
+		const st = startGoal("s1", "raw", NOW);
+		const p = setProposal(st, { anchor: "a nice destination", includeIds: [1], excludeIds: [], rationale: "r", proposedAt: NOW });
 		const run = confirmGoal(p, [1], NOW);
-		expect(run.anchor).toBe("đích đẹp");
+		expect(run.anchor).toBe("a nice destination");
 		const rv = reviseGoal(run, NOW);
 		expect(rv.status).toBe("draft");
 		expect(rv.proposal).toBeUndefined();

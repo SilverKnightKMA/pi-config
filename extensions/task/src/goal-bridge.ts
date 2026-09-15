@@ -1,8 +1,9 @@
 /**
  * task ⇄ goal file-bridge (v1.4.51 #37).
- * Task ext KHÔNG import goal ext — đọc/ghi goal-state qua file bridge
- * (single-writer: goal engine ghi state; task ext chỉ consume lease).
- * Pure logic song hành với goal/src/goal-state.ts (useLease) — pin bằng test.
+ * The task ext does NOT import the goal ext — it reads/writes goal-state
+ * through a file bridge (single-writer: the goal engine writes state; the
+ * task ext only consumes leases). Pure logic mirroring goal/src/goal-state.ts
+ * (useLease) — pinned by test.
  */
 import { mkdirSync, readFileSync, renameSync, writeFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -52,13 +53,13 @@ export function readGoal(sessionId: string): GoalLike | null {
 	}
 }
 
-/** Goal đang active cho session này (running/paused đều giữ membership). */
+/** The goal currently active for this session (running/paused both keep membership). */
 export function activeGoal(sessionId: string): GoalLike | null {
 	const g = readGoal(sessionId);
 	return g && (g.status === "running" || g.status === "paused") ? g : null;
 }
 
-/** GoalId có còn active không (chặn reopen) — quét dir vì task không biết session của goal. */
+/** Is this goalId still active (blocks reopen) — scans the dir because the task ext does not know the goal's session. */
 export function goalIdActive(goalId: string): boolean {
 	try {
 		for (const f of readdirSync(join(home(), ".pi", "agent", "goal-state"))) {
@@ -76,13 +77,13 @@ export type LeaseConsume =
 	| { ok: true; goalId: string }
 	| { ok: false; reason: string };
 
-/** Tiêu lease (đúng 1 lần/goal) — đường appeal khi judge/cap chặn amend đề.
- *  Strict task KHÔNG qua đây (user-only door giữ nguyên). */
+/** Consume the lease (exactly once per goal) — the appeal path when judge/cap blocks a done-check amend.
+ *  Strict tasks do NOT go through here (the user-only door stays). */
 export function tryConsumeLease(sessionId: string, note: string, taskId?: string): LeaseConsume {
 	const g = activeGoal(sessionId);
-	if (!g) return { ok: false, reason: "không có goal đang chạy" };
-	if (!g.lease.granted) return { ok: false, reason: "lease không được cấp cho goal này" };
-	if (g.lease.used >= 1) return { ok: false, reason: "lease đã dùng 1/1 lần" };
+	if (!g) return { ok: false, reason: "no goal running" };
+	if (!g.lease.granted) return { ok: false, reason: "lease not granted for this goal" };
+	if (g.lease.used >= 1) return { ok: false, reason: "lease already used 1/1 times" };
 	const entry = { at: new Date().toISOString(), ...(taskId ? { taskId } : {}), note: note.slice(0, 400) };
 	try {
 		const file = goalPath(sessionId);
@@ -98,6 +99,6 @@ export function tryConsumeLease(sessionId: string, note: string, taskId?: string
 		renameSync(tmp, file);
 		return { ok: true, goalId: g.goalId };
 	} catch {
-		return { ok: false, reason: "goal-state file không ghi được" };
+		return { ok: false, reason: "goal-state file not writable" };
 	}
 }

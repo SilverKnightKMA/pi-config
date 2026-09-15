@@ -117,18 +117,18 @@ test("replayBranch: last snapshot wins, junk skipped", () => {
 	assert.deepEqual(replayBranch([]), { tasks: [], nextId: 1 });
 });
 
-test("v1.4.65 #64: held task cũng được nudge — bị judge giữ là việc đang dang dở", () => {
+test("v1.4.65 #64: a held task is still nudged — held by the judge means work still open", () => {
 	const s0 = seed();
 	const held = updateTask(s0, 1, { status: "held" }, 5).state;
 	assert.ok(shouldNudge({ state: held, turnsSinceTaskTool: 3, lastTurnTextOnly: false }));
 	assert.ok(shouldNudge({ state: held, turnsSinceTaskTool: 1, lastTurnTextOnly: true }));
 });
 
-test("nudge only fires when a task is in_progress — pending-only board là queue của user, không phải model quên (v1.4.63 #61/#63)", () => {
+test("nudge only fires when a task is in_progress — a pending-only board is the user's queue, not the model forgetting (v1.4.63 #61/#63)", () => {
 	const s = seed();
 	assert.ok(!shouldNudge({ state: EMPTY_STATE, turnsSinceTaskTool: 99, lastTurnTextOnly: true }));
-	// pending-only: KHÔNG bao giờ nudge, dù stale bao nhiêu lượt (user 00:5x —
-	// 14 task pending chờ user từng khiến reminder bắn gần như mỗi lượt)
+	// pending-only: NEVER nudge, no matter how stale (user 00:5x — 14 pending
+	// tasks awaiting the user once made the reminder fire almost every turn)
 	assert.ok(!shouldNudge({ state: s, turnsSinceTaskTool: 99, lastTurnTextOnly: false }));
 	assert.ok(!shouldNudge({ state: s, turnsSinceTaskTool: 99, lastTurnTextOnly: true }));
 	const stuck = updateTask(s, 1, { status: "in_progress" }, 5).state;
@@ -388,7 +388,7 @@ test("wiring: context hook injects a transient reminder and returns messages", a
 	const f = fakePi();
 	taskExtension(f.pi as never);
 	await f.tool("task_create").execute("c1", { subject: "stale work" }, undefined, undefined, f.ctx);
-	// v1.4.63: nudge chỉ khi có task in_progress — pending-only là queue của user
+	// v1.4.63: nudge only when a task is in_progress — pending-only is the user's queue
 	await f.tool("task_update").execute("c2", { id: 1, status: "in_progress" }, undefined, undefined, f.ctx);
 	// simulate three agent_end turns without task tool use (text-only turns)
 	for (let i = 0; i < 3; i++) {
@@ -403,7 +403,7 @@ test("wiring: context hook injects a transient reminder and returns messages", a
 	assert.match(injected.content[0]!.text, /<system-reminder>/);
 	assert.match(injected.content[0]!.text, /stale work/);
 	// transient: the original message stays first, nothing was persisted
-	// (2 entries = task_create + task_update; nudge itself không ghi gì)
+	// (2 entries = task_create + task_update; the nudge itself writes nothing)
 	assert.equal(result.messages.length, 2);
 	assert.equal(f.entries.length, 2);
 });
@@ -580,27 +580,27 @@ test("wiring: tool results carry details.tasks snapshot for the Paseo transforme
 	assert.equal(listDetails.tasks.length, 2, "list carries full snapshot");
 });
 
-test("v1.4.64 (#64): update không đổi status nói rõ CÁI GÌ đổi — không còn '#N → pending' trơ trọi", async () => {
+test("v1.4.64 (#64): an update that keeps status unchanged names WHAT changed — no more bare '#N → pending'", async () => {
 	const f = fakePi();
 	taskExtension(f.pi as never);
 	await f.handlers.get("session_start")!({}, f.ctx);
 	await f.tool("task_create").execute("c1", { subject: "gamma" }, undefined, undefined, f.ctx);
-	// sửa đề (description) — status giữ nguyên pending
+	// brief edit (description) — status stays pending
 	const amended = (await f
 		.tool("task_update")
-		.execute("u1", { id: 1, description: "đề mới" }, undefined, undefined, f.ctx)) as {
+		.execute("u1", { id: 1, description: "new brief" }, undefined, undefined, f.ctx)) as {
 		content: { text: string }[];
 	};
 	const txt = amended.content[0]!.text;
-	assert.match(txt, /#1 → pending — status không đổi; đổi: doneCheck/, "dòng đầu nêu field đổi");
-	// update status thật thì KHÔNG có statusNote
+	assert.match(txt, /#1 → pending — status unchanged; changed: doneCheck/, "first line names the changed field");
+	// a real status change has NO statusNote
 	const moved = (await f
 		.tool("task_update")
 		.execute("u2", { id: 1, status: "in_progress" }, undefined, undefined, f.ctx)) as {
 		content: { text: string }[];
 	};
 	assert.match(moved.content[0]!.text, /#1 → in_progress\n/);
-	assert.ok(!moved.content[0]!.text.includes("status không đổi"));
+	assert.ok(!moved.content[0]!.text.includes("status unchanged"));
 });
 
 // ── Verify layer 0+1 wiring (v1.4.24) ─────────────────────────────────
@@ -633,7 +633,7 @@ test("verify wiring: red-green — an already-green probe is refused at create",
 	fireBash(f, "t1", "gh pr view 139", "state MERGED");
 	await assert.rejects(
 		f.tool("task_create").execute("c1", { subject: "x", verify: { probes: [{ pattern: "gh pr view 139", expect: "MERGED" }] } }, undefined, undefined, f.ctx),
-		/không phân biệt/,
+		/cannot discriminate/,
 	);
 });
 
@@ -643,7 +643,7 @@ test("verify wiring: completion is refused while a probe is red (never ran)", as
 	await f.tool("task_create").execute("c1", { subject: "x", verify: { probes: [{ pattern: "bun test src/verify" }] } }, undefined, undefined, f.ctx);
 	await assert.rejects(
 		f.tool("task_update").execute("u1", { id: 1, status: "completed", evidence: "tests passed" }, undefined, undefined, f.ctx),
-		/CHƯA qua kiểm chứng/,
+		/NOT passed layer-1 verification/,
 	);
 	const list = (await f.tool("task_list").execute("l1", {}, undefined, undefined, f.ctx)) as { content: { text: string }[] };
 	assert.match(list.content[0]!.text, /in_progress|pending/); // not completed
@@ -659,7 +659,7 @@ test("verify wiring: non-bash tool calls never enter the run log", async () => {
 	f.handlers.get("tool_execution_end")!({ toolCallId: "r1", result: { content: [{ type: "text", text: "pass" }] } }, f.ctx);
 	await assert.rejects(
 		f.tool("task_update").execute("u1", { id: 1, status: "completed", evidence: "ran it" }, undefined, undefined, f.ctx),
-		/CHƯA qua kiểm chứng/,
+		/NOT passed layer-1 verification/,
 	);
 });
 
@@ -681,7 +681,7 @@ test("verify wiring: green path — real command in log unlocks completion + aud
 });
 
 test("verify wiring: amber escalates to judge with observed output; amend fixes a wrong probe (cap 2)", async () => {
-	const calls = stubJudge(JSON.stringify({ verdict: "insufficient_evidence", confidence: "low", reason: "chưa thấy", cited_log_ids: [] }));
+	const calls = stubJudge(JSON.stringify({ verdict: "insufficient_evidence", confidence: "low", reason: "not seen yet", cited_log_ids: [] }));
 	try {
 		const f = fakePi();
 		taskExtension(f.pi as never);
@@ -689,27 +689,27 @@ test("verify wiring: amber escalates to judge with observed output; amend fixes 
 			.tool("task_create")
 			.execute("c1", { subject: "check PR", verify: { probes: [{ pattern: "gh pr view 139", expect: "MERGED" }] } }, undefined, undefined, f.ctx);
 		fireBash(f, "t1", "gh pr view 139", "state OPEN");
-		// amber (ran, expect lệch) → layer-2 phán; judge xin thêm evidence → chưa hoàn thành
+		// amber (ran, expect mismatched) → layer-2 rules; judge asks for more evidence → not complete yet
 		const r1 = (await f
 			.tool("task_update")
 			.execute("u1", { id: 1, status: "completed", evidence: "PR state checked" }, undefined, undefined, f.ctx)) as {
 			content: { text: string }[];
 		};
-		assert.match(r1.content[0]!.text, /chưa đủ bằng chứng/);
-		// v1.4.65 #64: completion bị giữ → status HELD (không còn về pending/in_progress mù mờ)
+		assert.match(r1.content[0]!.text, /not enough evidence/);
+		// v1.4.65 #64: completion held → status HELD (no more ambiguous pending/in_progress)
 		assert.match(r1.content[0]!.text, /#1 → held/);
 		const lst = (await f.tool("task_list").execute("l1", {}, undefined, undefined, f.ctx)) as {
 			content: { text: string }[];
 		};
-		assert.match(lst.content[0]!.text, /held · .*HELD judge 1\/3 — cần evidence thật/);
-		// #59: completion bị giữ phải tự phô bày — HELD note + vòng judge + NEXT
+		assert.match(lst.content[0]!.text, /held · .*HELD judge 1\/3 — needs real evidence/);
+		// #59: a held completion must expose itself — HELD note + judge round + NEXT
 		assert.match(r1.content[0]!.text, /⏸ Completion HELD/);
-		assert.match(r1.content[0]!.text, /vòng judge 1\/3/);
-		assert.match(r1.content[0]!.text, /Đừng khai lại y nguyên/);
-		assert.match(r1.content[0]!.text, /NEXT: \(1\) làm đúng việc gate yêu cầu/);
+		assert.match(r1.content[0]!.text, /judge round 1\/3/);
+		assert.match(r1.content[0]!.text, /Do not re-declare verbatim/);
+		assert.match(r1.content[0]!.text, /NEXT: \(1\) do what the gate actually requires/);
 		assert.match(r1.content[0]!.text, /appeal=/);
 		assert.equal(calls.length, 1);
-		assert.match(calls[0]!, /\[amber\]/); // observed output thật rides the judge packet
+		assert.match(calls[0]!, /\[amber\]/); // the real observed output rides the judge packet
 		assert.match(calls[0]!, /OPEN/);
 
 		// amend 1: probe was wrong (work is done, expect should be OPEN)
@@ -721,7 +721,7 @@ test("verify wiring: amber escalates to judge with observed output; amend fixes 
 		// amend 3: capped
 		await assert.rejects(
 			f.tool("task_update").execute("u4", { id: 1, verify: { probes: [{ pattern: "gh pr view 139", expect: "OPEN" }] } }, undefined, undefined, f.ctx),
-			/đã amend 2 lần/,
+			/already amended 2 times/,
 		);
 		const done = (await f
 			.tool("task_update")
@@ -737,7 +737,7 @@ test("verify wiring: amber escalates to judge with observed output; amend fixes 
 });
 
 test("verify wiring: judgment lane completes via the judge; advisory claims ride the packet", async () => {
-	const calls = stubJudge(JSON.stringify({ verdict: "pass", confidence: "high", reason: "brief đạt done-check", cited_log_ids: [] }));
+	const calls = stubJudge(JSON.stringify({ verdict: "pass", confidence: "high", reason: "brief meets the done-check", cited_log_ids: [] }));
 	try {
 		const f = fakePi();
 		taskExtension(f.pi as never);
@@ -768,7 +768,7 @@ test("verify wiring: session_start clears the run log (restart = fresh evidence)
 	await f.handlers.get("session_start")!({}, f.ctx);
 	await assert.rejects(
 		f.tool("task_update").execute("u2", { id: 2, status: "completed", evidence: "same suite" }, undefined, undefined, f.ctx),
-		/CHƯA qua kiểm chứng/,
+		/NOT passed layer-1 verification/,
 	);
 	fireBash(f, "t2", "bun test", "388 pass 0 fail");
 	await f.tool("task_update").execute("u3", { id: 2, status: "completed", evidence: "tests green again" }, undefined, undefined, f.ctx);
@@ -787,7 +787,7 @@ test("verify wiring: projection carries verify/audit fields for the Paseo panel"
 		assert.equal(status.tasks[0]!.verify!.lane, "state");
 		assert.equal(status.tasks[0]!.verify!.strict, true);
 		assert.equal(status.tasks[0]!.verify!.probes, 1);
-		assert.equal(status.tasks[0]!.audit!.verdict, "judge-pass"); // strict ép layer-2
+		assert.equal(status.tasks[0]!.audit!.verdict, "judge-pass"); // strict forces layer-2
 		assert.match(status.tasks[0]!.audit!.summary, /judge: PASS/);
 	} finally {
 		_setJudgeRunnerForTests(null);
@@ -814,14 +814,14 @@ function failJson(v: Partial<{ verdict: string; confidence: string; reason: stri
 }
 
 test("layer2 wiring: judgment-lane completion goes through the judge (pass → completed)", async () => {
-	const calls = stubJudge(JSON.stringify({ verdict: "pass", confidence: "high", reason: "log ủng hộ", cited_log_ids: [] }));
+	const calls = stubJudge(JSON.stringify({ verdict: "pass", confidence: "high", reason: "log supports it", cited_log_ids: [] }));
 	try {
 		const f = fakePi();
 		taskExtension(f.pi as never);
-		await f.tool("task_create").execute("c1", { subject: "viết brief", verify: { lane: "judgment" } }, undefined, undefined, f.ctx);
+		await f.tool("task_create").execute("c1", { subject: "write brief", verify: { lane: "judgment" } }, undefined, undefined, f.ctx);
 		const out = (await f
 			.tool("task_update")
-			.execute("u1", { id: 1, status: "completed", evidence: "brief 8 câu, trích nguồn" }, undefined, undefined, f.ctx)) as {
+			.execute("u1", { id: 1, status: "completed", evidence: "8-sentence brief, sources cited" }, undefined, undefined, f.ctx)) as {
 			content: { text: string }[];
 		};
 		assert.match(out.content[0]!.text, /completed/);
@@ -838,13 +838,13 @@ test("layer2 wiring: fail-closed — judge unavailable refuses completion, no ro
 	try {
 		const f = fakePi();
 		taskExtension(f.pi as never);
-		await f.tool("task_create").execute("c1", { subject: "viết brief", verify: { lane: "judgment" } }, undefined, undefined, f.ctx);
+		await f.tool("task_create").execute("c1", { subject: "write brief", verify: { lane: "judgment" } }, undefined, undefined, f.ctx);
 		await assert.rejects(
-			f.tool("task_update").execute("u1", { id: 1, status: "completed", evidence: "xong" }, undefined, undefined, f.ctx),
+			f.tool("task_update").execute("u1", { id: 1, status: "completed", evidence: "done" }, undefined, undefined, f.ctx),
 			/fail-closed/,
 		);
 		const list = (await f.tool("task_list").execute("l1", {}, undefined, undefined, f.ctx)) as { content: { text: string }[] };
-		assert.match(list.content[0]!.text, /pending/); // chưa in_progress, chưa judge-rounds
+		assert.match(list.content[0]!.text, /pending/); // not in_progress, no judge-rounds yet
 		assert.doesNotMatch(list.content[0]!.text, /judge-rounds/);
 	} finally {
 		_setJudgeRunnerForTests(null);
@@ -856,8 +856,8 @@ test("layer2 wiring: 2 consecutive high-conf fails demote to in_progress with re
 	try {
 		const f = fakePi();
 		taskExtension(f.pi as never);
-		await f.tool("task_create").execute("c1", { subject: "viết brief", verify: { lane: "judgment" } }, undefined, undefined, f.ctx);
-		// vòng 1: fail cao → refused (fail-streak 1), chưa demote
+		await f.tool("task_create").execute("c1", { subject: "write brief", verify: { lane: "judgment" } }, undefined, undefined, f.ctx);
+		// round 1: high-conf fail → refused (fail-streak 1), no demote yet
 		const r1 = (await f
 			.tool("task_update")
 			.execute("u1", { id: 1, status: "completed", evidence: "draft" }, undefined, undefined, f.ctx)) as {
@@ -865,7 +865,7 @@ test("layer2 wiring: 2 consecutive high-conf fails demote to in_progress with re
 		};
 		assert.match(r1.content[0]!.text, /1\/2/);
 		assert.match(r1.content[0]!.text, /pending/);
-		// vòng 2: fail cao nữa → demote in_progress, streak reset
+		// round 2: another high-conf fail → demote to in_progress, streak reset
 		const r2 = (await f
 			.tool("task_update")
 			.execute("u2", { id: 1, status: "completed", evidence: "draft v2" }, undefined, undefined, f.ctx)) as {
@@ -885,13 +885,13 @@ test("layer2 wiring: low-conf fail asks for evidence without demotion", async ()
 	try {
 		const f = fakePi();
 		taskExtension(f.pi as never);
-		await f.tool("task_create").execute("c1", { subject: "viết brief", verify: { lane: "judgment" } }, undefined, undefined, f.ctx);
+		await f.tool("task_create").execute("c1", { subject: "write brief", verify: { lane: "judgment" } }, undefined, undefined, f.ctx);
 		const out = (await f
 			.tool("task_update")
 			.execute("u1", { id: 1, status: "completed", evidence: "draft" }, undefined, undefined, f.ctx)) as {
 			content: { text: string }[];
 		};
-		assert.match(out.content[0]!.text, /không demote/);
+		assert.match(out.content[0]!.text, /no demotion/);
 		assert.match(out.content[0]!.text, /pending/);
 	} finally {
 		_setJudgeRunnerForTests(null);
@@ -899,14 +899,14 @@ test("layer2 wiring: low-conf fail asks for evidence without demotion", async ()
 });
 
 test("layer2 wiring: amber state-lane escalates to judge; judge pass overrides the probe", async () => {
-	const calls = stubJudge(JSON.stringify({ verdict: "pass", confidence: "medium", reason: "probe spec sai — việc đã xong", cited_log_ids: [0] }));
+	const calls = stubJudge(JSON.stringify({ verdict: "pass", confidence: "medium", reason: "probe spec wrong — the work is done", cited_log_ids: [0] }));
 	try {
 		const f = fakePi();
 		taskExtension(f.pi as never);
 		await f
 			.tool("task_create")
 			.execute("c1", { subject: "bump", verify: { lane: "state", probes: [{ pattern: "cat out.txt", expect: "V1" }] } }, undefined, undefined, f.ctx);
-		fireBash(f, "t1", "cat out.txt", "V2"); // chạy nhưng expect lệch → amber
+		fireBash(f, "t1", "cat out.txt", "V2"); // ran but expect mismatched → amber
 		const out = (await f
 			.tool("task_update")
 			.execute("u1", { id: 1, status: "completed", evidence: "output V2" }, undefined, undefined, f.ctx)) as {
@@ -915,7 +915,7 @@ test("layer2 wiring: amber state-lane escalates to judge; judge pass overrides t
 		assert.match(out.content[0]!.text, /completed/);
 		assert.match(out.content[0]!.text, /judge: PASS/);
 		assert.equal(calls.length, 1);
-		assert.match(calls[0]!, /\[amber\]/); // packet mang kết quả probe amber
+		assert.match(calls[0]!, /\[amber\]/); // the packet carries the amber probe result
 	} finally {
 		_setJudgeRunnerForTests(null);
 	}
@@ -930,10 +930,10 @@ test("layer2 wiring: red state-lane still refuses WITHOUT calling the judge", as
 			.tool("task_create")
 			.execute("c1", { subject: "bump", verify: { lane: "state", probes: [{ pattern: "cat out.txt", expect: "V1" }] } }, undefined, undefined, f.ctx);
 		await assert.rejects(
-			f.tool("task_update").execute("u1", { id: 1, status: "completed", evidence: "xong" }, undefined, undefined, f.ctx),
-			/CHƯA qua kiểm chứng layer-1/,
+			f.tool("task_update").execute("u1", { id: 1, status: "completed", evidence: "done" }, undefined, undefined, f.ctx),
+			/NOT passed layer-1 verification/,
 		);
-		assert.equal(calls.length, 0); // worker-fault: judge không tốn tiền
+		assert.equal(calls.length, 0); // worker-fault: the judge costs nothing
 	} finally {
 		_setJudgeRunnerForTests(null);
 	}
@@ -965,23 +965,23 @@ test("layer2 wiring: appeal parks the task with the reason — no judge call", a
 	try {
 		const f = fakePi();
 		taskExtension(f.pi as never);
-		await f.tool("task_create").execute("c1", { subject: "viết brief", verify: { lane: "judgment" } }, undefined, undefined, f.ctx);
+		await f.tool("task_create").execute("c1", { subject: "write brief", verify: { lane: "judgment" } }, undefined, undefined, f.ctx);
 		const out = (await f
 			.tool("task_update")
-			.execute("u1", { id: 1, appeal: "judge phán sai — output thật đã đạt done-check" }, undefined, undefined, f.ctx)) as {
+			.execute("u1", { id: 1, appeal: "judge ruled wrong — the real output met the done-check" }, undefined, undefined, f.ctx)) as {
 			content: { text: string }[];
 		};
 		assert.match(out.content[0]!.text, /parked/);
 		assert.match(out.content[0]!.text, /PARKED/);
 		assert.equal(calls.length, 0);
 		const list = (await f.tool("task_list").execute("l1", {}, undefined, undefined, f.ctx)) as { content: { text: string }[] };
-		assert.match(list.content[0]!.text, /judge phán sai/);
-		// model KHÔNG tự mở lại được (v1.4.28 one-way park)
+		assert.match(list.content[0]!.text, /judge ruled wrong/);
+		// the model cannot un-park it (v1.4.28 one-way park)
 		await assert.rejects(
 			f.tool("task_update").execute("u2", { id: 1, status: "in_progress" }, undefined, undefined, f.ctx),
-			/không tự mở lại/,
+			/cannot un-park/,
 		);
-		// mở lại chỉ qua user surface (control bridge)
+		// reopening only via the user surface (control bridge)
 		const back = applyControlAction(
 			((f.entries.at(-1) as { data: unknown }).data as TaskState),
 			{ v: 1, action: "unpark", id: 1 },
@@ -994,11 +994,11 @@ test("layer2 wiring: appeal parks the task with the reason — no judge call", a
 });
 
 test("layer2 wiring: 3rd round refusal parks instead of judging a 4th time", async () => {
-	stubJudge(failJson({ confidence: "low" })); // mỗi vòng chỉ need-evidence
+	stubJudge(failJson({ confidence: "low" })); // every round is need-evidence
 	try {
 		const f = fakePi();
 		taskExtension(f.pi as never);
-		await f.tool("task_create").execute("c1", { subject: "viết brief", verify: { lane: "judgment" } }, undefined, undefined, f.ctx);
+		await f.tool("task_create").execute("c1", { subject: "write brief", verify: { lane: "judgment" } }, undefined, undefined, f.ctx);
 		for (let i = 0; i < MAX_JUDGE_ROUNDS - 1; i++) {
 			await f.tool("task_update").execute(`u${i}`, { id: 1, status: "completed", evidence: `draft ${i}` }, undefined, undefined, f.ctx);
 		}
@@ -1020,37 +1020,37 @@ test("layer2 wiring: projection carries failStreak/judgeRounds/appealReason + pa
 	try {
 		const f = fakePi();
 		taskExtension(f.pi as never);
-		await f.tool("task_create").execute("c1", { subject: "viết brief", verify: { lane: "judgment" } }, undefined, undefined, f.ctx);
+		await f.tool("task_create").execute("c1", { subject: "write brief", verify: { lane: "judgment" } }, undefined, undefined, f.ctx);
 		await f.tool("task_update").execute("u1", { id: 1, status: "completed", evidence: "d" }, undefined, undefined, f.ctx);
-		await f.tool("task_update").execute("u2", { id: 1, appeal: "không đồng ý phán" }, undefined, undefined, f.ctx);
+		await f.tool("task_update").execute("u2", { id: 1, appeal: "disagree with the verdict" }, undefined, undefined, f.ctx);
 		const status = buildTaskStatus(f.entries.at(-1)!.data as TaskState, "");
 		assert.equal(status.tasks[0]!.status, "parked");
 		assert.equal(status.tasks[0]!.failStreak, 0);
 		assert.equal(status.tasks[0]!.judgeRounds, 1);
-		assert.match(status.tasks[0]!.appealReason!, /không đồng ý/);
+		assert.match(status.tasks[0]!.appealReason!, /disagree with/);
 	} finally {
 		_setJudgeRunnerForTests(null);
 	}
 });
 
-// ── Control bridge wiring (v1.4.28): PARK một chiều + strict v2 ──────────
+// ── Control bridge wiring (v1.4.28): one-way PARK + strict v2 ──────────
 
 test("control wiring: model cannot un-park a parked task via task_update", async () => {
 	const f = fakePi();
 	taskExtension(f.pi as never);
-	await f.tool("task_create").execute("c1", { subject: "việc tranh chấp", verify: { lane: "judgment" } }, undefined, undefined, f.ctx);
-	await f.tool("task_update").execute("u1", { id: 1, appeal: "judge phán sai" }, undefined, undefined, f.ctx);
-	// model tự mở lại → từ chối
+	await f.tool("task_create").execute("c1", { subject: "disputed work", verify: { lane: "judgment" } }, undefined, undefined, f.ctx);
+	await f.tool("task_update").execute("u1", { id: 1, appeal: "judge ruled wrong" }, undefined, undefined, f.ctx);
+	// the model reopens it itself → refused
 	await assert.rejects(
 		f.tool("task_update").execute("u2", { id: 1, status: "in_progress" }, undefined, undefined, f.ctx),
-		/không tự mở lại/,
+		/cannot un-park/,
 	);
-	// model tự hủy task đang chờ user → cũng chặn (hủy = giấu tranh chấp)
+	// the model cancels a task awaiting the user → also blocked (cancelling = hiding the dispute)
 	await assert.rejects(
 		f.tool("task_update").execute("u3", { id: 1, status: "cancelled" }, undefined, undefined, f.ctx),
-		/không tự mở lại/,
+		/cannot un-park/,
 	);
-	// re-park (đã parked) vẫn vô hại — cho qua
+	// re-park (already parked) is still harmless — allowed through
 	const re = (await f.tool("task_update").execute("u4", { id: 1, status: "parked" }, undefined, undefined, f.ctx)) as {
 		content: { text: string }[];
 	};
@@ -1064,15 +1064,15 @@ test("control wiring: amendment cannot lower strict; raising still allowed", asy
 		.tool("task_create")
 		.execute("c1", { subject: "x", verify: { probes: [{ pattern: "cat a", expect: "A" }], strict: true } }, undefined, undefined, f.ctx);
 	fireBash(f, "t1", "cat a", "A");
-	// amend cố tình bỏ strict → bị ép giữ true
+	// amend deliberately drops strict → forced back to true
 	const out = (await f
 		.tool("task_update")
 		.execute("u1", { id: 1, verify: { probes: [{ pattern: "cat a", expect: "A" }] } }, undefined, undefined, f.ctx)) as {
 		content: { text: string }[];
 	};
 	const data = f.entries.at(-1)!.data as TaskState;
-	assert.equal(data.tasks[0]!.verify!.strict, true); // không bị hạ
-	// nâng strict trên task chưa strict → được
+	assert.equal(data.tasks[0]!.verify!.strict, true); // not lowered
+	// raising strict on a non-strict task → allowed
 	await f.tool("task_create").execute("c2", { subject: "y", verify: { probes: [{ pattern: "cat b", expect: "B" }] } }, undefined, undefined, f.ctx);
 	await f.tool("task_update").execute("u2", { id: 2, verify: { probes: [{ pattern: "cat b", expect: "B" }], strict: true } }, undefined, undefined, f.ctx);
 	const data2 = f.entries.at(-1)!.data as TaskState;
@@ -1083,46 +1083,46 @@ test("control wiring: amendment cannot lower strict; raising still allowed", asy
 test("control wiring: consumeControlFile applies unpark + strict from the user surface", async () => {
 	const f = fakePi();
 	taskExtension(f.pi as never);
-	// session_start với sessionId rỗng → controlSessionId rỗng; nhưng consume
-	// qua handler vẫn test được bằng cách set HOME tạm + sessionId thật.
-	// Ở đây test logic apply qua applyControlAction đã có pure test; wiring
-	// quan trọng: session_start đăng ký watcher + replay giữ trạng thái parked.
+	// session_start with an empty sessionId → empty controlSessionId; but consuming
+	// via the handler is still testable by setting a temporary HOME + a real sessionId.
+	// Apply logic is already covered by the pure applyControlAction tests; the wiring
+	// that matters: session_start registers the watcher + replay keeps the parked state.
 	await f.tool("task_create").execute("c1", { subject: "s", verify: { lane: "judgment" } }, undefined, undefined, f.ctx);
 	await f.tool("task_update").execute("u1", { id: 1, appeal: "test" }, undefined, undefined, f.ctx);
-	// restart replay: parked sống qua ledger
+	// restart replay: parked survives via the ledger
 	f.setBranch(f.entries.map((e) => ({ type: "custom", customType: e.customType, data: e.data })));
 	await f.handlers.get("session_start")!({}, f.ctx);
 	const list = (await f.tool("task_list").execute("l1", {}, undefined, undefined, f.ctx)) as { content: { text: string }[] };
-	assert.match(list.content[0]!.text, /parked/); // replay giữ parked
+	assert.match(list.content[0]!.text, /parked/); // replay keeps parked
 });
 
-// ── v1.4.38 wiring: doneCheck guard — agent được đổi đề nhưng không được đổi kín ──
+// ── v1.4.38 wiring: doneCheck guard — the agent may amend the brief but not swap it out ──
 describe("v1.4.38 wiring: doneCheck amendment gates", () => {
 	async function amendTwiceAndFailThird() {
 		const f = fakePi();
 		taskExtension(f.pi as never);
 		await f.tool("task_create").execute("c1", { subject: "deploy" }, undefined, undefined, f.ctx);
 		const third: string[] = [];
-		// lần 1 + 2: được
-		for (const desc of ["đề agent v1", "đề agent v2"]) {
+		// attempts 1 + 2: allowed
+		for (const desc of ["agent brief v1", "agent brief v2"]) {
 			const out = (await f.tool("task_update").execute("u", { id: 1, description: desc }, undefined, undefined, f.ctx)) as {
 				content: { text: string }[];
 			};
 			assert.match(out.content[0]!.text, /#1 → /);
 		}
-		// lần 3 (v1.4.53): KHÔNG throw nữa — ghi proposal chờ user duyệt
-		const out3 = (await f.tool("task_update").execute("u3", { id: 1, description: "echo ok là xong", amendReason: "phạm vi hẹp hơn" }, undefined, undefined, f.ctx)) as {
+		// attempt 3 (v1.4.53): no more throwing — records a proposal awaiting user approval
+		const out3 = (await f.tool("task_update").execute("u3", { id: 1, description: "running echo ok means done", amendReason: "narrower scope" }, undefined, undefined, f.ctx)) as {
 			content: { text: string }[];
 		};
 		third.push(out3.content[0]!.text);
 		return third;
 	}
 
-	test("agent rewrite #1 and #2 pass, #3 → PROPOSAL chờ user (không throw, v1.4.53)", async () => {
+	test("agent rewrite #1 and #2 pass, #3 → PROPOSAL awaiting user (no throw, v1.4.53)", async () => {
 		const third = await amendTwiceAndFailThird();
 		assert.equal(third.length, 1);
-		assert.match(third[0]!, /đã ghi đề xuất p\w+/);
-		assert.match(third[0]!, /CHƯA đổi/);
+		assert.match(third[0]!, /recorded proposal p\w+/);
+		assert.match(third[0]!, /NOT changed/);
 	});
 
 	test("state after two agent rewrites carries descAmendments + trail", async () => {
@@ -1159,11 +1159,11 @@ describe("v1.4.38 wiring: doneCheck amendment gates", () => {
 			undefined,
 			f.ctx,
 		);
-		const out = (await f.tool("task_update").execute("u1", { id: 1, description: "đề mới" }, undefined, undefined, f.ctx)) as {
+		const out = (await f.tool("task_update").execute("u1", { id: 1, description: "new brief" }, undefined, undefined, f.ctx)) as {
 			content: { text: string }[];
 		};
-		// v1.4.53: strict cũng ĐỀ XUẤT được (đề xuất = hỏi user), chỉ không tự sửa
-		assert.match(out.content[0]!.text, /đã ghi đề xuất p\w+/);
+		// v1.4.53: strict tasks can still PROPOSE (a proposal = asking the user), just not self-edit
+		assert.match(out.content[0]!.text, /recorded proposal p\w+/);
 		assert.match(out.content[0]!.text, /strict/);
 	});
 });

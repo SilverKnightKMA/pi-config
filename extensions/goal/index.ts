@@ -1,20 +1,22 @@
 /**
- * goal engine (#37, v1.4.51 — wake-loop hoàn chỉnh).
- * Phiên làm việc không giám sát: anchor + 20 epoch tự đánh thức + lease mặc định.
+ * goal engine (#37, v1.4.51 — complete wake-loop).
+ * Unsupervised work session: anchor + 20 self-wake epochs + default lease.
  *
- * Bất biến vòng lặp (chốt thiết kế 2026-09-14):
- *  - goal-done CƠ KHÍ: code đọc board projection, model không tự kết luận xong.
- *  - Membership động qua cửa: snapshot start ∪ task stamp goalId (task sinh
- *    trong goal LÀ thành viên) — nhưng admission không hoàn lại epoch.
- *  - Completed một chiều trong goal: reopen bị chặn ở task ext (escape: tạo
- *    task mới có stamp).
- *  - Spinning-detect: 2 epoch liền 0 task hoàn thành → wrap-up sớm.
- *  - Single-waker: khi goal running, auto-ping của subagent-types bị suppress
- *    (subagent-types đọc goal-state file trước khi ping).
+ * Loop invariants (design lock 2026-09-14):
+ *  - Mechanical goal-done: code reads the board projection; the model never
+ *    concludes done on its own.
+ *  - Membership is dynamic through a door: start snapshot ∪ tasks stamped
+ *    goalId (tasks born inside the goal ARE members) — but admission never
+ *    refunds an epoch.
+ *  - Completed is one-way inside a goal: reopen is blocked at the task ext
+ *    (escape hatch: create a new stamped task).
+ *  - Spinning-detect: 2 consecutive epochs with 0 tasks completed → early wrap-up.
+ *  - Single-waker: while a goal is running, subagent-types' auto-ping is
+ *    suppressed (subagent-types reads the goal-state file before pinging).
  *
- * File bridge (single-writer #44): goal engine là người ghi duy nhất của
- * ~/.pi/agent/goal-state/<sessionId>.json; task ext + subagent-types ĐỌC
- * (task ext còn ghi lease dùng qua tryConsumeLease — lease do user cấp mặc định ở goal start).
+ * File bridge (single-writer #44): the goal engine is the sole writer of
+ * ~/.pi/agent/goal-state/<sessionId>.json; task ext + subagent-types READ
+ * (the task ext also records lease use via tryConsumeLease — the lease is granted by default at goal start).
  */
 
 import { mkdirSync, readFileSync, renameSync, watch, writeFileSync } from "node:fs";
@@ -72,9 +74,9 @@ function writeGoal(state: GoalState): void {
 		writeFileSync(tmp, JSON.stringify(state), "utf8");
 		renameSync(tmp, file);
 	} catch {
-		// best-effort; /goal status sẽ thấy state cũ
+		// best-effort; /goal status will see the old state
 	}
-	// projection cho plugin card (goal-status/<sid>.json) — plugin chỉ đọc, không ghi
+	// projection for the plugin card (goal-status/<sid>.json) — plugin only reads, never writes
 	try {
 		const dir = join(home(), ".pi", "agent", "goal-status");
 		mkdirSync(dir, { recursive: true });
@@ -97,11 +99,11 @@ function writeGoal(state: GoalState): void {
 		}), "utf8");
 		renameSync(tmp, p);
 	} catch {
-		// projection là best-effort
+		// projection is best-effort
 	}
 }
 
-/** Control bridge (user-only door): panel button ghi goal-control/<sid>.json */
+/** Control bridge (user-only door): panel buttons write goal-control/<sid>.json */
 function controlPath(sessionId: string): string {
 	return join(home(), ".pi", "agent", "goal-control", `${sessionId}.json`);
 }
@@ -114,7 +116,7 @@ function ackControl(sessionId: string, payload: Record<string, unknown>): void {
 	}
 }
 
-/** Board projection của task ext (đọc-only, shape ổn định). */
+/** Board projection of the task ext (read-only, stable shape). */
 function readBoard(sessionId: string): BoardTaskLike[] {
 	try {
 		const raw = JSON.parse(readFileSync(join(home(), ".pi", "agent", "task-status", `${sessionId}.json`), "utf8"));
@@ -154,12 +156,12 @@ export default function activate(pi: ExtensionAPI): void {
 		writeGoal(done);
 		pi2.sendMessage({
 			customType: "goal-status",
-			content: `${wrapUpReport(done)}\nlý do kết thúc: ${why}`,
+			content: `${wrapUpReport(done)}\nend reason: ${why}`,
 			display: true,
 		});
 	}
 
-	/** Đánh giá sau mỗi lượt: xong / giò chỗ / hết ngân sách / lên lịch epoch mới. */
+	/** Evaluate after each turn: done / spinning / out of budget / schedule the next epoch. */
 	function settle(pi2: ExtensionAPI): void {
 		const st = sessionId ? readGoal(sessionId) : null;
 		if (!st || st.status !== "running") return;
@@ -169,15 +171,15 @@ export default function activate(pi: ExtensionAPI): void {
 		const completed = members.filter((t) => t.status === "completed" || t.status === "cancelled").length;
 
 		if (goalDone(st, board)) {
-			wrapUp(pi2, st, "goal-done cơ khí: không còn task-member nào mở");
+			wrapUp(pi2, st, "mechanical goal-done: no open task-members left");
 			return;
 		}
 		if (spinning(st)) {
-			wrapUp(pi2, st, "spinning: 2 epoch liên tiếp không task nào hoàn thành");
+			wrapUp(pi2, st, "spinning: 2 consecutive epochs with no task completed");
 			return;
 		}
 		if (st.epoch >= 20) {
-			wrapUp(pi2, st, "hết ngân sách epoch (20/20)");
+			wrapUp(pi2, st, "epoch budget exhausted (20/20)");
 			return;
 		}
 		clearWake();
@@ -188,7 +190,7 @@ export default function activate(pi: ExtensionAPI): void {
 			wakeTimer = null;
 			const cur = sessionId ? readGoal(sessionId) : null;
 			if (!cur || cur.status !== "running") return;
-			// epoch tiêu khi wake THẬT; kế toán delta board so với lần settle trước
+			// epoch consumed on REAL wake; board delta accounted against the previous settle
 			const b = readBoard(sessionId);
 			const mem = memberTasks(cur, b);
 			const doneNow = mem.filter((t) => t.status === "completed" || t.status === "cancelled").length;
@@ -197,9 +199,9 @@ export default function activate(pi: ExtensionAPI): void {
 			writeGoal(accounted);
 			const open = openIds(mem);
 			const nextId = open[0];
-			const nextTxt = nextId !== undefined ? `bắt đầu #${nextId}` : "kiểm tra lại board";
+			const nextTxt = nextId !== undefined ? `start #${nextId}` : "re-check the board";
 			pi2.sendUserMessage(
-				`[goal wake ${accounted.epoch}/20] anchor: ${accounted.anchor.slice(0, 160)}\nmở ${open.length} task-member · lease ${accounted.lease.used}/1 · ${nextTxt} — làm tiếp; không reopen task completed (tạo task mới nếu phát sinh việc); xong thì dừng tự nhiên (goal sẽ tự kết thúc).`,
+				`[goal wake ${accounted.epoch}/20] anchor: ${accounted.anchor.slice(0, 160)}\n${open.length} open task-members · lease ${accounted.lease.used}/1 · ${nextTxt} — keep going; do not reopen completed tasks (create a new task if more work comes up); when done, stop naturally (the goal will conclude itself).`,
 				{ deliverAs: "followUp" },
 			);
 		}, waitMs);
@@ -212,60 +214,60 @@ export default function activate(pi: ExtensionAPI): void {
 		const st = readGoal(sessionId);
 		if (!st) return;
 		if (st.status === "draft") {
-			// restart-back-up cho PHA INIT: session chết giữa init → đánh thức làm nốt bảng
+			// restart-back-up for the INIT phase: session died mid-init → wake up to finish the table
 			if (!st.proposal) {
-				say(pi, `[goal] draft chưa có bảng đề xuất — model làm nốt init (đọc board → đề xuất scope + anchor → goal_propose)`);
-				pi.sendUserMessage(`[goal-init] tiếp tục init goal (anchor thô: ${st.anchor.slice(0, 200)}): đề xuất scope + anchor đích rồi gọi goal_propose.`, { deliverAs: "followUp" });
+				say(pi, `[goal] draft has no proposal table yet — model finishes init (read board → propose scope + anchor → goal_propose)`);
+				pi.sendUserMessage(`[goal-init] continue goal init (raw anchor: ${st.anchor.slice(0, 200)}): propose scope + target anchor, then call goal_propose.`, { deliverAs: "followUp" });
 			} else {
-				say(pi, `[goal] draft có bảng chờ duyệt — user duyệt ở panel hoặc /goal confirm.`);
+				say(pi, `[goal] draft has a table awaiting approval — user approves on the panel or via /goal confirm.`);
 			}
 			return;
 		}
 		if (st.status !== "running") return;
-		say(pi, `[goal] resumed — epoch ${st.epoch}/20, lease ${st.lease.used}/1, member ${st.memberIds.length}+stamped (anchor: ${st.anchor.slice(0, 120)})`);
-		// mảnh 6 restart-back-up: nếu wakeAt đã quá khứ thì đánh thức lại sớm
+		say(pi, `[goal] resumed — epoch ${st.epoch}/20, lease ${st.lease.used}/1, members ${st.memberIds.length} + stamped (anchor: ${st.anchor.slice(0, 120)})`);
+		// piece 6 restart-back-up: if wakeAt is already in the past, wake again soon
 		const past = st.wakeAt ? Date.parse(st.wakeAt) < Date.now() : true;
 		setTimeout(() => settle(pi), past ? 5_000 : Math.max(1_000, Math.min(60_000, (st.wakeAt ? Date.parse(st.wakeAt) - Date.now() : 5_000))));
 	});
 
-	// Control bridge (user-only door): nút panel ghi goal-control/<sid>.json.
+	// Control bridge (user-only door): panel buttons write goal-control/<sid>.json.
 	// Watch dir + 150ms debounce + self-ack dedupe — pattern snip v1.4.6.
 	pi.on("input", () => clearWake());
 
 	pi.on("agent_settled", () => {
-		// để thoát event loop: hẹn 2s rồi đánh giá (turn thật vừa kết thúc)
+		// to let the event loop exit: wait 2s then evaluate (a real turn just ended)
 		setTimeout(() => settle(pi), 2_000);
 	});
 
 	pi.registerCommand("goal", {
-		description: "Quản lý goal (phiên không giám sát): start <anchor> | status | pause | resume | stop",
+		description: "Manage goals (unsupervised sessions): start <anchor> | status | pause | resume | stop",
 		handler: async (args, ctx) => {
 			const argv = args.trim().split(/\s+/).filter(Boolean);
 			const sub = argv[0]?.toLowerCase();
 			if (!sessionId) sessionId = ((ctx.sessionManager.getSessionId?.() as string | undefined) ?? "");
 			if (!sessionId) {
-				ctx.ui.notify("goal: không xác định được session (subagent?)", "error");
+				ctx.ui.notify("goal: could not determine session (subagent?)", "error");
 				return;
 			}
 
 			if (sub === "start") {
 				const anchor = args.trim().slice("start".length).trim();
 				if (!anchor) {
-					ctx.ui.notify("/goal start <anchor text> — mô tả đích đến của phiên đêm", "warning");
+					ctx.ui.notify("/goal start <anchor text> — describe the destination of the overnight session", "warning");
 					return;
 				}
 				const existing = readGoal(sessionId);
 				if (existing && (existing.status === "running" || existing.status === "paused")) {
-					ctx.ui.notify(`goal đang chạy (epoch ${existing.epoch}/20) — /goal stop trước khi start mới`, "warning");
+					ctx.ui.notify(`goal already running (epoch ${existing.epoch}/20) — /goal stop before starting a new one`, "warning");
 					return;
 				}
-				// v1.4.52: start mở màn INIT (draft) — goal chưa chạy, chưa tiêu epoch.
-				// Model làm bảng đề xuất scope; user duyệt trên panel/slách rồi mới running.
+				// v1.4.52: start opens the INIT phase (draft) — the goal is not running yet, no epoch consumed.
+				// The model builds the scope proposal table; it goes running only after the user approves on the panel/slash.
 				const existingAny = readGoal(sessionId);
 				const st = startGoal(sessionId, anchor, new Date().toISOString(), { lease: existingAny?.lease.granted !== false });
 				writeGoal(st);
 				pi.sendUserMessage(
-					`[goal-init] user mở goal (yêu cầu: ${anchor.slice(0, 300)}). Việc của model ngay bây giờ: (1) đọc board qua task_list; (2) đề xuất scope — task nào VÀO (lý do), task nào BỎ (lý do); (3) viết anchor tả ĐÍCH BẰNG KẾT QUẢ (không phải danh sách task); (4) trình bảng ngắn trong chat; (5) gọi goal_propose với anchor + includeIds/excludeIds + rationale. Goal chỉ chạy sau khi user duyệt bảng — KHÔNG tự start, không tiêu epoch lúc init. Nếu board rỗng/đề xuất chưa rõ: hỏi user trong chat.`,
+					`[goal-init] user opened a goal (request: ${anchor.slice(0, 300)}). The model's job right now: (1) read the board via task_list; (2) propose scope — which tasks go IN (reason), which are dropped (reason); (3) write an anchor describing the DESTINATION AS AN OUTCOME (not a task list); (4) present a short table in chat; (5) call goal_propose with anchor + includeIds/excludeIds + rationale. The goal only runs after the user approves the table — do NOT self-start, and consume no epochs during init. If the board is empty or the proposal is unclear: ask the user in chat.`,
 					{ deliverAs: "followUp" },
 				);
 				return;
@@ -273,7 +275,7 @@ export default function activate(pi: ExtensionAPI): void {
 
 			const st = readGoal(sessionId);
 			if (!st) {
-				ctx.ui.notify("chưa có goal trong session này — /goal start <anchor>", "warning");
+				ctx.ui.notify("no goal in this session yet — /goal start <anchor>", "warning");
 				return;
 			}
 			const now = new Date().toISOString();
@@ -281,52 +283,52 @@ export default function activate(pi: ExtensionAPI): void {
 			if (sub === "status") {
 				if (st.status === "draft") {
 					say(pi, st.proposal
-						? [`[goal] DRAFT — chờ user duyệt bảng (nút panel hoặc /goal confirm)`, `anchor đề xuất: ${st.proposal.anchor}`, `vào: ${st.proposal.includeIds.length ? `#${st.proposal.includeIds.join(" #")}` : "mọi task mở"}${st.proposal.excludeIds.length ? ` · bỏ: #${st.proposal.excludeIds.join(" #")}` : ""}`].join("\n")
-						: "[goal] DRAFT — model chưa đề xuất bảng; chờ init hoặc nhắc model gọi goal_propose");
+						? [`[goal] DRAFT — awaiting user approval of the table (panel button or /goal confirm)`, `proposed anchor: ${st.proposal.anchor}`, `in: ${st.proposal.includeIds.length ? `#${st.proposal.includeIds.join(" #")}` : "all open tasks"}${st.proposal.excludeIds.length ? ` · out: #${st.proposal.excludeIds.join(" #")}` : ""}`].join("\n")
+						: "[goal] DRAFT — model has not proposed a table yet; await init or remind the model to call goal_propose");
 				} else {
 					const board = readBoard(sessionId);
 					const open = openIds(memberTasks(st, board));
-					say(pi, [`[goal] ${st.status} — epoch ${st.epoch}/20 · goalId ${st.goalId}`, `anchor: ${st.anchor}`, `mở ${open.length}: ${open.length ? `#${open.slice(0, 10).join(" #")}${open.length > 10 ? " …" : ""}` : "—"}`, st.lease.granted ? `lease: ${st.lease.used}/1 đã dùng` : "lease: không được cấp"].join("\n"));
+					say(pi, [`[goal] ${st.status} — epoch ${st.epoch}/20 · goalId ${st.goalId}`, `anchor: ${st.anchor}`, `${open.length} open: ${open.length ? `#${open.slice(0, 10).join(" #")}${open.length > 10 ? " …" : ""}` : "—"}`, st.lease.granted ? `lease: ${st.lease.used}/1 used` : "lease: not granted"].join("\n"));
 				}
 			} else if (sub === "pause") {
 				clearWake();
 				writeGoal(pauseGoal(st, now));
-				say(pi, "[goal] TẠM DỪNG — không tự đánh thức cho tới /goal resume");
+				say(pi, "[goal] PAUSED — no self-waking until /goal resume");
 			} else if (sub === "resume") {
 				writeGoal(resumeGoal(st, now));
-				say(pi, "[goal] TIẾP TỤC");
+				say(pi, "[goal] RESUMED");
 				setTimeout(() => settle(pi), 2_000);
 			} else if (sub === "stop") {
-				wrapUp(pi, st, "user gọi /goal stop");
+				wrapUp(pi, st, "user called /goal stop");
 			} else if (sub === "lease-use") {
-				const note = args.trim().slice("lease-use".length).trim() || "(không ghi chú)";
+				const note = args.trim().slice("lease-use".length).trim() || "(no note)";
 				const r = useLease(st, note, now);
 				if (r.ok) {
 					writeGoal(r.state);
-					say(pi, `[goal] LEASE ĐÃ DÙNG (1/1) — ${note}\nSáng sẽ thấy trong wrap-up.`);
+					say(pi, `[goal] LEASE USED (1/1) — ${note}\nIt will show up in the morning wrap-up.`);
 				} else {
-					ctx.ui.notify(`lease từ chối: ${r.reason}`, "error");
+					ctx.ui.notify(`lease denied: ${r.reason}`, "error");
 				}
 			} else if (sub === "confirm") {
-				// user-typed fallback của nút ✓ duyệt trên panel
+				// user-typed fallback for the ✓ approve button on the panel
 				if (st.status !== "draft" || !st.proposal) {
-					ctx.ui.notify("goal chưa có bảng đề xuất để duyệt (draft chưa có proposal)", "warning");
+					ctx.ui.notify("goal has no proposal table to approve (draft without a proposal)", "warning");
 					return;
 				}
 				const now2 = new Date().toISOString();
 				writeGoal(confirmGoal(st, openIds(readBoard(sessionId)), now2));
-				say(pi, "[goal] ĐÃ DUYỆT — membership khóa theo bảng, epoch budget + wake-loop bắt đầu.");
+				say(pi, "[goal] APPROVED — membership locked to the table, epoch budget + wake-loop begin.");
 				setTimeout(() => settle(pi), 2_000);
 			} else if (sub === "revise") {
 				writeGoal(reviseGoal(st, new Date().toISOString()));
-				say(pi, "[goal] SỬA LẠI — model sẽ đề xuất bảng mới (draft, chưa chạy).");
+				say(pi, "[goal] REVISED — the model will propose a new table (draft, not running).");
 			} else if (sub === "cancel") {
 				if (st.status === "draft") {
 					clearWake();
 					writeGoal(stopGoal(st, new Date().toISOString()));
-					say(pi, "[goal] ĐÃ HỦY draft.");
+					say(pi, "[goal] DRAFT CANCELED.");
 				} else {
-					ctx.ui.notify("goal đang chạy — dùng /goal stop (có wrap-up)", "warning");
+					ctx.ui.notify("goal is running — use /goal stop (includes wrap-up)", "warning");
 				}
 			} else {
 				ctx.ui.notify("sub: start <anchor> | confirm | revise | cancel | status | pause | resume | stop | lease-use <note>", "warning");
@@ -334,22 +336,22 @@ export default function activate(pi: ExtensionAPI): void {
 		},
 	});
 
-	// tool duy nhất của model trong pha init: ghi bảng đề xuất (không chạy được gì)
+	// the model's only tool in the init phase: write the proposal table (cannot run anything)
 	pi.registerTool({
 		name: "goal_propose",
-		label: "Goal init — đề xuất scope",
-		description: "Goal init: ghi bảng đề xuất scope chờ user duyệt. Chỉ hợp lệ khi goal đang draft (user vừa /goal start). anchor tả ĐÍCH BẰNG KẾT QUẢ, KHÔNG phải danh sách task.",
+		label: "Goal init — propose scope",
+		description: "Goal init: record the scope proposal table awaiting user approval. Only valid while the goal is in draft (user just ran /goal start). The anchor describes the DESTINATION AS AN OUTCOME, NOT a task list.",
 		parameters: Type.Object({
-			anchor: Type.String({ description: "Đích đến tả bằng kết quả, ví dụ 'task về X hoàn thành + test pass'" }),
-			includeIds: Type.Array(Type.Number(), { default: [], description: "Task id đề xuất VÀO scope — để [] nếu mọi task mở (dùng excludeIds)" }),
+			anchor: Type.String({ description: "Destination described as an outcome, e.g. 'tasks about X completed + tests pass'" }),
+			includeIds: Type.Array(Type.Number(), { default: [], description: "Task ids proposed INTO scope — use [] for all open tasks (use excludeIds instead)" }),
 			excludeIds: Type.Array(Type.Number(), { default: [] }),
-			rationale: Type.String({ description: "Lý do vào/bỏ từng task — hiện trong bảng chat + card duyệt" }),
+			rationale: Type.String({ description: "Reason for including/dropping each task — shown in the chat table + approval card" }),
 		}),
 		async execute(_id, params: { anchor: string; includeIds?: number[]; excludeIds?: number[]; rationale: string }, _signal, _onUpdate, _ctx) {
-			if (!sessionId) throw new Error("goal: không xác định được session");
+			if (!sessionId) throw new Error("goal: could not determine session");
 			const st = readGoal(sessionId);
-			if (!st) throw new Error("goal: chưa có goal nào (user gõ /goal start <yêu cầu> trước)");
-			if (st.status !== "draft") throw new Error(`goal đang ${st.status} — chỉ ghi bảng khi draft`);
+			if (!st) throw new Error("goal: no goal yet (user types /goal start <request> first)");
+			if (st.status !== "draft") throw new Error(`goal is ${st.status} — the table can only be written while in draft`);
 			const p: GoalProposal = {
 				anchor: params.anchor ?? "",
 				includeIds: Array.isArray(params.includeIds) ? params.includeIds.map(Number) : [],
@@ -360,17 +362,17 @@ export default function activate(pi: ExtensionAPI): void {
 			writeGoal(setProposal(st, p, p.proposedAt));
 			return {
 				content: [{ type: "text", text: [
-					`Đã ghi bảng đề xuất (draft chờ duyệt):`,
+					`Proposal table recorded (draft awaiting approval):`,
 					`anchor: ${p.anchor}`,
-					`vào: ${p.includeIds.length ? `#${p.includeIds.join(" #")}` : "mọi task mở"}${p.excludeIds.length ? ` · bỏ: #${p.excludeIds.join(" #")}` : ""}`,
-					`User duyệt ở bảng goal trên panel (nút ✓) hoặc gõ /goal confirm — goal CHƯA chạy.`,
+					`in: ${p.includeIds.length ? `#${p.includeIds.join(" #")}` : "all open tasks"}${p.excludeIds.length ? ` · out: #${p.excludeIds.join(" #")}` : ""}`,
+					`User approves via the goal table on the panel (✓ button) or by typing /goal confirm — the goal is NOT running yet.`,
 				].join("\n") }],
 				details: {},
 			};
 		},
 	});
 
-	// watch goal-control dir — confirm/revise/cancel từ nút panel
+	// watch goal-control dir — confirm/revise/cancel from panel buttons
 	try {
 		mkdirSync(dirname(controlPath("x")), { recursive: true });
 		let debounce: ReturnType<typeof setTimeout> | null = null;
@@ -387,7 +389,7 @@ export default function activate(pi: ExtensionAPI): void {
 						const st = readGoal(sessionId);
 						if (st && st.status === "draft" && st.proposal) {
 							writeGoal(confirmGoal(st, openIds(readBoard(sessionId)), new Date().toISOString()));
-							say(pi, "[goal] ĐÃ DUYỆT (panel) — membership khóa, wake-loop bắt đầu.");
+							say(pi, "[goal] APPROVED (panel) — membership locked, wake-loop begins.");
 							lastAckAt = new Date().toISOString();
 							ackControl(sessionId, { action: "confirm", sentAt: raw.sentAt, ackAt: lastAckAt });
 							setTimeout(() => settle(pi), 2_000);
@@ -396,27 +398,27 @@ export default function activate(pi: ExtensionAPI): void {
 						const st = readGoal(sessionId);
 						if (st && st.status === "draft") {
 							writeGoal(reviseGoal(st, new Date().toISOString()));
-							say(pi, "[goal] SỬA LẠI (panel) — model đề xuất bảng mới.");
+							say(pi, "[goal] REVISED (panel) — the model will propose a new table.");
 							lastAckAt = new Date().toISOString();
 							ackControl(sessionId, { action: "revise", sentAt: raw.sentAt, ackAt: lastAckAt });
-							pi.sendUserMessage("[goal-init] user bấm 'sửa lại' — đề xuất bảng scope mới (anchor + vào/bỏ + lý do) rồi gọi goal_propose.", { deliverAs: "followUp" });
+							pi.sendUserMessage("[goal-init] user clicked 'revise' — propose a new scope table (anchor + in/out + reasons), then call goal_propose.", { deliverAs: "followUp" });
 						}
 					} else if (raw.action === "cancel") {
 						const st = readGoal(sessionId);
 						if (st && st.status === "draft") {
 							clearWake();
 							writeGoal(stopGoal(st, new Date().toISOString()));
-							say(pi, "[goal] ĐÃ HỦY draft (panel).");
+							say(pi, "[goal] DRAFT CANCELED (panel).");
 							lastAckAt = new Date().toISOString();
 							ackControl(sessionId, { action: "cancel", sentAt: raw.sentAt, ackAt: lastAckAt });
 						}
 					}
 				} catch {
-					// chưa có file / rác — bỏ qua
+					// no file yet / junk — skip
 				}
 			}, 150);
 		});
 	} catch {
-		// không tạo được dir control — nút panel không hoạt động, slash vẫn chạy
+		// could not create the control dir — panel buttons won't work, slash still runs
 	}
 }
