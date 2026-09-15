@@ -60,6 +60,7 @@ import {
 	planFilePath,
 	planStatusText,
 	planStatusPayload,
+	planToolGate,
 	reconcilePlan,
 	replayPlan,
 	deriveFromTasks,
@@ -760,6 +761,17 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("tool_call", async (event) => {
+		// v1.4.70 (#47 doctrine): mode ENTRY is user-only in EVERY state — the
+		// model can never open plan mode itself, and plan files can only be
+		// written under a user-opened mode (blocks the clobber class where
+		// write_plan overwrote a live/historical plan file).
+		const gate = planToolGate(plan.mode, event.toolName);
+		if (!gate.allowed) {
+			return {
+				block: true,
+				reason: `${gate.what} — ${gate.why} Door: ${gate.door}. NEXT: ${gate.next}`,
+			};
+		}
 		if (planActive()) {
 			const allowed = new Set<string>([...READ_ONLY_TOOL_NAMES, ...PLAN_TOOL_NAMES]);
 			if (allowed.has(event.toolName)) return;

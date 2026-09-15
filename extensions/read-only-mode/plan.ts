@@ -28,6 +28,72 @@ export const MAX_SLUG_CHARS = 40;
 
 export type PlanMode = "inactive" | "active" | "awaiting" | "tracking" | "complete";
 
+/** v1.4.70 (#47 doctrine — user rule 2026-09-15): plan/goal mode ENTRY is
+ *  user-only. The model can never open plan mode itself; /plan on is a door
+ *  only the user runs. Denials follow the #43 envelope: WHAT/WHY/door/NEXT. */
+export type PlanToolGate =
+	| { allowed: true }
+	| { allowed: false; what: string; why: string; door: string; next: string };
+
+export function planToolGate(mode: PlanMode, tool: string): PlanToolGate {
+	if (tool === "enter_plan_mode") {
+		return mode === "inactive"
+			? {
+					allowed: false,
+					what: `tool "enter_plan_mode" is blocked`,
+					why: "plan mode entry is user-only — the bot never opens the mode itself",
+					door: "/plan on (user)",
+					next: "present the plan outline in chat and ask the user to run /plan on; once the mode is active, write_plan becomes available",
+				}
+			: {
+					allowed: false,
+					what: `tool "enter_plan_mode" is blocked`,
+					why: `plan mode is already ${mode} — entry happened through the user door`,
+					door: "/plan on (user)",
+					next: mode === "active" || mode === "awaiting" ? "use write_plan to draft, exit_plan_mode to submit for approval" : `the plan is ${mode}; /plan off (user) ends it`,
+				};
+	}
+	if (tool === "write_plan") {
+		if (mode === "active" || mode === "awaiting") return { allowed: true };
+		return mode === "inactive"
+			? {
+					allowed: false,
+					what: `tool "write_plan" is blocked`,
+					why: "no plan mode is open — plan files are written only under a user-opened mode (this also prevents silent overwrite of plan files)",
+					door: "/plan on (user)",
+					next: "ask the user to run /plan on first, then draft with write_plan",
+				}
+			: {
+					allowed: false,
+					what: `tool "write_plan" is blocked`,
+					why: `the plan is ${mode} — writing would overwrite a live/historical plan file`,
+					door: "/plan off then /plan on (user)",
+					next: "ask the user to end the current plan and open a new one before drafting",
+				};
+	}
+	if (tool === "exit_plan_mode") {
+		if (mode === "active" || mode === "awaiting") return { allowed: true };
+		return {
+			allowed: false,
+			what: `tool "exit_plan_mode" is blocked`,
+			why: `nothing to submit — the plan is ${mode}`,
+			door: "—",
+			next: mode === "tracking" ? "the plan is already approved and tracking — work the steps" : "no drafted plan awaits submission",
+		};
+	}
+	if (tool === "plan_step_done") {
+		if (mode === "tracking" || mode === "complete") return { allowed: true };
+		return {
+			allowed: false,
+			what: `tool "plan_step_done" is blocked`,
+			why: `the plan is ${mode} — steps only complete while tracking`,
+			door: "/plan on → draft → approve (user)",
+			next: "no active plan is tracking steps",
+		};
+	}
+	return { allowed: true };
+}
+
 export interface PlanStep {
 	index: number; // 1-based, stable per parse order
 	text: string;

@@ -12,6 +12,7 @@ import {
 	replayPlan,
 	slugFromPlan,
 	reconcilePlan,
+	planToolGate,
 	deriveFromTasks,
 	planBridgePayload,
 } from "./plan";
@@ -309,5 +310,41 @@ describe("plan task bridge (#47 Phase B)", () => {
 		expect(st?.planId).toBe("p-sess1-abc");
 		const bad = sanitizePlanState({ mode: "tracking", planId: "x-1", steps: [] });
 		expect(bad?.planId).toBeUndefined();
+	});
+});
+
+describe("planToolGate — mode entry is user-only (v1.4.70)", () => {
+	test("enter_plan_mode is NEVER a model tool — blocked in every mode", () => {
+		for (const m of ["inactive", "active", "awaiting", "tracking", "complete"] as const) {
+			const g = planToolGate(m, "enter_plan_mode");
+			expect(g.allowed).toBe(false);
+		}
+		const g = planToolGate("inactive", "enter_plan_mode");
+		if (!g.allowed) {
+			expect(g.door).toContain("/plan on");
+			expect(g.next).toContain("ask the user");
+		}
+	});
+
+	test("write_plan allowed only while drafting (active/awaiting)", () => {
+		expect(planToolGate("active", "write_plan").allowed).toBe(true);
+		expect(planToolGate("awaiting", "write_plan").allowed).toBe(true);
+		expect(planToolGate("inactive", "write_plan").allowed).toBe(false); // mode not opened by user
+		expect(planToolGate("tracking", "write_plan").allowed).toBe(false); // live plan — no clobber
+		expect(planToolGate("complete", "write_plan").allowed).toBe(false); // historical — no clobber
+	});
+
+	test("exit_plan_mode only while drafting; plan_step_done only while tracking", () => {
+		expect(planToolGate("active", "exit_plan_mode").allowed).toBe(true);
+		expect(planToolGate("awaiting", "exit_plan_mode").allowed).toBe(true);
+		expect(planToolGate("tracking", "exit_plan_mode").allowed).toBe(false);
+		expect(planToolGate("tracking", "plan_step_done").allowed).toBe(true);
+		expect(planToolGate("inactive", "plan_step_done").allowed).toBe(false);
+	});
+
+	test("non-plan tools pass the gate untouched (read-only allowlist handles them)", () => {
+		for (const t of ["read", "bash", "edit", "task_update", "goal_propose"]) {
+			expect(planToolGate("tracking", t).allowed).toBe(true);
+		}
 	});
 });
