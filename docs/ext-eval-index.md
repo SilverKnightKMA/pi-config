@@ -72,3 +72,19 @@ Never scanned yet (open if needed):
 - the plan/todo family beyond @pify (plan-mode was borrowed but its neighbors have not been scanned)
 - the context-compaction family beyond our own OM
 - plugins/hooks for other harnesses as a source of borrowable patterns (already touched via separate briefs)
+
+## Sync log 2026-09-15 (mode 3, npm drift after 2026-09-14 sync)
+
+- **@pify/plan-mode 0.4.9→0.4.10** — DROP (shell.ts operator-split fix; region never ported; edge cases gifted to #34)
+- **@pify/swarm 0.9.0→0.9.2** — DROP (mailbox constants + consent persist; loop-guard untouched)
+- **@pify/workflow 0.11.6→0.11.9** — DROP (removeIfUnchanged dead-code fix confirms #26's known bug; spawnSync 1MiB cap lesson noted)
+- **@pify/memory 0.6.0→0.9.2** — RE-EVAL INPUT for the pending #1 decision (diffed 621 lines): the
+  session_start-only injection gap (our "lỗ hổng 1") is FIXED upstream — new `session_compact` hook
+  re-injects deterministically ("only put the user's own bytes back in front of it", no model call);
+  dedupe now checks `buildContextEntries()` not raw branch; NEW opt-in LLM observer (off by default,
+  consent-scoped `PIFY_MEMORY_OBSERVE`) storing notes in the session branch ledger with coverage
+  markers — convergence toward our OM, but notes stay session-scoped (no cross-session store without
+  the still-UI-gated consolidate). Headless `/memory` + consolidate-confirm limitation appears
+  unchanged. The 4-direction decision (#1A) should be re-presented with these facts.
+- GitHub repos of amosblomqvist: all 4 tracked repos frozen at registry refs (ls-remote 2026-09-15);
+  1 untracked repo seen: `pi-dictate` (pushed 2026-08-31, dictation ext — not ported, no eval needed)

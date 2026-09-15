@@ -1,9 +1,10 @@
 # Eero Alvar (@EeroAlvar) — Channel Transcripts
 
-Fetched via yt-dlp (youtube-transcript skill), all 15 videos.
+Fetched via yt-dlp (youtube-transcript skill), all 16 videos (15 fetched 2026-08-30; +1 new 2026-09-15).
 
 | Video | File | Length |
 |---|---|---|
+| [Perfectionism and Taking Action](https://www.youtube.com/watch?v=A-CtdQFRX64) | A-CtdQFRX64-perfectionism-and-taking-action.md | 8471 chars (2026-09-08, NEW) |
 | [What Remains Valuable When Anyone Can Build Anything?](https://www.youtube.com/watch?v=0tqty8ltKDA) | 0tqty8ltKDA-what-remains-valuable-when-anyone-can-bu.md | 8417 chars |
 | [Pi Coding Agent Setup After 2 Months](https://www.youtube.com/watch?v=DWWrLlM3gwQ) | DWWrLlM3gwQ-pi-coding-agent-setup-after-2-months.md | 14603 chars |
 | [Build Custom AI Tools For Everything](https://www.youtube.com/watch?v=DzhLFiblPUk) | DzhLFiblPUk-build-custom-ai-tools-for-everything.md | 5608 chars |
