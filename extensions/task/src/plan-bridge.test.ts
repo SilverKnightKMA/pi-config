@@ -109,3 +109,52 @@ describe("applyPlanBridge (#47 Phase B)", () => {
 		expect(Array.isArray(round.tasks)).toBe(true);
 	});
 });
+
+describe("plan-bridge optional dependencies (#86 — after N marker, never forced)", () => {
+	function depPayload() {
+		return sanitizePlanBridge({
+			...trackingPayload([[1, "core"], [2, "tests (after 1)"], [3, "ship (after 1,2)"]]),
+			steps: [
+				{ index: 1, text: "core" },
+				{ index: 2, text: "tests", dependsOn: [1] },
+				{ index: 3, text: "ship", dependsOn: [1, 2] },
+			],
+		})!;
+	}
+
+	test("sanitize keeps backward refs; drops forward/self/out-of-range silently", () => {
+		const p = sanitizePlanBridge({
+			...trackingPayload([[1, "a"], [2, "b"], [3, "c"]]),
+			steps: [
+				{ index: 1, text: "a", dependsOn: [2] },
+				{ index: 2, text: "b", dependsOn: [2, 7, "x"] as never },
+				{ index: 3, text: "c", dependsOn: [1, 1, 2] },
+			],
+		})!;
+		expect(p.steps[0].dependsOn).toBeUndefined(); // forward (2 ≥ own 1)
+		expect(p.steps[1].dependsOn).toBeUndefined(); // self + out-of-range + junk
+		expect(p.steps[2].dependsOn).toEqual([1, 2]); // dedup keeps valid pair
+	});
+
+	test("applyPlanBridge wires blockedBy from step indices to created task ids", () => {
+		const next = applyPlanBridge(EMPTY_STATE, depPayload(), 1000);
+		const t1 = next.tasks.find((t) => t.stepIndex === 1)!;
+		const t2 = next.tasks.find((t) => t.stepIndex === 2)!;
+		const t3 = next.tasks.find((t) => t.stepIndex === 3)!;
+		expect(t1.blockedBy ?? []).toEqual([]);
+		expect(t2.blockedBy).toEqual([t1.id]);
+		expect(t3.blockedBy).toEqual([t1.id, t2.id]);
+	});
+
+	test("re-consume is idempotent — same edges, no duplicates, identical state object", () => {
+		const once = applyPlanBridge(EMPTY_STATE, depPayload(), 1000);
+		const twice = applyPlanBridge(once, depPayload(), 2000);
+		expect(twice.tasks).toHaveLength(3);
+		expect(twice).toBe(once);
+	});
+
+	test("flat payload (no dependsOn) stays edge-free — the old shape is untouched", () => {
+		const next = applyPlanBridge(EMPTY_STATE, sanitizePlanBridge(trackingPayload([[1, "a"], [2, "b"]]))!, 1000);
+		for (const t of next.tasks) expect(t.blockedBy ?? []).toEqual([]);
+	});
+});

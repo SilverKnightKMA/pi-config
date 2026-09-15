@@ -63,6 +63,7 @@ import {
 	planToolGate,
 	reconcilePlan,
 	replayPlan,
+	actionableSteps,
 	deriveFromTasks,
 	planBridgePayload,
 	type BoardStepTaskLike,
@@ -162,7 +163,13 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 					(t: unknown): t is BoardStepTaskLike =>
 						typeof t === "object" && t !== null && typeof (t as { id?: unknown }).id === "number" && typeof (t as { status?: unknown }).status === "string",
 				)
-				.map((t) => ({ id: t.id, status: t.status, ...(typeof t.planId === "string" ? { planId: t.planId } : {}), ...(typeof t.stepIndex === "number" ? { stepIndex: t.stepIndex } : {}) }));
+				.map((t) => ({
+					id: t.id,
+					status: t.status,
+					...(typeof t.planId === "string" ? { planId: t.planId } : {}),
+					...(typeof t.stepIndex === "number" ? { stepIndex: t.stepIndex } : {}),
+					...(Array.isArray(t.blockedBy) && t.blockedBy.every((b: unknown) => typeof b === "number") ? { blockedBy: t.blockedBy as number[] } : {}),
+				}));
 		} catch {
 			return [];
 		}
@@ -202,6 +209,14 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 		);
 	}
 
+	/** v1.4.77 (#80): wake-eligible subset — see actionableSteps in plan.ts
+	 *  (pure, pinned by tests). Drives nudge targeting, budget, signatures and
+	 *  continuation ownership; parked/blocked keep the plan OPEN but consume
+	 *  nothing. Quiescent handling lives in planSettle. */
+	function actionableStepTasks(): BoardStepTaskLike[] {
+		return actionableSteps(openStepTasks());
+	}
+
 	/** Settled while a bridged plan still has open step-tasks → schedule the
 	 *  next wake (shared driver: budget shrinks with open steps, anti-spin 3,
 	 *  ladder 5→80s). Wrap-up stops the loop and tells the timeline why — the
@@ -211,16 +226,53 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 		if (plan.mode !== "tracking" || !plan.planId || process.env.PLAN_TASK_BRIDGE === "0") return;
 		const open = openStepTasks();
 		if (open.length === 0) {
+			plan.wakeQuiescent = false;
 			reconcileAndPersist(); // all step-tasks done → auto-close path
 			return;
 		}
-		const sig = open.map((t) => `${t.id}:${t.status}`).join(",");
-		const d = decide({ kind: "plan", active: true, openWork: open.length, rounds: plan.wakeRounds ?? 0, budget: planBudget(open.length), noProgressStreak: plan.wakeNoProgress ?? 0 });
+		// #80: unresolved vs wake-eligible split — the driver only ever targets
+		// actionable work; parked/blocked steps keep the plan OPEN (auto-close
+		// still requires every step resolved) but consume nothing.
+		const actionable = actionableStepTasks();
+		if (actionable.length === 0) {
+			// QUIESCENT — everything left awaits the user (parked) or a blocker.
+			// No budget, no timer, ONE transition message; the loop re-arms by
+			// planSettle the moment a step becomes actionable again.
+			if (!plan.wakeQuiescent) {
+				plan.wakeQuiescent = true;
+				plan.wakeAt = undefined;
+				persistPlan();
+				const parked = open.filter((t) => t.status === "parked").map((t) => `#${t.id}`);
+				const blocked = open.filter((t) => t.status !== "parked").map((t) => `#${t.id}`);
+				try {
+					pi.sendMessage({
+					customType: "plan-status",
+					content: `[plan] quiescent — awaiting the user: ${parked.length > 0 ? `parked ${parked.join(", ")} (reopen or cancel)` : "no actionable steps"}${blocked.length > 0 ? `; dependency-blocked ${blocked.join(", ")}` : ""}. No wake budget is consumed while waiting; the plan stays on the panel.`,
+					display: true,
+				});
+				} catch {
+					// display best effort
+				}
+			}
+			return;
+		}
+		if (plan.wakeQuiescent) {
+			// Resume → FRESH episode: rounds/anti-spin consumed before the wait
+			// must not block resumed work (advisor-refined #80, 2026-09-16).
+			plan.wakeQuiescent = false;
+			plan.wakeRounds = 0;
+			plan.wakeNoProgress = 0;
+			plan.wakeSignature = undefined;
+			persistPlan();
+		}
+		const sig = actionable.map((t) => `${t.id}:${t.status}`).join(",");
+		const d = decide({ kind: "plan", active: true, openWork: actionable.length, rounds: plan.wakeRounds ?? 0, budget: planBudget(actionable.length), noProgressStreak: plan.wakeNoProgress ?? 0 });
 		if (d.action !== "wake") {
 			try {
+				const parkedCount = open.filter((t) => t.status === "parked").length;
 				pi.sendMessage({
 					customType: "plan-status",
-					content: `[plan] continuation wrapped up — ${d.reason}. ${open.length} open step-task(s) remain; the user decides next (the plan stays on the panel).`,
+					content: `[plan] continuation wrapped up — ${d.reason}. ${open.length} open step-task(s) remain${parkedCount > 0 ? ` (${parkedCount} parked — awaiting the user)` : ""}; the user decides next (the plan stays on the panel).`,
 					display: true,
 				});
 			} catch {
@@ -233,9 +285,14 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 		planWakeTimer = setTimeout(() => {
 			planWakeTimer = null;
 			if (plan.mode !== "tracking" || !plan.planId) return;
-			const nowOpen = openStepTasks();
-			if (nowOpen.length === 0) {
+			const nowOpenAll = openStepTasks();
+			if (nowOpenAll.length === 0) {
 				reconcileAndPersist();
+				return;
+			}
+			const nowOpen = actionableStepTasks();
+			if (nowOpen.length === 0) {
+				planSettle(); // became quiescent mid-wait → one message, no budget
 				return;
 			}
 			const nowSig = nowOpen.map((t) => `${t.id}:${t.status}`).join(",");
@@ -244,8 +301,9 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 			plan.wakeRounds = (plan.wakeRounds ?? 0) + 1;
 			persistPlan();
 			const next = nowOpen[0];
+			const parkedNow = nowOpenAll.filter((t) => t.status === "parked").length;
 			pi.sendUserMessage(
-				`[plan wake ${plan.wakeRounds}/${planBudget(nowOpen.length)}] ${nowOpen.length} open step-task(s) — continue with task_update on #${next.id}${next.status === "pending" ? " (start it: status in_progress)" : ""}; evidence gates every completion (the judge can hold it). If a step is genuinely blocked, park it with a reason instead of spinning.`,
+				`[plan wake ${plan.wakeRounds}/${planBudget(nowOpen.length)}] ${nowOpenAll.length} open step-task(s)${parkedNow > 0 ? ` (${parkedNow} parked, awaiting the user)` : ""} — continue with task_update on #${next.id}${next.status === "pending" ? " (start it: status in_progress)" : ""}; evidence gates every completion (the judge can hold it). If a step is genuinely blocked, park it with a reason instead of spinning.`,
 				{ deliverAs: "followUp" },
 			);
 			planSettle(); // schedule the next round from the updated counters
@@ -371,7 +429,7 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 			try {
 				pi.sendUserMessage(
 				plan.planId
-					? `The user APPROVED your plan (${plan.planFile}). Implement it now. One strict, judge-verified step-task per step is being created on the task board (see task_list, stamped [plan i/N]) — work each step via task_update with real evidence; the judge verifies every completion and can hold it (status held). This plan auto-closes ONLY when every step-task is verified-complete — plan_step_done is retired for bridged plans. Open steps: ${plan.steps.filter((s) => !s.done).length}/${plan.steps.length}.`
+					? `The user APPROVED your plan (${plan.planFile}). Implement it now. One strict, judge-verified step-task per step is being created on the task board (see task_list, stamped [plan i/N]) — work each step via task_update with real evidence; the judge verifies every completion and can hold it (status held). This plan auto-closes ONLY when every step-task is verified-complete — plan_step_done is retired for bridged plans. Open steps: ${plan.steps.filter((s) => !s.done).length}/${plan.steps.length}. Dependency tip: you benefit from wiring REAL dependencies — end a dependent step's plan line with "(after N)" before exit_plan_mode (the bridge converts it to task blockedBy): the wake driver then skips steps that cannot be worked yet, task_list shows accurate ready work, and a parked blocker correctly reports which downstream steps wait. Independent steps stay flat — fake linearity is worse than flat.`
 					: `The user APPROVED your plan (${plan.planFile}). Implement it now. After each step call plan_step_done(index, evidence) with real evidence — same verify discipline as task tools. Open steps: ${plan.steps.filter((s) => !s.done).length}/${plan.steps.length}.`,
 					{ deliverAs: "followUp" },
 				);
@@ -631,7 +689,7 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 		name: "write_plan",
 		label: "write_plan",
 		description:
-			"Write the full plan markdown (plan mode only). The extension writes .pi/plans/YYYY-MM-DD-<slug>.md — the ONLY write path in plan mode. Re-writes replace the plan; steps are top-level numbered/bulleted lines (≤40, ≤200 chars).",
+			"Write the full plan markdown (plan mode only). The extension writes .pi/plans/YYYY-MM-DD-<slug>.md — the ONLY write path in plan mode. Re-writes replace the plan; steps are top-level numbered/bulleted lines (≤40, ≤200 chars). Optional \"(after N[,M])\" marker at the END of a step line declares a REAL dependency (backward refs only) — the bridge wires it to task blockedBy so the wake driver and task_list skip not-ready steps; never forced, keep independent steps flat.",
 		parameters: WritePlanParams,
 		async execute(_id, params) {
 			if (plan.mode !== "active") {
@@ -840,7 +898,8 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 		reconcileAndPersist();
 		// v1.4.69 (#61 Phase C): restart-back-up — a bridged plan with open
 		// step-tasks resumes its wake loop (wakeAt in the past → soon).
-		if (plan.mode === "tracking" && plan.planId && process.env.PLAN_TASK_BRIDGE !== "0" && openStepTasks().length > 0) {
+		// #80: quiescent plans (only parked/blocked steps) do NOT re-arm.
+		if (plan.mode === "tracking" && plan.planId && process.env.PLAN_TASK_BRIDGE !== "0" && actionableStepTasks().length > 0) {
 			const past = plan.wakeAt ? Date.parse(plan.wakeAt) < Date.now() : true;
 			setTimeout(() => planSettle(), past ? 5_000 : Math.max(1_000, Math.min(60_000, plan.wakeAt ? Date.parse(plan.wakeAt) - Date.now() : 5_000)));
 		}

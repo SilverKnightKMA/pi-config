@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+	actionableSteps,
 	applyControlAction,
 	emptyPlan,
 	markStepDone,
@@ -346,5 +347,66 @@ describe("planToolGate — mode entry is user-only (v1.4.70)", () => {
 		for (const t of ["read", "bash", "edit", "task_update", "goal_propose"]) {
 			expect(planToolGate("tracking", t).allowed).toBe(true);
 		}
+	});
+});
+
+describe("parseSteps — optional (after N) dependency marker (#86, never forced)", () => {
+	test("parses the marker, strips it from text, records dependsOn", () => {
+		const steps = parseSteps("1. Create core\n2. Write tests (after 1)\n3. Ship it (after 1,2)");
+		expect(steps[0].text).toBe("Create core");
+		expect(steps[0].dependsOn).toBeUndefined();
+		expect(steps[1].text).toBe("Write tests");
+		expect(steps[1].dependsOn).toEqual([1]);
+		expect(steps[2].text).toBe("Ship it");
+		expect(steps[2].dependsOn).toEqual([1, 2]);
+	});
+
+	test("dedupes and sorts multi-refs", () => {
+		const steps = parseSteps("1. A\n2. B\n3. C\n4. D (after 3,1,3)");
+		expect(steps[3].dependsOn).toEqual([1, 3]);
+	});
+
+	test("backward-only: forward, self and out-of-range refs drop silently (cycle-proof)", () => {
+		const steps = parseSteps("1. A (after 2)\n2. B (after 2)\n3. C (after 99)");
+		expect(steps[0].dependsOn).toBeUndefined(); // forward
+		expect(steps[1].dependsOn).toBeUndefined(); // self
+		expect(steps[2].dependsOn).toBeUndefined(); // out-of-range
+		expect(steps[0].text).toBe("A"); // marker still stripped
+	});
+
+	test("steps without markers are byte-identical to the old shape", () => {
+		const flat = parseSteps("1. A\n- B\n3. C");
+		for (const s of flat) expect(s).toEqual({ index: s.index, text: s.text, done: false });
+	});
+
+	test("planBridgePayload carries dependsOn to the bridge", () => {
+		const state = { ...emptyPlan(), mode: "tracking" as const, planId: "p-x-1", steps: parseSteps("1. A\n2. B (after 1)") };
+		const payload = planBridgePayload(state, "s1", "tracking");
+		expect(payload?.steps[1].dependsOn).toEqual([1]);
+		expect(payload?.steps[0].dependsOn).toBeUndefined();
+	});
+});
+
+describe("actionableSteps — unresolved vs wake-eligible split (#80)", () => {
+	const open = [
+		{ id: 1, status: "pending" },
+		{ id: 2, status: "parked" },
+		{ id: 3, status: "pending", blockedBy: [2] }, // blocked by a PARKED blocker
+		{ id: 4, status: "pending", blockedBy: [1] }, // blocked by an open pending blocker
+		{ id: 5, status: "in_progress" },
+		{ id: 6, status: "held" },
+		{ id: 7, status: "pending", blockedBy: [9] }, // 9 is NOT open (completed) → ready
+	] as const;
+
+	test("parked never actionable; blocked pending not ready; in_progress/held stay", () => {
+		expect(actionableSteps(open as never).map((t) => t.id)).toEqual([1, 5, 6, 7]);
+	});
+
+	test("all parked/blocked → empty actionable (quiescent entry condition)", () => {
+		expect(actionableSteps([{ id: 2, status: "parked" }, { id: 3, status: "pending", blockedBy: [2] }] as never)).toEqual([]);
+	});
+
+	test("independent pending stays actionable — flat plans (tonight's 12-step shape) keep flowing", () => {
+		expect(actionableSteps([{ id: 1, status: "pending" }, { id: 2, status: "pending" }] as never)).toHaveLength(2);
 	});
 });

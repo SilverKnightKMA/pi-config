@@ -99,6 +99,10 @@ export interface PlanStep {
 	text: string;
 	done: boolean;
 	evidence?: string;
+	/** v1.4.77 (#86): optional real dependencies expressed as a trailing
+	 *  "(after N[,M])" marker — backward refs only, never forced. The bridge
+	 *  wires them to task blockedBy so the wake driver skips not-ready work. */
+	dependsOn?: number[];
 }
 
 export interface PlanState {
@@ -114,6 +118,11 @@ export interface PlanState {
 	wakeNoProgress?: number;
 	wakeSignature?: string;
 	wakeAt?: string;
+	/** v1.4.77 (#80): true while the plan loop is QUIESCENT — unresolved steps
+	 *  remain but NONE is wake-eligible (all parked / dependency-blocked).
+	 *  Consumes no budget; cleared (with a FRESH wake episode) the moment a
+	 *  step becomes actionable again. */
+	wakeQuiescent?: boolean;
 	steps: PlanStep[];
 	thinkingBefore?: string;
 	submittedAt?: string;
@@ -168,14 +177,28 @@ export function planFilePath(existing: readonly string[], slug: string, date = n
  */
 export function parseSteps(markdown: string): PlanStep[] {
 	const steps: PlanStep[] = [];
+	// #86: optional trailing "(after N[,M])" — real dependencies, never forced.
+	const AFTER_RE = /\s*\(after\s+([\d][\d\s,]*)\)\s*$/i;
 	for (const rawLine of markdown.split("\n")) {
 		const line = rawLine.trimEnd();
 		const m = /^(\s*)(?:\d+[.)]|[-*+])\s+(.*)$/.exec(line);
 		if (!m) continue;
 		if (m[1].length > 0) continue; // indented → nested detail, not a step
-		const text = m[2].trim().slice(0, MAX_STEP_CHARS);
-		if (!text) continue;
-		steps.push({ index: steps.length + 1, text, done: false });
+		let text = m[2].trim();
+		let dependsOn: number[] | undefined;
+		const am = AFTER_RE.exec(text);
+		if (am) {
+			// Backward refs only (n ≤ steps.length, i.e. < own index): self/dup/
+			// forward/out-of-range drop silently — cycle-proof by construction.
+			const refs = [...new Set(am[1].split(",").map((x) => parseInt(x.trim(), 10)).filter((n) => Number.isInteger(n)))]
+				.filter((n) => n >= 1 && n <= steps.length)
+				.sort((a, b) => a - b);
+			if (refs.length > 0) dependsOn = refs;
+			text = text.slice(0, am.index).trim();
+		}
+		const clipped = text.slice(0, MAX_STEP_CHARS);
+		if (!clipped) continue;
+		steps.push({ index: steps.length + 1, text: clipped, done: false, ...(dependsOn ? { dependsOn } : {}) });
 		if (steps.length >= MAX_STEPS) break;
 	}
 	return steps;
@@ -346,12 +369,30 @@ export function reconcilePlan(state: PlanState, planFileText: string | null, now
 
 // ── v1.4.68 #47 Phase B: task bridge (approve → step-tasks; off → cancel) ──
 
+/** v1.4.77 (#80): wake-eligible subset of the UNRESOLVED steps — parked is
+ *  never actionable (user-only reopen), a pending step blocked by ANY open
+ *  task (parked blocker or not) is not ready either, while in_progress/held
+ *  stay actionable (the agent can act on judge feedback). Pinning this as a
+ *  pure helper was tonight's lesson: the 2026-09-15 incident nudge-targeted
+ *  parked tasks 4× because "unresolved" and "actionable" were one set. */
+export function actionableSteps(open: readonly BoardStepTaskLike[]): BoardStepTaskLike[] {
+	const openIds = new Set(open.map((t) => t.id));
+	return open.filter((t) => {
+		if (t.status === "parked") return false;
+		if (t.status === "pending") return !(t.blockedBy ?? []).some((b) => openIds.has(b));
+		return true;
+	});
+}
+
 /** Board task shape the plan derives from (task-status projection, stable subset). */
 export interface BoardStepTaskLike {
 	id: number;
 	status: string;
 	planId?: string;
 	stepIndex?: number;
+	/** v1.4.77 (#80): read from the projection to compute dependency-ready
+	 *  pending work (a parked/open blocker keeps its dependents not-ready). */
+	blockedBy?: number[];
 }
 
 /** Bridge request the task ext consumes (~/.pi/agent/plan-bridge/<sessionId>.json). */
@@ -359,7 +400,7 @@ export function planBridgePayload(
 	state: PlanState,
 	sessionId: string,
 	status: "tracking" | "off",
-): { v: 1; sessionId: string; planId: string; status: "tracking" | "off"; planFile?: string; steps: { index: number; text: string }[] } | null {
+): { v: 1; sessionId: string; planId: string; status: "tracking" | "off"; planFile?: string; steps: { index: number; text: string; dependsOn?: number[] }[] } | null {
 	if (!state.planId) return null;
 	return {
 		v: 1,
@@ -367,7 +408,10 @@ export function planBridgePayload(
 		planId: state.planId,
 		status,
 		...(state.planFile ? { planFile: state.planFile } : {}),
-		steps: status === "tracking" ? state.steps.map((s) => ({ index: s.index, text: s.text })) : [],
+		steps:
+			status === "tracking"
+				? state.steps.map((s) => ({ index: s.index, text: s.text, ...(s.dependsOn && s.dependsOn.length > 0 ? { dependsOn: s.dependsOn } : {}) }))
+				: [],
 	};
 }
 
@@ -411,6 +455,12 @@ export interface PlanStatusPayload {
 	planFile: string | null;
 	submittedAt: string | null;
 	completedAt: string | null;
+	/** v1.4.77 (#80): true while the plan loop is QUIESCENT (unresolved steps
+	 *  remain but none is wake-eligible — parked/blocked). planWakeActive()
+	 *  treats such plans as inactive so the task auto-ping owns the cadence
+	 *  again (single-waker priority; tonight's reopen would otherwise have NO
+	 *  waker at all). */
+	quiescent?: boolean;
 	updatedAt: string;
 }
 
@@ -438,6 +488,7 @@ export function planStatusPayload(
 		planFile: state.planFile ?? null,
 		submittedAt: state.submittedAt ?? null,
 		completedAt: state.completedAt ?? null,
+		...(state.wakeQuiescent ? { quiescent: true } : {}),
 		updatedAt: now,
 	};
 }

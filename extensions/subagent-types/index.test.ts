@@ -52,6 +52,15 @@ describe("planWakeActive (v1.4.69 #61 Phase C single-waker)", () => {
 		rmSync(dir, { recursive: true, force: true });
 		expect(planWakeActive(dir)).toBe(false); // dir gone
 	});
+
+	test("v1.4.77 (#80): quiescent plans are NOT wake-active — the task auto-ping owns the cadence", () => {
+		const dir = mkdtempSync(join(tmpdir(), "pwake-q-"));
+		writeFileSync(join(dir, "q.status.json"), JSON.stringify({ mode: "tracking", planId: "p-s1-1", stepsDone: 3, stepsTotal: 11, quiescent: true }));
+		expect(planWakeActive(dir)).toBe(false); // parked/blocked-only → plan loop disarmed
+		writeFileSync(join(dir, "r.status.json"), JSON.stringify({ mode: "tracking", planId: "p-s2-1", stepsDone: 1, stepsTotal: 4 }));
+		expect(planWakeActive(dir)).toBe(true); // a non-quiescent plan still counts
+		rmSync(dir, { recursive: true, force: true });
+	});
 });
 
 describe("parseRoleMd", () => {

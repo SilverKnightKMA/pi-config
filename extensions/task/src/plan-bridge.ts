@@ -20,6 +20,9 @@ import type { TaskState } from "./types.ts";
 export interface PlanBridgeStep {
 	index: number;
 	text: string;
+	/** v1.4.77 (#86): optional backward step-index refs from an "(after N)"
+	 *  marker — wired to task blockedBy below. Never forced. */
+	dependsOn?: number[];
 }
 
 export interface PlanBridgePayload {
@@ -55,7 +58,14 @@ export function sanitizePlanBridge(raw: unknown): PlanBridgePayload | null {
 			const step = s as Record<string, unknown>;
 			if (typeof step.index !== "number" || !Number.isInteger(step.index) || step.index < 1) continue;
 			if (typeof step.text !== "string" || !step.text.trim()) continue;
-			steps.push({ index: step.index, text: step.text.slice(0, 200) });
+			const stepIndex = step.index; // TS: typeof-narrowing doesn't survive closures
+			// #86: backward refs only (< own index); self/dup/forward drop silently.
+			let dependsOn: number[] | undefined;
+			if (Array.isArray(step.dependsOn)) {
+				const refs = [...new Set(step.dependsOn.filter((n: unknown): n is number => typeof n === "number" && Number.isInteger(n) && n >= 1 && n < stepIndex))].sort((a, b) => a - b);
+				if (refs.length > 0) dependsOn = refs;
+			}
+			steps.push({ index: step.index, text: step.text.slice(0, 200), ...(dependsOn ? { dependsOn } : {}) });
 		}
 	}
 	if (r.status === "tracking" && steps.length === 0) return null;
@@ -114,6 +124,24 @@ export function applyPlanBridge(state: TaskState, payload: PlanBridgePayload, no
 				payload.planId,
 				step.index,
 			);
+			if (!result.error) next = result.state;
+		}
+		// #86: wire optional dependencies — step index → task id → blockedBy.
+		// Idempotent (re-consume re-derives the same edges); cycles impossible
+		// because sanitize keeps backward refs only.
+		const idByIndex = new Map<number, number>();
+		for (const t of next.tasks) {
+			if (t.planId === payload.planId && typeof t.stepIndex === "number") idByIndex.set(t.stepIndex, t.id);
+		}
+		for (const step of payload.steps) {
+			if (!step.dependsOn || step.dependsOn.length === 0) continue;
+			const id = idByIndex.get(step.index);
+			if (typeof id !== "number") continue;
+			const blockedBy = [...new Set(step.dependsOn.map((n) => idByIndex.get(n)).filter((b): b is number => typeof b === "number"))];
+			if (blockedBy.length === 0) continue;
+			const t = next.tasks.find((x) => x.id === id);
+			if (t && JSON.stringify(t.blockedBy ?? []) === JSON.stringify(blockedBy)) continue;
+			const result = updateTask(next, id, { blockedBy }, now);
 			if (!result.error) next = result.state;
 		}
 	} else {

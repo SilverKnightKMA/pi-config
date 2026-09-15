@@ -290,8 +290,12 @@ export function planWakeActive(dir?: string): boolean {
 		for (const f of readdirSync(d)) {
 			if (!f.endsWith(".status.json")) continue;
 			try {
-				const st = JSON.parse(readFileSync(join(d, f), "utf8")) as { mode?: unknown; planId?: unknown; stepsDone?: unknown; stepsTotal?: unknown };
+				const st = JSON.parse(readFileSync(join(d, f), "utf8")) as { mode?: unknown; planId?: unknown; stepsDone?: unknown; stepsTotal?: unknown; quiescent?: unknown };
 				if (st?.mode !== "tracking" || typeof st?.planId !== "string" || !st.planId.startsWith("p-")) continue;
+				// v1.4.77 (#80): quiescent plans (only parked/blocked steps) have
+				// disarmed their wake loop — the task auto-ping owns the cadence
+				// instead, else a reopen would have NO waker at all.
+				if (st?.quiescent === true) continue;
 				const done = typeof st?.stepsDone === "number" ? (st.stepsDone as number) : 0;
 				const total = typeof st?.stepsTotal === "number" ? (st.stepsTotal as number) : 0;
 				if (total > 0 && done < total) return true;

@@ -58,22 +58,31 @@ log. Both produced false verdicts on healthy work.
   confirming the diagnosis mechanically (short heads pass, long/mixed tails
   fail). The evidence-shaping workaround is no longer needed from v1.4.76 on.
 
-## Bug 2b — plan-wake counts PARKED step-tasks as actionable open work (OPEN)
+## Bug 2b — plan-wake counts PARKED step-tasks as actionable open work (FIXED v1.4.77)
 
 - **Symptom**: after 5 plan steps were parked (user-only reopen), the plan
   wake loop kept nudging "continue with task_update on #<parked-id>" — the
   model cannot act on parked tasks by design; each such wake is pure noise.
-- **Root cause**: `openStepTasks()` (read-only-mode/index.ts) filters only
-  `completed`/`cancelled`; `parked` and `held` both count as open work for the
-  wake message AND for the budget. Held is legitimately model-actionable;
-  parked is not.
-- **Required fix shape** (follow-up task #80, needs the full ship ritual):
-  wake-eligibility should exclude `parked` (pending/in_progress/held stay),
-  while the AUTO-CLOSE gate must NOT — a plan whose remaining steps are all
-  parked must stay open on the panel and wrap up with an "awaiting the user"
-  message instead of reconciling closed. Anti-spin already stops the loop at
-  streak 3 (one-round lag observed: it fires the wake before counting it),
-  so the residual noise is bounded (~1-2 wakes), not unbounded.
+- **Root cause**: `openStepTasks()` (read-only-mode/index.ts) filtered only
+  `completed`/`cancelled` — ONE set served two different questions: "unfinished
+  for auto-close" (parked belongs) and "actionable for waking" (parked never
+  belongs; a pending step blocked by an open task doesn't either).
+- **Fix shipped (v1.4.77, task #80; design confirmed by an independent Codex
+  advisor 2026-09-16 — skip-and-continue, hard-pause rejected)**: pure
+  `actionableSteps()` in plan.ts splits the sets — parked never actionable,
+  pending-with-open-blocker not ready, in_progress/held stay. `planSettle`
+  drives ONLY the actionable set (budget, signature, nudge target). When
+  unresolved>0 but actionable=0 the loop goes QUIESCENT: no timer, no budget,
+  ONE transition message naming parked ids + dependency-blocked ids; resume
+  (user reopen) starts a FRESH episode (wakeRounds/anti-spin reset). The
+  status projection gains `quiescent` and `planWakeActive()`
+  (subagent-types) treats quiescent plans as inactive so the task auto-ping
+  owns the cadence again — without that, a reopen would have had NO waker.
+  Auto-close still requires every step resolved (parked keeps the plan open).
+- **Companion (#86, same ship)**: plans gained an OPTIONAL `(after N[,M])`
+  step marker — never forced, benefit-framed guidance in the approve prompt
+  and write_plan description — wired by the bridge to task `blockedBy`, so
+  the dependency rules above have real edges to work with.
 
 ## Shared lesson (now in the global lessons tier)
 
