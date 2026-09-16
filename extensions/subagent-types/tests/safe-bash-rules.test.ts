@@ -134,3 +134,46 @@ describe("safe-bash AST guard (#34)", () => {
 		expect(d!.next.toLowerCase()).not.toContain("avoid");
 	});
 });
+
+// ---------------------------------------------------------------------------
+// v1.4.93 (#108) — private-data mandatory-deny list (pi-approval-guardian).
+// Credential stores deny BEFORE the role allowlist: no role may write secrets.
+// ---------------------------------------------------------------------------
+
+describe("private-data deny list (#108)", () => {
+	test("credential stores deny with the write-private-data rule", () => {
+		expect(ruleOf("echo x > ~/.ssh/authorized_keys")).toBe("write-private-data");
+		expect(ruleOf("cat k > ~/.gnupg/private-keys-v1.d/k.gpg")).toBe("write-private-data");
+		expect(ruleOf("echo t > ~/.npmrc")).toBe("write-private-data");
+		expect(ruleOf("echo n > ~/.netrc")).toBe("write-private-data");
+		expect(ruleOf("echo a > ~/.aws/credentials")).toBe("write-private-data");
+		expect(ruleOf("echo k > ~/.kube/config")).toBe("write-private-data");
+		expect(ruleOf("echo d > ~/.docker/config.json")).toBe("write-private-data");
+		expect(ruleOf("echo g > ~/.config/gh/hosts.yml")).toBe("write-private-data");
+		expect(ruleOf("echo c > ~/.mozilla/profile/cookies.sqlite")).toBe("write-private-data");
+		expect(ruleOf("echo c > ~/.config/google-chrome/Default/Login Data")).toBe("write-private-data");
+	});
+
+	test("deny fires even inside a role allowlist that covers $HOME", () => {
+		const d = checkBash("echo x > ~/.ssh/id_ed25519", { home: HOME, role: "worker", writeAllowlist: ["/home/tester"] });
+		expect(d?.rule).toBe("write-private-data"); // allowlist cannot rescue secrets
+	});
+
+	test(".env-family: root/home-anchored denies, workspace-relative allows, node_modules exempt", () => {
+		expect(ruleOf("echo K=1 > ~/.env")).toBe("write-private-data");
+		expect(ruleOf("echo K=1 > /home/tester/.env.production")).toBe("write-private-data");
+		expect(ruleOf("echo K=1 > .env")).toBe(null); // repo-relative env files are normal dev work
+		expect(ruleOf("echo K=1 > node_modules/pkg/.env")).toBe(null); // package fixture data
+	});
+
+	test("plain config.json outside ~/.docker is not private data", () => {
+		expect(ruleOf("echo x > ~/app/config.json")).not.toBe("write-private-data");
+	});
+
+	test("denial envelope carries WHAT/WHY/NEXT (#43)", () => {
+		const d = checkBash("echo x > ~/.ssh/authorized_keys", { home: HOME });
+		expect(d?.what).toContain("~/.ssh/authorized_keys");
+		expect(d?.why).toContain("secrets");
+		expect(d?.next).toContain("ask the user");
+	});
+});

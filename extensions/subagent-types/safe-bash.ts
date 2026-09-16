@@ -8,18 +8,31 @@
  * self-escalation vectors) are mandatory-denied, and role write allowlists
  * come from settings.json `subagentTypes.roleWriteAllowlist`. Every denial
  * renders the #43 envelope: WHAT / WHY / WHERE / NEXT.
+ *
+ * v1.4.93 (#108): (a) shadow telemetry (pi-verdict) — every verdict, allow
+ * OR deny, lands in ~/.pi/agent/safe-bash-shadow.jsonl so blocked-command
+ * trends are reviewable offline (SAFE_BASH_SHADOW=0 disables); (b) git-aware
+ * destructive warning (@spences10/pi-confirm-destructive) — a deny in a
+ * DESTRUCTIVE_RULES class inside a dirty git worktree appends a porcelain
+ * warning to the envelope (amplifies, never blocks); (c) private-data
+ * mandatory-deny list lives in safe-bash-rules (pi-approval-guardian).
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createBashTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { readFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import os from "node:os";
-import { checkBash, defaultWriteAllowlist, type WriteAllowlist } from "./safe-bash-rules.ts";
+import { checkBash, defaultWriteAllowlist, DESTRUCTIVE_RULES, type BashDenial, type WriteAllowlist } from "./safe-bash-rules.ts";
 
 export interface SafeBashOptions {
 	/** Lazily resolved role of THIS session (undefined until the Paseo label lands). */
 	getRole?: () => string | undefined;
+	/** #108 shadow log target (tests inject a temp path). */
+	shadowLogPath?: string;
+	/** #108 porcelain probe for the git-aware warning (tests inject a stub). */
+	gitPorcelain?: () => string | null;
 }
 
 function readSettingsJson(file: string): Record<string, unknown> {
@@ -46,10 +59,53 @@ function roleWriteAllowlists(cwd: string): Record<string, string[]> {
 	return { ...pick(user), ...pick(ws) };
 }
 
+/** #108 shadow telemetry line (pi-verdict): review "what got blocked" trends.
+ *  Best-effort — a telemetry failure must never change the verdict. */
+export interface ShadowLine {
+	ts: string;
+	role?: string;
+	verdict: "allow" | "deny";
+	rule?: string;
+	what?: string;
+	command: string;
+	cwd: string;
+}
+
+export function writeShadowLine(line: ShadowLine, path: string): void {
+	try {
+		appendFileSync(path, JSON.stringify(line) + "\n");
+	} catch {
+		/* best effort */
+	}
+}
+
+/** #108 git-aware warning (@spences10): a destructive-class deny inside a DIRTY
+ *  worktree gets one extra envelope line. Pure — porcelain output injected. */
+export function appendGitAwareWarning(envelope: string, denial: BashDenial, porcelain: string | null): string {
+	if (!DESTRUCTIVE_RULES.has(denial.rule)) return envelope;
+	if (porcelain === null) return envelope; // no repo / probe failed → no warning
+	const dirty = porcelain.split("\n").filter((l) => l.trim().length > 0);
+	if (dirty.length === 0) return envelope;
+	return `${envelope}\nGIT-AWARE: worktree is dirty (${dirty.length} uncommitted change${dirty.length === 1 ? "" : "s"} — e.g. ${dirty[0].trim().slice(0, 80)}); this command would have destroyed work git cannot recover. Commit or stash first.`;
+}
+
+function defaultGitPorcelain(cwd: string): () => string | null {
+	return () => {
+		try {
+			return execFileSync("git", ["status", "--porcelain"], { cwd, timeout: 2000, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }) as string;
+		} catch {
+			return null; // not a repo, or git slow/missing — no warning, never an error
+		}
+	};
+}
+
 export default function safeBash(pi: ExtensionAPI, opts: SafeBashOptions = {}) {
 	const bashTool = createBashTool(process.cwd());
 	const cwd = process.cwd();
 	const configured = roleWriteAllowlists(cwd);
+	const shadowPath = opts.shadowLogPath ?? join(os.homedir(), ".pi", "agent", "safe-bash-shadow.jsonl");
+	const shadowOn = process.env.SAFE_BASH_SHADOW !== "0";
+	const gitPorcelain = opts.gitPorcelain ?? defaultGitPorcelain(cwd);
 
 	pi.registerTool({
 		name: "safe_bash",
@@ -69,14 +125,23 @@ export default function safeBash(pi: ExtensionAPI, opts: SafeBashOptions = {}) {
 				: defaultWriteAllowlist(role, cwd);
 			const denial = checkBash(params.command, { role, writeAllowlist: allowlist });
 			if (denial) {
-				throw new Error(
-					[
-						`⛔ safe_bash denied — ${denial.what}`,
-						`WHY: ${denial.why}`,
-						`WHERE: ${denial.where}`,
-						`NEXT: ${denial.next}`,
-					].join("\n"),
-				);
+				if (shadowOn) {
+					writeShadowLine(
+						{ ts: new Date().toISOString(), role, verdict: "deny", rule: denial.rule, what: denial.what, command: params.command.slice(0, 200), cwd },
+						shadowPath,
+					);
+				}
+				const base = [
+					`⛔ safe_bash denied — ${denial.what}`,
+					`WHY: ${denial.why}`,
+					`WHERE: ${denial.where}`,
+					`NEXT: ${denial.next}`,
+				].join("\n");
+				// #108 git-aware: dirty worktree + destructive class → amplified envelope.
+				throw new Error(appendGitAwareWarning(base, denial, gitPorcelain()));
+			}
+			if (shadowOn) {
+				writeShadowLine({ ts: new Date().toISOString(), role, verdict: "allow", command: params.command.slice(0, 200), cwd }, shadowPath);
 			}
 			return bashTool.execute(toolCallId, params, signal, onUpdate);
 		},

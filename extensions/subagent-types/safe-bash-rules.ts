@@ -120,6 +120,60 @@ const FORK_BOMB_RE = /:\(\)\s*\{\s*:\|:&\s*\}\s*;:/;
 const GIT_HOOKS_RE = /(^|\/)\.git\/hooks\//;
 const PROTECTED_BASENAMES = new Set([".bashrc", ".bash_profile", ".profile", ".gitconfig", ".mcp.json"]);
 
+// ---------------------------------------------------------------------------
+// v1.4.93 (#108) private-data path list — borrowed from pi-approval-guardian
+// (MIT): credential/secret stores are mandatory-deny WRITE targets even for
+// allowlisted roles. Exemption like theirs: anything under node_modules/ is
+// package fixture data, not a live secret.
+// ---------------------------------------------------------------------------
+const PRIVATE_DATA_BASENAMES = new Set([
+	".npmrc", // registry tokens
+	".netrc", // credentials for curl/git-over-http
+	"config.json", // ~/.docker/config.json (registry auth) — only checked under ~/.docker
+	".env", ".env.local", ".env.production", ".env.development", // secret-bearing env files
+]);
+const PRIVATE_DATA_DIRS = [
+	".ssh", // private keys + authorized_keys (also an escalation vector)
+	".gnupg", // GPG private keyring
+	".aws", // credentials file
+	".kube", // cluster admin tokens
+	".docker", // config.json registry auth
+	".terraform.d", // terraform credentials
+	".config/gh", // GitHub CLI hosts.yml token
+	".mozilla", // browser profile store (cookies, saved logins)
+	".config/google-chrome",
+	".config/chromium",
+	".config/brave",
+	".config/op", // 1Password CLI session
+];
+
+function isPrivateDataPath(p: string, home: string): boolean {
+	const n = normalizePath(p, home);
+	if (n.includes("/node_modules/")) return false; // package fixture data, not a live secret
+	if (PRIVATE_DATA_BASENAMES.has(basename(n))) {
+		// .env-family lives in repos (workspace-relative OK to create in general dev
+		// work) — only root/home-anchored absolute ones are credential stores here.
+		if (!n.startsWith("/") && !n.startsWith(home)) return false;
+		if (basename(n) === "config.json") return n.startsWith(`${home}/.docker/`); // only the docker auth one
+		return true;
+	}
+	return PRIVATE_DATA_DIRS.some((d) => {
+		const base = `${home}/${d}`;
+		return n === base || n.startsWith(base + "/");
+	});
+}
+
+/** #108: rules whose denial destroys uncommitted work — candidates for the
+ *  git-aware porcelain warning appended by the safe_bash wrapper. */
+export const DESTRUCTIVE_RULES = new Set([
+	"rm-root",
+	"dd",
+	"mkfs",
+	"write-block-device",
+	"chmod-777-root",
+	"chown-root",
+]);
+
 const PIPE_SOURCES = new Set(["curl", "wget", "base64"]);
 const PIPE_SHELLS = new Set(["sh", "bash", "zsh", "dash", "ash"]);
 
@@ -216,6 +270,17 @@ function checkWriteTarget(target: string, ctx: WalkCtx, pos: number, end: number
 			`write to ${target} (protected agent/shell config)`,
 			".bashrc/.gitconfig/.git/hooks/.mcp.json/pi settings.json are self-escalation vectors — editing them could silently change what the agent or shells are allowed to do",
 			"ask the user to edit this file themselves (message_main / ask the user); if the change is legitimate they will approve it",
+			ctx, pos, end,
+		);
+	}
+	// #108 private-data list (pi-approval-guardian): credential stores are denied
+	// BEFORE the role allowlist — no role may write secrets.
+	if (isPrivateDataPath(target, ctx.home)) {
+		return deny(
+			"write-private-data",
+			`write to ${target} (private data / credential store)`,
+			"SSH keys, GPG keyrings, cloud/registry credentials, browser profile stores and .env-family files are secrets — an agent overwriting them can lock the user out or silently replace credentials",
+			"ask the user to make this change themselves (message_main); if a secret must be created, let the user place it",
 			ctx, pos, end,
 		);
 	}
