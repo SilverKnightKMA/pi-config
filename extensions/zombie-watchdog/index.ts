@@ -24,12 +24,23 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { TurnWatchdog, SettleWatch, type WatchdogSignal } from "./watchdog-core.js";
+import { TurnWatchdog, SettleWatch, LoopDetector, evidenceFor, isSyntheticMessage, type WatchdogSignal } from "./watchdog-core.js";
+import { TerminationLedger } from "./termination-ledger.js";
 import { findMcpEndpoint, getAgentStatus, isBusy, cancelAgent } from "./daemon.js";
 
 const LOG_PATH = join(homedir(), ".pi", "agent", "zombie-watchdog.jsonl");
+const LEDGER_DIR = join(homedir(), ".pi", "agent", "zombie-watchdog.runs");
 const MODE = (process.env.PI_ZW_MODE ?? "detect") as "detect" | "auto";
 const AUTO_STOP = process.env.ZW_AUTO_STOP !== "0";
+// #107 D (codex-task-watchdog): absence-only evidence licenses STOP only after
+// a confirming repeat — ZW_ABSENCE_GUARD=0 restores the v1.4 immediate stop.
+// Read at CALL time (not module load) so ops and tests can toggle it live.
+function absenceGuardOn(): boolean {
+	return process.env.ZW_ABSENCE_GUARD !== "0";
+}
+// #107 B (Cline): soft tier stays model-blind by default (2026-09-04 directive:
+// no watchdog chatter in model context); opt in for the self-correct steer.
+const LOOP_SOFT_STEER = process.env.ZW_LOOP_SOFT_STEER === "1";
 const AUTO_STOP_RETRY_MS = 30_000;
 const CHECK_INTERVAL_MS = 10_000;
 
@@ -41,6 +52,9 @@ export interface Detection {
 	agentId?: string;
 	/** auto-stop:err carries the failure reason (daemon answer / transport). */
 	detail?: string;
+	/** #107 D: evidence class stamped on every detection (absence vs positive). */
+	confirmedFailure?: boolean;
+	safeToInterrupt?: boolean;
 }
 
 export function fmtDur(ms: number): string {
@@ -52,7 +66,9 @@ export function fmtDur(ms: number): string {
 export interface WireOptions {
 	now?: () => number;
 	logPath?: string;
+	ledgerDir?: string;
 	settle?: Partial<import("./watchdog-core.js").SettleConfig>;
+	loop?: Partial<import("./watchdog-core.js").LoopConfig>;
 	selfAgentId?: string | null;
 	endpoint?: import("./daemon.js").McpEndpoint | undefined;
 	fetchImpl?: typeof fetch;
@@ -70,8 +86,10 @@ export function readDetections(logPath: string = LOG_PATH): Detection[] {
 export function wire(pi: ExtensionAPI, opts: WireOptions = {}): () => WatchdogSignal | null {
 	const now = opts.now ?? Date.now;
 	const logPath = opts.logPath ?? LOG_PATH;
+	const ledger = new TerminationLedger(opts.ledgerDir ?? LEDGER_DIR);
 	const wd = new TurnWatchdog();
 	const sw = new SettleWatch(opts.settle ?? {});
+	const loop = new LoopDetector(opts.loop ?? {});
 	const selfAgentId = opts.selfAgentId ?? process.env.PASEO_AGENT_ID ?? null;
 	const endpoint = opts.endpoint ?? findMcpEndpoint(selfAgentId);
 	let sessionFile: string | undefined;
@@ -80,6 +98,8 @@ export function wire(pi: ExtensionAPI, opts: WireOptions = {}): () => WatchdogSi
 	let settleTimers: ReturnType<typeof setTimeout>[] = [];
 	let lastProbe: { at: number; status: string | undefined; busy: boolean } | null = null;
 	let lastStopAttemptAt = -Infinity;
+	let turnId: string | undefined;
+	let turnSeq = 0;
 
 	function clearSettleTimers(): void {
 		for (const t of settleTimers) clearTimeout(t);
@@ -114,6 +134,15 @@ export function wire(pi: ExtensionAPI, opts: WireOptions = {}): () => WatchdogSi
 		// running state (B2) or aborts the silently-dead run (in-turn zombie).
 		if (!AUTO_STOP) return;
 		if (!selfAgentId || !endpoint) return; // not a Paseo-spawned session — nothing to stop
+		// #107 D (codex-task-watchdog): an interrupt is licensed only by
+		// safeToInterrupt evidence. First-seen zombie is absence-only → defer to
+		// the confirming repeat (zombie-repeat re-arms after reNotifyMs).
+		const ev = evidenceFor(reason, { absenceGuard: absenceGuardOn() });
+		if (!ev.safeToInterrupt) {
+			appendDetection(evidenceStamped({ ts: new Date().toISOString(), sessionFile, code: `auto-stop:deferred:${reason}`, idleMs, agentId: selfAgentId, detail: ev.note }, reason));
+			if (ui) ui.setStatus("zw", `zw: ${reason} — absence-only, watching (STOP deferred)`);
+			return;
+		}
 		if (now() - lastStopAttemptAt < AUTO_STOP_RETRY_MS) return; // rate limit
 		lastStopAttemptAt = now();
 		let ok = false;
@@ -125,14 +154,21 @@ export function wire(pi: ExtensionAPI, opts: WireOptions = {}): () => WatchdogSi
 		} catch (e) {
 			err = e instanceof Error ? e.message : String(e);
 		}
-		appendDetection({
+		appendDetection(evidenceStamped({
 			ts: new Date().toISOString(),
 			sessionFile,
 			code: ok ? `auto-stop:ok:${reason}` : "auto-stop:err",
 			idleMs,
 			agentId: selfAgentId,
 			detail: ok ? undefined : (err ?? "unknown"),
-		});
+		}, ok ? reason : undefined));
+		if (ok && turnId) {
+			// #107 A funnel: a STOP that took is this turn's terminal event — and
+			// the one-shot finalize gates the exactly-once B2 receipt.
+			if (ledger.finalize(turnId, "stall-stopped", new Date().toISOString()) && reason === "b2-settle-lost") {
+				appendDetection(evidenceStamped({ ts: new Date().toISOString(), sessionFile, code: "b2-receipt", idleMs, agentId: selfAgentId, detail: "turn completed in-process; daemon settle wake lost — STOP after stall review (receipt, once)" }));
+			}
+		}
 		if (ui) {
 			ui.setStatus("zw", ok ? `zw: auto-stopped (${reason}) — type "resume" to roll` : `zw: auto-stop failed (${reason})${err ? ` — ${err}` : ""}`);
 		}
@@ -151,6 +187,17 @@ export function wire(pi: ExtensionAPI, opts: WireOptions = {}): () => WatchdogSi
 		} catch {
 			/* best effort */
 		}
+		if (turnId) ledger.recordDetection(turnId, d.code);
+	}
+
+	/** Stamp the #107-D evidence class on a detection before it lands. An
+	 *  explicit false is honest (absence-only rows say so in the audit trail);
+	 *  for composite codes pass the evidence-bearing reason explicitly. */
+	function evidenceStamped(d: Detection, evidenceCode?: string): Detection {
+		const ev = evidenceFor(evidenceCode ?? d.code, { absenceGuard: absenceGuardOn() });
+		d.confirmedFailure = ev.confirmedFailure;
+		d.safeToInterrupt = ev.safeToInterrupt;
+		return d;
 	}
 
 	function emitTimeline(_text: string): void {
@@ -168,7 +215,7 @@ export function wire(pi: ExtensionAPI, opts: WireOptions = {}): () => WatchdogSi
 	}
 
 	function logDetection(sig: WatchdogSignal): void {
-		appendDetection({ ts: new Date(now()).toISOString(), sessionFile, code: sig.code, idleMs: sig.idleMs });
+		appendDetection(evidenceStamped({ ts: new Date(now()).toISOString(), sessionFile, code: sig.code, idleMs: sig.idleMs }));
 	}
 
 	function recover(sig: WatchdogSignal): void {
@@ -207,32 +254,74 @@ export function wire(pi: ExtensionAPI, opts: WireOptions = {}): () => WatchdogSi
 	pi.on("session_start", ((_e: unknown, ctx: any) => {
 		sessionFile = ctx?.sessionFile ?? undefined;
 		ui = ctx?.hasUI ? ctx.ui : undefined;
+		// #107 A (pi-claude-code): reload recovery — turns left unfinalized by a
+		// dead process get crash-recovered + recovered:true, exactly once.
+		for (const r of ledger.recoverStale(now())) {
+			appendDetection({ ts: new Date(now()).toISOString(), sessionFile: r.sessionFile ?? sessionFile, code: "crash-recovered", idleMs: 0, detail: `turn ${r.turnId} (started ${r.startedAt}) was never finalized — process died mid-watch` });
+		}
 		if (timer) clearInterval(timer);
 		timer = setInterval(tick, CHECK_INTERVAL_MS);
 	}) as never);
 
 	pi.on("turn_start", () => {
+		turnSeq += 1;
+		turnId = `t${now().toString(36)}-${turnSeq}`;
+		ledger.open(turnId, sessionFile, new Date(now()).toISOString());
 		wd.onTurnStart(now());
 		sw.onTurnStart();
+		loop.onTurnBoundary();
 		clearSettleTimers();
 	});
 	pi.on("turn_end", () => {
 		const endedAt = now();
+		// #107 A: normal completion is the funnel's terminal event; if a STOP
+		// already finalized this turn (stall-stopped), finalize no-ops here.
+		if (turnId) ledger.finalize(turnId, "completed", new Date(endedAt).toISOString());
 		wd.onTurnEnd(endedAt);
 		sw.onTurnEnd(endedAt);
 		armSettleWatch(endedAt);
 		if (ui) ui.setStatus("zw", undefined);
 	});
-	pi.on("message_start", () => wd.onActivity(now()));
+	pi.on("message_start", (e: unknown) => {
+		// #107 C (opencode-auto-continue synthetic-flag): our own zw-* messages
+		// must never feed the watchdog — a kick that resets the zombie clock
+		// would mask the very stall it answered.
+		const msg = (e as { message?: unknown } | undefined)?.message;
+		if (isSyntheticMessage(msg)) return;
+		wd.onActivity(now());
+	});
 	pi.on("message_update", () => wd.onActivity(now()));
 	pi.on("message_end", () => wd.onActivity(now()));
 	pi.on("ui_prompt_start", () => wd.onActivity(now()));
 	pi.on("ui_prompt_end", () => wd.onActivity(now()));
-	pi.on("tool_execution_start", () => wd.onToolStart(now()));
+	pi.on("tool_execution_start", (e: unknown) => {
+		const te = e as { toolName?: string; args?: unknown } | undefined;
+		wd.onToolStart(now());
+		// #107 B (Cline loop-detection): canonical signature, ignored params
+		// stripped, consecutive count — soft warns, hard escalates.
+		const tier = loop.onToolStart(te?.toolName ?? "tool", te?.args);
+		if (tier.tier === "soft") {
+			appendDetection({ ts: new Date(now()).toISOString(), sessionFile, code: "loop-soft", idleMs: 0, detail: `${tier.count} consecutive identical calls: ${tier.signature.slice(0, 120)}` });
+			if (ui) ui.notify(`zw: same tool call repeated ${tier.count}× (soft) — watching for self-correction`, "info");
+			if (LOOP_SOFT_STEER) {
+				try {
+					pi.sendMessage({ customType: "zw-loop-warn", content: `\n> [zw] identical tool call repeated ${tier.count}× — vary the approach or stop repeating.\n`, display: true }, { triggerTurn: false });
+				} catch {
+					/* sendMessage throws during teardown — non-fatal */
+				}
+			}
+		} else if (tier.tier === "hard") {
+			appendDetection(evidenceStamped({ ts: new Date(now()).toISOString(), sessionFile, code: "loop-hard", idleMs: 0, detail: `${tier.count} consecutive identical calls: ${tier.signature.slice(0, 120)}` }));
+			if (ui) ui.notify(`zw ⚠ same tool call repeated ${tier.count}× (hard) — escalating like a zombie`, "warning");
+			void autoStop("loop-hard", 0); // hard loop IS positive evidence of a wedged model
+		}
+	});
 	pi.on("tool_execution_update", () => wd.onActivity(now()));
 	pi.on("tool_execution_end", () => wd.onToolEnd(now()));
 
 	pi.on("session_shutdown", () => {
+		// #107 A: a session dying with a turn in flight is a terminal event too.
+		if (turnId && wd.active) ledger.finalize(turnId, "shutdown", new Date(now()).toISOString());
 		if (timer) clearInterval(timer);
 		timer = undefined;
 		clearSettleTimers();

@@ -200,3 +200,160 @@ export class SettleWatch {
 		this.reported = false;
 	}
 }
+
+// ---------------------------------------------------------------------------
+// v1.4.92 (#107) — 4-port from the 2026-09-16 watchdog landscape brief:
+//  A. TerminationLedger  — @mporenta/pi-claude-code (MIT): terminationReason
+//     taxonomy + idempotent completion funnel + run ledger with recovered:true
+//  B. LoopDetector       — Cline loop-detection.ts (Apache-2.0): canonical
+//     tool-call signature (sorted keys, IGNORED_PARAMS stripped) + 2-tier
+//     soft=3 warn / hard=5 escalate
+//  C. isSyntheticMessage — opencode-auto-continue: watchdog's own messages
+//     must never feed the watchdog (anti-watchdog-of-watchdog)
+//  D. evidenceFor        — codex-task-watchdog: absence-only evidence is NOT
+//     confirmed failure and does not license an interrupt until re-confirmed
+// ---------------------------------------------------------------------------
+
+/** A. Termination reasons — every watched turn converges to exactly ONE. */
+export type TerminationReason = "completed" | "stall-stopped" | "stopped-error" | "shutdown" | "crash-recovered";
+
+export interface RunRecord {
+	turnId: string;
+	sessionFile?: string;
+	startedAt: string;
+	endedAt?: string;
+	reason?: TerminationReason;
+	/** Set when the extension reloads and finds this turn was never finalized. */
+	recovered?: boolean;
+	detections: string[];
+}
+
+/** Deterministic canonical stringify: recursively sorted keys. */
+function canonical(value: unknown): string {
+	if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+	if (value && typeof value === "object") {
+		const entries = Object.entries(value as Record<string, unknown>)
+			.filter(([, v]) => v !== undefined)
+			.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+			.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`);
+		return `{${entries.join(",")}}`;
+	}
+	return JSON.stringify(value) ?? "null";
+}
+
+/**
+ * B. Cline-style signature: tool name + canonical args with volatile params
+ * stripped. `task_progress`-style metadata changes every update even when the
+ * user-visible args are identical — sorting + stripping makes repeated calls
+ * with cosmetic differences compare equal (Cline IGNORED_PARAMS).
+ */
+export const IGNORED_TOOL_PARAMS = new Set(["task_progress", "onUpdate", "on_update", "progress", "_seq", "requestId"]);
+
+export function toolCallSignature(toolName: string, args: unknown): string {
+	const filtered: Record<string, unknown> = {};
+	if (args && typeof args === "object" && !Array.isArray(args)) {
+		for (const [k, v] of Object.entries(args as Record<string, unknown>)) {
+			if (!IGNORED_TOOL_PARAMS.has(k)) filtered[k] = v;
+		}
+	}
+	return `${toolName}(${canonical(filtered)})`;
+}
+
+export interface LoopConfig {
+	/** Identical consecutive tool calls after which we softly warn (model may still self-correct; ui-only by default). */
+	soft: number;
+	/** Identical consecutive tool calls after which we escalate to the zombie class (auto-stop eligible). */
+	hard: number;
+}
+
+export const DEFAULT_LOOP_CONFIG: LoopConfig = { soft: 3, hard: 5 };
+
+export interface LoopTier {
+	tier: "soft" | "hard" | null;
+	count: number;
+	signature: string;
+}
+
+/** Consecutive-identical tool-call detector (Cline semantics: any different
+ *  signature or turn boundary resets the count). */
+export class LoopDetector {
+	private cfg: LoopConfig;
+	private last: string | null = null;
+	private count = 0;
+
+	constructor(cfg: Partial<LoopConfig> = {}) {
+		this.cfg = { ...DEFAULT_LOOP_CONFIG, ...cfg };
+	}
+
+	onToolStart(toolName: string, args: unknown): LoopTier {
+		const signature = toolCallSignature(toolName, args);
+		if (signature === this.last) {
+			this.count += 1;
+		} else {
+			this.last = signature;
+			this.count = 1;
+		}
+		// Tiers fire AT the crossing (Cline: warn at 3, escalate at 5) — not on
+		// every subsequent identical call.
+		const tier = this.count === this.cfg.hard ? "hard" : this.count === this.cfg.soft ? "soft" : null;
+		return { tier, count: this.count, signature };
+	}
+
+	onTurnBoundary(): void {
+		this.last = null;
+		this.count = 0;
+	}
+}
+
+/** C. Synthetic flag: messages emitted by this watchdog carry customType
+ *  "zw-*"; their message events must not reset the zombie clock — a kick that
+ *  resets the clock would mask the very stall it answered (anti-self-count,
+ *  opencode-auto-continue architecture). */
+export function isSyntheticMessage(message: unknown): boolean {
+	const ct = (message as { customType?: unknown } | null | undefined)?.customType;
+	return typeof ct === "string" && ct.startsWith("zw-");
+}
+
+/** D. codex-task-watchdog principle: classify the evidence class of a
+ *  detection. ABSENCE-only (quiet) is not proof of death; POSITIVE
+ *  contradiction (daemon busy while in-process ended — B2) is. An interrupt
+ *  (STOP) is licensed only when safeToInterrupt. */
+export interface Evidence {
+	confirmedFailure: boolean;
+	safeToInterrupt: boolean;
+	note: string;
+}
+
+export function evidenceFor(code: string, opts: { repeated?: boolean; absenceGuard?: boolean } = {}): Evidence {
+	const guard = opts.absenceGuard !== false; // ZW_ABSENCE_GUARD=0 restores v1 immediacy
+	switch (code) {
+		case "b2-settle-lost":
+			return {
+				confirmedFailure: true,
+				safeToInterrupt: true,
+				note: "positive contradiction: daemon busy on both checks while the turn ended in-process (verified 2026-09-01)",
+			};
+		case "loop-hard":
+			return {
+				confirmedFailure: true,
+				safeToInterrupt: true,
+				note: "positive evidence: identical canonical tool call observed hard-threshold times consecutively",
+			};
+		case "zombie":
+			if (!guard) return { confirmedFailure: false, safeToInterrupt: true, note: "absence guard disabled (ZW_ABSENCE_GUARD=0)" };
+			return {
+				confirmedFailure: false,
+				safeToInterrupt: false,
+				note: "absence-only: no activity for stallMs proves nothing — watching for repeat before STOP",
+			};
+		case "zombie-repeat":
+			if (!guard) return { confirmedFailure: false, safeToInterrupt: true, note: "absence guard disabled (ZW_ABSENCE_GUARD=0)" };
+			return {
+				confirmedFailure: false,
+				safeToInterrupt: true,
+				note: "repeat absence after reNotifyMs — second silent window licenses STOP",
+			};
+		default:
+			return { confirmedFailure: false, safeToInterrupt: false, note: "not an interrupt class" };
+	}
+}
