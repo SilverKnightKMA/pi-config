@@ -300,12 +300,18 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 			plan.wakeSignature = nowSig;
 			plan.wakeRounds = (plan.wakeRounds ?? 0) + 1;
 			persistPlan();
-			const next = nowOpen[0];
+			// v1.4.86 (#82): machine-readable plan wake (see task/index.ts sibling).
+			const next2 = nowOpen[0];
 			const parkedNow = nowOpenAll.filter((t) => t.status === "parked").length;
-			pi.sendUserMessage(
-				`[plan wake ${plan.wakeRounds}/${planBudget(nowOpen.length)}] ${nowOpenAll.length} open step-task(s)${parkedNow > 0 ? ` (${parkedNow} parked, awaiting the user)` : ""} — continue with task_update on #${next.id}${next.status === "pending" ? " (start it: status in_progress)" : ""}; evidence gates every completion (the judge can hold it). If a step is genuinely blocked, park it with a reason instead of spinning.`,
-				{ deliverAs: "followUp" },
+			const planWakeText = `[plan wake ${plan.wakeRounds}/${planBudget(nowOpen.length)}] ${nowOpenAll.length} open step-task(s)${parkedNow > 0 ? ` (${parkedNow} parked, awaiting the user)` : ""} — continue with task_update on #${next2.id}${next2.status === "pending" ? " (start it: status in_progress)" : ""}; evidence gates every completion (the judge can hold it). If a step is genuinely blocked, park it with a reason instead of spinning.`;
+			if (process.env.WAKE_CHAT_EMISSION === "1") {
+				pi.sendUserMessage(planWakeText, { deliverAs: "followUp" });
+			} else {
+				pi.sendMessage(
+					{ customType: "plan-wake", content: planWakeText, display: false, details: { phase: "wake", rounds: plan.wakeRounds, budget: planBudget(nowOpen.length), openSteps: nowOpenAll.length, parkedSteps: parkedNow } },
+					{ deliverAs: "followUp", triggerTurn: true },
 			);
+			}
 			planSettle(); // schedule the next round from the updated counters
 		}, d.delaySec * 1000);
 	}

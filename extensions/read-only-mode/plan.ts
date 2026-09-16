@@ -461,6 +461,12 @@ export interface PlanStatusPayload {
 	 *  again (single-waker priority; tonight's reopen would otherwise have NO
 	 *  waker at all). */
 	quiescent?: boolean;
+	/** v1.4.86 (#85): continuation-budget projection — the plan card renders
+	 *  "budget 7/10 · streak 2/3 · 5 open (2 parked)" like the goal card. */
+	wakeRounds: number;
+	wakeNoProgress: number;
+	openSteps: number;
+	parkedSteps: number;
 	updatedAt: string;
 }
 
@@ -479,6 +485,12 @@ export function planStatusPayload(
 		mode: state.mode,
 		stepsDone: state.steps.filter((s) => s.done).length,
 		stepsTotal: state.steps.length,
+		// v1.4.86 (#85): wake-budget projection so the panel card can render
+		// "budget 7/10 · streak 2/3 · 5 open (2 parked)" like the goal card's epochs.
+		wakeRounds: state.wakeRounds ?? 0,
+		wakeNoProgress: state.wakeNoProgress ?? 0,
+		openSteps: mine.filter((t) => t.status !== "completed" && t.status !== "cancelled").length,
+		parkedSteps: mine.filter((t) => t.status === "parked").length,
 		steps: state.steps.map((s) => {
 			const t = mine.find((x) => x.stepIndex === s.index);
 			return { index: s.index, text: s.text, done: s.done, ...(t ? { taskRef: { id: t.id, status: t.status } } : {}) };

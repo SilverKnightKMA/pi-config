@@ -259,10 +259,19 @@ export default function taskExtension(pi: ExtensionAPI) {
 			state = { ...state, wake: next };
 			pi.appendEntry(TASK_STATE, state);
 			projectStatus();
-			pi.sendUserMessage(
-				`[task wake ${next.rounds}/${TASK_BUDGET}] #${nowOpen.map((t) => t.id).join(" #")} still in_progress — continue with task_update (real evidence; the judge gates completion) or park with a reason if genuinely blocked. Do not re-declare completed without evidence.`,
-				{ deliverAs: "followUp" },
-			);
+			// v1.4.86 (#82): machine-readable wake — display:false custom message keeps
+			// the nudge in model context (turn fires) but not as a chat-text block; the
+			// Paseo panel badges it from the "[task wake N/M]" prefix. WAKE_CHAT_EMISSION=1
+			// restores the old full user-role text block.
+			const wakeText = `[task wake ${next.rounds}/${TASK_BUDGET}] #${nowOpen.map((t) => t.id).join(" #")} still in_progress — continue with task_update (real evidence; the judge gates completion) or park with a reason if genuinely blocked. Do not re-declare completed without evidence.`;
+			if (process.env.WAKE_CHAT_EMISSION === "1") {
+				pi.sendUserMessage(wakeText, { deliverAs: "followUp" });
+			} else {
+				pi.sendMessage(
+					{ customType: "task-wake", content: wakeText, display: false, details: { phase: "wake", rounds: next.rounds, budget: TASK_BUDGET, openIds: nowOpen.map((t) => t.id) } },
+					{ deliverAs: "followUp", triggerTurn: true },
+				);
+			}
 			taskSettle();
 		}, d.delaySec * 1000);
 	}
@@ -876,6 +885,18 @@ export default function taskExtension(pi: ExtensionAPI) {
 					// #45: field-level diff — "pending => pending" said nothing about
 					// WHAT changed (user 2026-09-13). Panel card renders these lines.
 					fields: fieldChanges(prevTask, result.task!),
+					// v1.4.86 (#83): judge verdict for the snapshot card's judge badge —
+					// the long tool-result text stays for the model; the panel gets a chip.
+					...(result.task!.audit || result.task!.judgeRounds
+						? {
+								judge: {
+									verdict: result.task!.audit?.verdict ?? null,
+									rounds: result.task!.judgeRounds ?? 0,
+									failStreak: result.task!.failStreak ?? 0,
+									summary: (result.task!.audit?.summary ?? "").slice(0, 160),
+								},
+							}
+						: {}),
 				},
 			};
 		},

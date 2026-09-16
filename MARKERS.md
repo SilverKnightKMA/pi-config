@@ -116,3 +116,29 @@ text starts with "[channel-nack] "                      → channel-nack
 | Payload | early notice: `[pool <id>] early notice: <item> -> <status>…` — first hard failure; final aggregate: `aggregateReport` (counts + per-item lines) |
 | Cadence | ≤ 2 per pool (one early notice on first gate_failed/failed, one final aggregate) |
 | Why user-role | spawn replacement / pool_resume decisions are model work; no model-facing alternative exists in pi today |
+
+### 6. `wake-prefix` — continuation nudge family *(live — v3, 2026-09-16 #82)*
+
+The continuation driver (goal > plan > task, single-waker) nudges the session
+to keep working. Since engine v1.4.86 the plan/task nudges are machine-readable
+custom messages (`plan-wake` / `task-wake`, display:false, triggerTurn:true —
+model context intact, no chat-text block); the daemon surfaces them as text
+items, so the consumer contract is the literal PREFIX either way. Goal wakes
+stay full user-role text (the anchor recap is deliberate).
+
+| Field | Value |
+|---|---|
+| Emitted by | `task` + `read-only-mode` (plan) extensions |
+| Mechanism | pi `sendMessage` customType `task-wake`/`plan-wake` (display:false, triggerTurn:true); `WAKE_CHAT_EMISSION=1` restores the old user-role text block |
+| Prefixes (exact) | `[task wake N/M] ` · `[plan wake N/M] ` · `[task] continuation wrapped up` · `[plan] continuation wrapped up` · `[plan] quiescent` |
+| Consumer | agent-health `wake-chip` transformer — ⚡ wake / ⏹ wrapped / 💤 quiescent compact badges |
+| Cadence | one per continuation round (≤1/min after backoff), one wrap-up per episode |
+
+Detection block update (v3):
+
+```
+text starts with "[task wake " / "[plan wake "       → wake-chip (⚡)
+text starts with "[task] continuation wrapped up"     → wake-chip (⏹)
+text starts with "[plan] continuation wrapped up"     → wake-chip (⏹)
+text starts with "[plan] quiescent"                   → wake-chip (💤)
+```

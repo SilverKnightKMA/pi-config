@@ -25,8 +25,10 @@ const zw = read("zombie-watchdog/index.ts");
 const subIdx = read("subagent-types/index.ts");
 const subChan = read("subagent-types/paseo-channel.ts");
 const subPool = read("subagent-types/pool.ts");
+const taskIdx = read("task/index.ts");
+const romIdx = read("read-only-mode/index.ts");
 
-describe("MARKERS.md producer contract v2", () => {
+	describe("MARKERS.md producer contract v2", () => {
 	test("spec lists all 5 markers (2 deprecated + 3 active)", () => {
 		expect(documented).toContain("> om: ");
 		expect(documented).toContain("> zw ⚠ ");
@@ -66,6 +68,20 @@ describe("MARKERS.md producer contract v2", () => {
 		expect(subPool).toContain('<machine-notice kind="pool-notice">');
 		expect((subIdx.match(/poolNotice\(/g) ?? []).length).toBe(2);
 		expect(subIdx).toContain("poolNotice(aggregateReport(state))");
+	});
+
+	test("A: wake-prefix family (marker 6, v3 #82) — every prefix at its emit site", () => {
+		expect(taskIdx).toContain("`[task wake ${next.rounds}/${TASK_BUDGET}]");
+		expect(taskIdx).toContain("[task] continuation wrapped up");
+		expect(romIdx).toContain("`[plan wake ${plan.wakeRounds}/${planBudget(nowOpen.length)}]");
+		expect(romIdx).toContain("[plan] continuation wrapped up");
+		expect(romIdx).toContain("[plan] quiescent");
+		// v1.4.86 (#82): wakes are machine-readable custom messages with an
+		// escape hatch back to the old user-role text block
+		expect(taskIdx).toContain('customType: "task-wake"');
+		expect(romIdx).toContain('customType: "plan-wake"');
+		expect(taskIdx).toContain('WAKE_CHAT_EMISSION === "1"');
+		expect(romIdx).toContain('WAKE_CHAT_EMISSION === "1"');
 	});
 
 	test("no orphan markers: every documented prefix exists at source (or behind escape hatch)", () => {

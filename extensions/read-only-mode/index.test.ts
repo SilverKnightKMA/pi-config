@@ -196,6 +196,11 @@ describe("plan status projection (#22 — panel reads this file)", () => {
 			planFile: ".pi/plans/x.md",
 			submittedAt: null,
 			completedAt: null,
+			// #85: budget projection defaults when no wake history exists
+			wakeRounds: 0,
+			wakeNoProgress: 0,
+			openSteps: 0,
+			parkedSteps: 0,
 			updatedAt: "2026-09-13T00:00:00.000Z",
 		});
 	});
@@ -206,6 +211,25 @@ describe("plan status projection (#22 — panel reads this file)", () => {
 		expect(p.mode).toBe("inactive");
 		expect(p.stepsTotal).toBe(0);
 		expect(p.planFile).toBeNull();
+	});
+
+	test("#85 planStatusPayload carries the wake-budget fields for the panel card", async () => {
+		const { emptyPlan, planStatusPayload } = await import("./plan.ts");
+		const plan = { ...emptyPlan(), mode: "tracking" as const, planId: "p-1", wakeRounds: 7, wakeNoProgress: 2, steps: [
+			{ index: 1, text: "a", done: true },
+			{ index: 2, text: "b", done: false },
+			{ index: 3, text: "c", done: false },
+		] };
+		const board = [
+			{ id: 70, status: "completed", planId: "p-1", stepIndex: 1 },
+			{ id: 71, status: "in_progress", planId: "p-1", stepIndex: 2 },
+			{ id: 72, status: "parked", planId: "p-1", stepIndex: 3 },
+		];
+		const p = planStatusPayload(plan, "s", "2026-09-16T00:00:00.000Z", undefined, board);
+		expect(p.wakeRounds).toBe(7);
+		expect(p.wakeNoProgress).toBe(2);
+		expect(p.openSteps).toBe(2); // in_progress + parked (completed excluded)
+		expect(p.parkedSteps).toBe(1);
 	});
 });
 
