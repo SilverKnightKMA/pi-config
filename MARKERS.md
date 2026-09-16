@@ -142,3 +142,20 @@ text starts with "[task] continuation wrapped up"     → wake-chip (⏹)
 text starts with "[plan] continuation wrapped up"     → wake-chip (⏹)
 text starts with "[plan] quiescent"                   → wake-chip (💤)
 ```
+
+### 7. `lessons-block` — injected lessons context *(live — v3, 2026-09-17 #110)*
+
+The engine lessons extension injects folded lessons into model context at
+session_start and after compaction (the model vaccine — full block, verbatim).
+Humans do not need the multi-line block inline in the timeline: the lessons
+plugin replaces it with one dim chip and offers the panel list instead.
+Render-layer only; the transcript message the model reads stays verbatim.
+
+| Field | Value |
+|---|---|
+| Emitted by | `lessons` extension (pi-config `extensions/_shared/lessons-core.ts` renderBlock, sent as customType `lessons-context`) |
+| Mechanism | pi `sendMessage` custom message (display:false); the pi provider surfaces it as a plain assistant_message — consumer matches the prefix |
+| Line prefix (exact) | `Lessons from past sessions` |
+| Payload | header line + one `[YYYY-MM-DD][tag] text` lesson per line (tags: failure / convention / preference) |
+| Cadence | once per session start + once per compaction (LESSONS_INJECT=0 disables) |
+| Consumer | lessons plugin `lessons-block-transformer` → 📚 chip; lessons panel lists the same file (`~/.pi/agent/lessons.md`) |
