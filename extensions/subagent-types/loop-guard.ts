@@ -95,9 +95,14 @@ export class LoopGuard {
 	}
 }
 
-/** Loop-guard settings from env; disabled when repeat < 2. */
+/** Loop-guard settings from env. Default OFF since v1.4.84 (#91): the
+ *  poller wiring cannot distinguish "generating a new turn" (updateCount
+ *  grows on every streaming delta while the curated tail stays frozen until
+ *  the item completes) from a true repeat — 6s of thinking got productive
+ *  researchers killed mid-turn (15 false kills, 0 true positives). Opt in
+ *  explicitly with SUBAGENT_LOOP_GUARD=1 once a turn-boundary signal exists. */
 export function loopGuardConfigFromEnv(env: Record<string, string | undefined> = process.env): LoopGuardConfig & { enabled: boolean } {
-	const enabled = env.SUBAGENT_LOOP_GUARD !== "0";
+	const enabled = env.SUBAGENT_LOOP_GUARD === "1";
 	const repeat = Number.parseInt(env.SUBAGENT_LOOP_REPEAT ?? "", 10);
 	return { enabled, repeat: Number.isFinite(repeat) ? repeat : 3, cycle: 3 };
 }

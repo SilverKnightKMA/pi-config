@@ -71,7 +71,11 @@ describe("LoopGuard (port @pify/swarm 0.8.0, task #60)", () => {
 	});
 
 	test("config from env", () => {
-		expect(loopGuardConfigFromEnv({})).toEqual({ enabled: true, repeat: 3, cycle: 3 });
+		// v1.4.84 (#91): default OFF — the growth-tick wiring false-killed children
+		// that were merely generating a turn (streaming deltas grow updateCount
+		// while the curated tail stays frozen until the item completes).
+		expect(loopGuardConfigFromEnv({})).toEqual({ enabled: false, repeat: 3, cycle: 3 });
+		expect(loopGuardConfigFromEnv({ SUBAGENT_LOOP_GUARD: "1" }).enabled).toBe(true); // explicit opt-in
 		expect(loopGuardConfigFromEnv({ SUBAGENT_LOOP_GUARD: "0" }).enabled).toBe(false);
 		expect(loopGuardConfigFromEnv({ SUBAGENT_LOOP_REPEAT: "5" }).repeat).toBe(5);
 		expect(loopGuardConfigFromEnv({ SUBAGENT_LOOP_REPEAT: "junk" }).repeat).toBe(3);

@@ -96,3 +96,18 @@ and after every compaction. Knobs: `LESSONS_INJECT=0` disables all injection;
 `LESSONS_MAX_AGE_DAYS` (default 30, clamp 1–365) is the age filter;
 `LESSONS_FILE` overrides the path (tests/isolation). Review 2027-01-15:
 expected to stay — revisit the caps after real usage data.
+
+## SUBAGENT_LOOP_GUARD / SUBAGENT_LOOP_REPEAT (v1.4.84, default OFF)
+
+The pool loop-guard (`extensions/subagent-types/loop-guard.ts`, ported from
+@pify/swarm in #60) aborts a child that repeats identical output without
+acting. Default OFF since v1.4.84 (#91): the parent-poll wiring observes on
+`updateCount` growth — which increments on every STREAMING delta — while the
+curated tail only mutates when an item completes. A child thinking/generating
+for >6s therefore looked exactly like a stalled repeat and was killed
+mid-turn (15 productive researchers killed across 3 pools, 0 true
+positives). The pure `LoopGuard` class is retained; opt back in explicitly
+with `SUBAGENT_LOOP_GUARD=1` once a turn-boundary signal exists (needs
+item-level activity events from the daemon). `SUBAGENT_LOOP_REPEAT` (default
+3) still tunes the threshold when enabled. Deadline/turn caps keep bounding
+runaway cost with the guard off.
