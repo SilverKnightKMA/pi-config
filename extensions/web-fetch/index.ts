@@ -33,6 +33,9 @@ const USER_AGENT =
 const DEFAULT_TIMEOUT_MS = 30000;
 const MAX_RESPONSE_SIZE = 5 * 1024 * 1024;
 const MAX_PDF_SIZE = 20 * 1024 * 1024;
+/** v1.4.94 (#109): images attach as base64 — cap keeps tool results sane
+ *  (opencode's 5MB attachment ceiling). */
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
 const MIN_USEFUL_CONTENT = 500;
 const JINA_READER_BASE = "https://r.jina.ai/";
 const JINA_TIMEOUT_MS = 30000;
@@ -49,6 +52,10 @@ interface FetchResult {
 	title: string;
 	content: string;
 	error: string | null;
+	/** v1.4.94 (#109): direct image/* responses come back as attachments
+	 *  (opencode port) instead of an error — vision models see the picture,
+	 *  text-only models still get the URL + metadata in `content`. */
+	image?: { data: string; mimeType: string; bytes: number };
 }
 
 // ── PDF Extraction ───────────────────────────────────────────────────
@@ -448,16 +455,37 @@ async function extractViaHttp(
 			return await extractPDF(buffer, url);
 		}
 
+		// v1.4.94 (#109, opencode port): image/* is NOT unsupported — attach it.
+		// Vision models read the picture; text-only models keep the URL + metadata
+		// from the text block. Audio/video/zip stay unsupported as before. The
+		// generic 5MB content-length gate above already refuses oversized images.
+		if (contentType.startsWith("image/")) {
+			const buffer = await response.arrayBuffer();
+			if (buffer.byteLength > MAX_IMAGE_SIZE) {
+				return {
+					url, title: "", content: "",
+					error: `Image too large (${Math.round(buffer.byteLength / 1024 / 1024)}MB > 5MB) — open the URL directly`,
+				};
+			}
+			const mimeType = contentType.split(";")[0].trim() || "image/png";
+			return {
+				url,
+				title: new URL(url).pathname.split("/").pop() || url,
+				content: `Fetched image: ${url} (${mimeType}, ${Math.round(buffer.byteLength / 1024)}KB). The image is attached below — visible to vision-capable models; otherwise open the URL.`,
+				error: null,
+				image: { data: Buffer.from(buffer).toString("base64"), mimeType, bytes: buffer.byteLength },
+			};
+		}
+
 		if (
 			contentType.includes("application/octet-stream") ||
-			contentType.includes("image/") ||
 			contentType.includes("audio/") ||
 			contentType.includes("video/") ||
 			contentType.includes("application/zip")
 		) {
 			return {
 				url, title: "", content: "",
-				error: `Unsupported content type: ${contentType.split(";")[0]}`,
+				error: `Unsupported content type: ${contentType.split(";")[0].trim()}`,
 			};
 		}
 
@@ -549,7 +577,8 @@ async function fetchAndExtract(
 
 	if (
 		httpResult.error.startsWith("Unsupported content type") ||
-		httpResult.error.startsWith("Response too large")
+		httpResult.error.startsWith("Response too large") ||
+		httpResult.error.startsWith("Image too large")
 	) {
 		return httpResult;
 	}
@@ -589,6 +618,31 @@ export default function (pi: ExtensionAPI) {
 
 			if (result.error) {
 				throw new Error(`${params.url}: ${result.error}`);
+			}
+
+			// v1.4.94 (#109): image attachment — text header + image block
+			// (ImageContent {type:"image", data, mimeType}).
+			if (result.image) {
+				return {
+					content: [
+						{
+							type: "text" as const,
+						text: `# Image: ${result.title}\n\nSource: ${result.url}\n\n---\n\n${result.content}`,
+						},
+					{
+							type: "image" as const,
+							data: result.image.data,
+							mimeType: result.image.mimeType,
+						},
+					],
+					details: {
+						url: result.url,
+						title: result.title,
+						image: true,
+						mimeType: result.image.mimeType,
+						bytes: result.image.bytes,
+					},
+				};
 			}
 
 			const header = result.title
@@ -647,7 +701,18 @@ export default function (pi: ExtensionAPI) {
 			const details = result.details as {
 				title?: string;
 				chars?: number;
+				image?: boolean;
+				mimeType?: string;
+				bytes?: number;
 			};
+
+			if (details?.image) {
+				text.setText(
+					theme.fg("success", details.title || "Image") +
+					theme.fg("muted", ` (${details.mimeType ?? "image"}, ${Math.round((details.bytes ?? 0) / 1024)}KB attached)`),
+			);
+				return text;
+			}
 
 			const title = details?.title || "Untitled";
 			const chars = details?.chars ?? 0;
