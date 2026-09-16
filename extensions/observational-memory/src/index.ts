@@ -16,6 +16,7 @@ import { registerCompactCommand } from "./commands/compact.js";
 import { registerConsolidateCommand } from "./commands/consolidate.js";
 import { registerStatusCommand } from "./commands/status.js";
 import { registerStatusTool } from "./commands/status-tool.js";
+import { registerRecallTool } from "./commands/recall-tool.js";
 import { registerMemoryGuard } from "./guard/memory-guard.js";
 import { sweepRunsCost } from "./spawn/runs.js";
 import { registerCompactionHook } from "./hooks/compaction-hook.js";
@@ -152,6 +153,8 @@ export default function observationalMemory(pi: ExtensionAPI): void {
 	registerCompactCommand(pi, runtime);
 	registerConsolidateCommand(pi, runtime);
 	registerStatusTool(pi, runtime);
+	// v1.4.91 (#104): read back an observation by id — works for tombstoned ids too.
+	registerRecallTool(pi);
 	// 2026-09-01: per-turn context gauge refresh (footer used to go stale between
 	// observer/consolidator events while context grows every turn).
 	// 2026-09-05: the status file refreshes on the same cadence so the Paseo

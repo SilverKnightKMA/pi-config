@@ -44,6 +44,7 @@ import { join } from "node:path";
 import { buildWorkerArgv, buildWorkerEnv, spawnWorker } from "../spawn/launch.js";
 import { recordWorkerCost } from "./observer-trigger.js";
 import { readWorkerCost, runCostPath } from "../spawn/runs.js";
+import { sha256Content } from "../tools/recall.js";
 import { COMPACT_TOPIC_SYSTEM } from "../../agent/consolidator/prompt.js";
 
 type TriggerCtx = {
@@ -219,7 +220,14 @@ async function dispatchConsolidator(
 		if (toDrop.length > 0) {
 			const coversUpToId = lastSourceEntryId(branch);
 			if (coversUpToId) {
-				pi.appendEntry(OM_OBSERVATIONS_DROPPED, { observationTimestamps: toDrop, coversUpToId });
+				// v1.4.91 (#104): sha256 recovery spans — keep the exact original per
+				// dropped observation so om_recall can recover it even after the
+				// recorded entry is folded away by compaction.
+				const dropSet = new Set(toDrop);
+			const recovery = promote
+					.filter((o) => dropSet.has(o.timestamp))
+					.map((o) => ({ timestamp: o.timestamp, sha256: sha256Content(o.content), span: o.content }));
+				pi.appendEntry(OM_OBSERVATIONS_DROPPED, { observationTimestamps: toDrop, coversUpToId, recovery });
 			}
 		}
 

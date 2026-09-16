@@ -64,6 +64,19 @@ export type ObservationsRecordedEntryData = {
 export type ObservationsDroppedEntryData = {
 	observationTimestamps: string[];
 	coversUpToId: string;
+	/** v1.4.91 (#104) sha256 recovery spans: per dropped observation the exact
+	 *  original content + its hash, so om_recall can recover the original even
+	 *  after the recorded entry is folded away. Optional — pre-v1.4.91
+	 *  tombstones lack it and recall reports `dropped` for those ids. */
+	recovery?: DroppedObservationRecord[];
+};
+
+/** One #104 recovery record: span is the verbatim single-line original;
+ *  sha256 = sha256(span) — recall verifies before presenting it as original. */
+export type DroppedObservationRecord = {
+	timestamp: string;
+	sha256: string;
+	span: string;
 };
 
 export type CostEntryData = {
@@ -119,7 +132,23 @@ export function isObservationsRecordedData(value: unknown): value is Observation
 
 export function isObservationsDroppedData(value: unknown): value is ObservationsDroppedEntryData {
 	if (!isPlainRecord(value)) return false;
-	return isNonEmptyStringArray(value.observationTimestamps) && isNonEmptyString(value.coversUpToId);
+	if (!(isNonEmptyStringArray(value.observationTimestamps) && isNonEmptyString(value.coversUpToId))) return false;
+	if (value.recovery !== undefined) {
+		if (!Array.isArray(value.recovery)) return false;
+		for (const r of value.recovery) {
+			if (
+				!isPlainRecord(r) ||
+				!isNonEmptyString(r.timestamp) ||
+				!isNonEmptyString(r.sha256) ||
+				!isNonEmptyString(r.span) ||
+				/\r|\n/.test(r.span) ||
+				!value.observationTimestamps.includes(r.timestamp)
+			) {
+				return false;
+			}
+		}
+	}
+	return true;
 }
 
 export function isMemoryDetails(value: unknown): value is MemoryDetails {
@@ -218,7 +247,10 @@ export function buildObservationsRecordedData(
 export function buildObservationsDroppedData(
 	observationTimestamps: string[],
 	coversUpToId: string,
+	recovery?: DroppedObservationRecord[],
 ): ObservationsDroppedEntryData | undefined {
 	if (observationTimestamps.length === 0 || !isNonEmptyString(coversUpToId)) return undefined;
-	return { observationTimestamps, coversUpToId };
+	const data: ObservationsDroppedEntryData = { observationTimestamps, coversUpToId };
+	if (recovery && recovery.length > 0) data.recovery = recovery;
+	return data;
 }
