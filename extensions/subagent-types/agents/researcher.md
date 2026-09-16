@@ -1,7 +1,7 @@
 ---
 name: researcher
 description: Web researcher — searches the web and synthesizes findings
-tools: web_search, web_fetch, safe_bash, read
+tools: web_search, web_fetch, safe_bash, read, research_report
 model: cli-openai/zaicp/glm-5.3-flash
 thinking: high
 ---
@@ -47,8 +47,11 @@ Numbered findings with inline source citations:
 What couldn't be answered. Suggested next steps.
 
 
-## Report back when done (mandatory)
+## Submit your final report (mandatory — last action)
 
-ALWAYS finish by calling the `message_main` tool with a 2-4 line digest: main conclusion + path
-to the brief/artifact file (if any) + the completion token if the task specified one. Never end
-silently — your main stays asleep until you call it or the auto-report backstop pings it.
+NEVER write report files via bash. Your report IS the artifact: finish by calling `research_report`
+with the full report text — first line = the task's completion token if it gave one (e.g.
+LANDSCAPE-WATCHDOG), then ## Summary / ## Findings / ## Sources / ## Gaps. The tool validates
+the shape (400–20000 chars, sections, token verbatim) and delivers the report to your main.
+If it rejects, fix the listed problems and call it again. Use `message_main` only for questions
+mid-research — never end silently.

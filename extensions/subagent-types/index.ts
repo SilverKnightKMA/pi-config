@@ -38,6 +38,7 @@ import { Type } from "@sinclair/typebox";
 import safeBash from "./safe-bash.ts";
 import registerReadonlyTools from "./readonly-tools.ts";
 import { LoopGuard, loopGuardConfigFromEnv } from "./loop-guard.ts";
+import { validateResearchReport, researchReportDigest } from "./research-report.ts";
 import {
 	createAgent,
 	findMcpEndpoint,
@@ -1146,6 +1147,68 @@ ${reply.text}` }],
 			return {
 				content: [{ type: "text" as const, text: `No reply within ${Math.round(waitMs / 1000)}s — you are now parked. END YOUR TURN immediately and wait: the main agent's reply will arrive as your next turn.` }],
 				details,
+			};
+		},
+	});
+
+	// ── research_report (#51) — verified submission for read-only researchers ──
+	// Replaces the "write the brief via bash" instruction that pushed children
+	// into heredoc workarounds: the report IS the artifact, validated here and
+	// delivered to the main over the channel. The pool expect-gate reads the
+	// completion token from the same string this tool verified.
+	pi.registerTool({
+		name: "research_report",
+		label: "research_report",
+		description:
+			"Researchers: submit your FINAL research report through this tool — never write report files via bash. Validated: 400-20000 chars, '## Summary' + at least 2 sections, and the task's completion token (if any) must appear verbatim (put it on the first line). On success the full report is delivered to your main agent; you may end your turn.",
+		parameters: Type.Object({
+			report: Type.String({ description: "The full report text, starting with the completion token line if the task gave one (e.g. LANDSCAPE-WATCHDOG), then ## Summary / ## Findings / ## Sources / ## Gaps." }),
+			token: Type.Optional(Type.String({ description: "The completion token the task demanded, if any (e.g. LANDSCAPE-WATCHDOG)." })),
+		}),
+		async execute(_id, params) {
+			const v = validateResearchReport({ report: params.report, token: params.token });
+			if (!v.ok) {
+				// #43 denial envelope: WHAT/WHY/NEXT — never a workaround.
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: `⛔ research_report rejected — fix the report and call again.
+WHAT: ${v.problems.map((p, i) => `${i + 1}. ${p}`).join("\n")}
+WHY: the main agent gates your completion on this report's shape; a malformed submission reads as half-done work.
+NEXT: revise the report text (sections per template, token on first line) and call research_report again. For questions mid-research use message_main, not this tool.`,
+						},
+				],
+				details: { accepted: false, problems: v.problems, chars: v.stats.chars, sections: v.stats.sections, tokenVerified: false },
+				};
+			}
+			const digest = researchReportDigest(params.report, params.token);
+			let delivered = "channel unavailable — report validated but NOT delivered";
+			if (myRole && myRole !== MAIN_ROLE && myAgentId) {
+				const parent = myAgentId ? (resolveSelf(sessionIdRef.value).labels["subagent.parent"] ?? null) : null;
+				const mainId = parent ?? (myAgentId ? (resolveSelf(sessionIdRef.value).labels["paseo.parent-agent-id"] ?? null) : null);
+				const endpoint = mainId ? findMcpEndpoint(myAgentId) : null;
+				if (mainId && endpoint) {
+					const msg: ChannelMessage = {
+						id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+						from: myAgentId,
+						fromRole: myRole,
+						text: digest,
+						ts: new Date().toISOString(),
+						kind: "message",
+					};
+					const sent = await sendToMain(endpoint, mainId, msg);
+					delivered = sent.ok ? `delivered to main (${mainId})` : `delivery failed: ${sent.error} — retry research_report, or message_main the report directly`;
+				}
+			}
+			return {
+				content: [
+					{
+						type: "text" as const,
+						text: `Report accepted — ${v.stats.chars} chars, ${v.stats.sections} sections${v.stats.tokenVerified ? `, token verified` : ""}. ${delivered}. You may end your turn now.`,
+					},
+				],
+				details: { accepted: true, problems: [], chars: v.stats.chars, sections: v.stats.sections, tokenVerified: v.stats.tokenVerified },
 			};
 		},
 	});

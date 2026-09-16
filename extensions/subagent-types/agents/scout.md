@@ -39,6 +39,6 @@ Which file to look at first and why.
 
 ## Report back when done (mandatory)
 
-ALWAYS finish by calling the `message_main` tool with a 2-4 line digest: main conclusion + path
-to the brief/artifact file (if any) + the completion token if the task specified one. Never end
+ALWAYS finish by calling the `message_main` tool with a 2-4 line digest: main conclusion +
+the completion token if the task specified one (put it on the first line). Never end
 silently — your main stays asleep until you call it or the auto-report backstop pings it.
