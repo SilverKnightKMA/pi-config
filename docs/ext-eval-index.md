@@ -107,3 +107,14 @@ Never scanned yet (open if needed):
   dedupe recipe). Awaiting user decision on #1A.
 - GitHub repos of amosblomqvist: all 4 tracked repos frozen at registry refs (ls-remote 2026-09-15);
   1 untracked repo seen: `pi-dictate` (pushed 2026-08-31, dictation ext — not ported, no eval needed)
+
+## Landscape sweep #48 — 6 families (2026-09-16, pool #5 + salvage)
+
+| Date | Topic | Brief | Verdict |
+|---|---|---|---|
+| 2026-09-16 | **watchdog/supervisor delta** (vs 09-13 brief) | `learn/landscape-watchdog-2026-09-16.md` (18.9KB) | user chốt theo từng ứng viên trong brief |
+| 2026-09-16 | **subagent channel/messaging** | `learn/landscape-channel-2026-09-16.md` (14.8KB) | user chốt theo từng ứng viên |
+| 2026-09-16 | **observability** (session analytics/cost/journaling) | `learn/landscape-observability-2026-09-16.md` (17.9KB) | user chốt theo từng ứng viên |
+| 2026-09-16 | **OM compaction** (topic-nén/retention) | `learn/landscape-om-compaction-2026-09-16.md` (17.9KB) | user chốt theo từng ứng viên |
+| 2026-09-16 | **interactive/approval-gate** (npm vòng pi-*, lấp gap brief 09-13) | `learn/landscape-interactive-2026-09-16.md` (13.0KB) | **PORT 0 · MƯỢN 5 mảnh** (3-trạng-thái ask/allow/deny + shadow telemetry của pi-verdict; private-data path list của pi-approval-guardian; git-aware destructive check của @spences10; tách approve-scope/authorize-impl + clean-session handoff của @janvitos/pi-plan-build) **· CANDIDATE 1** (@whfzgyx/pi-approval ordered-flow semantics) · BO ~20 (permission-gate subfamily trùng safe_bash hoặc model-in-loop; @ayulab/pi-checkpoint GPL-3.0⚠) — user chốt |
+| 2026-09-15 | web-access delta | `learn/landscape-web-access-2026-09-15.md` | 0 PORT wholesale; 9 MƯỢN / 7 BO / 2 CANDIDATE (đã chốt trước đó) |
