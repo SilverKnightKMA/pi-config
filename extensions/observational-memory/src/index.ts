@@ -10,13 +10,14 @@
  * extension is completely invisible.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { registerCompactCommand } from "./commands/compact.js";
 import { registerConsolidateCommand } from "./commands/consolidate.js";
 import { registerStatusCommand } from "./commands/status.js";
 import { registerStatusTool } from "./commands/status-tool.js";
 import { registerMemoryGuard } from "./guard/memory-guard.js";
+import { sweepRunsCost } from "./spawn/runs.js";
 import { registerCompactionHook } from "./hooks/compaction-hook.js";
 import { registerCompactionTrigger } from "./hooks/compaction-trigger.js";
 import { registerConsolidatorTrigger } from "./hooks/consolidator-trigger.js";
@@ -76,6 +77,31 @@ export default function observationalMemory(pi: ExtensionAPI): void {
 			(readGateEx(branch) === undefined && existsSync(join(ctx.cwd ?? process.cwd(), ".memory")));
 		if (runtime.enabled) runtime.memoryRoot = ensureSessionMemory(ctx);
 		attachIfEnabled(ctx);
+		// #32 GC: fold old .runs/*.cost.json into rollup.json (sums survive in
+		// sumRunCosts; transcript stays the source of truth). Default OFF — set
+		// OM_RUNS_COST_TTL_DAYS to enable (e.g. 7). ≤1 sweep per process per day
+		// via a stamp file, mirroring the snip TTL sweep pattern.
+		try {
+			const ttl = Number(process.env.OM_RUNS_COST_TTL_DAYS ?? 0);
+			if (ttl > 0 && runtime.memoryRoot) {
+				const stamp = join(runtime.memoryRoot, ".runs", ".cost-gc-stamp");
+				const day = new Date().toISOString().slice(0, 10);
+				let last = "";
+				try {
+					last = readFileSync(stamp, "utf8").trim();
+				} catch {
+					/* first run */
+				}
+				if (last !== day) {
+					const folded = sweepRunsCost(runtime.memoryRoot, ttl);
+					mkdirSync(join(runtime.memoryRoot, ".runs"), { recursive: true });
+					writeFileSync(stamp, day, "utf8");
+					if (folded > 0) ctx.log?.(`[om] rolled ${folded} old cost files into .runs/rollup.json (TTL ${ttl}d)`);
+				}
+			}
+		} catch {
+			// GC is best-effort — never block session start
+		}
 		runtime.refreshFooterGauges(branch, ctx.getContextUsage?.()?.tokens ?? null);
 		runtime.refreshCost(ctx.sessionManager.getEntries() as Entry[]);
 		// v2.1: seed the panel immediately on respawn — no waiting for the first

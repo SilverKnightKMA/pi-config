@@ -1,102 +1,110 @@
-/**
- * GC of .runs/ artifacts (pi v1.2.7):
- *  - unlinkCommittedResult: result.json is deleted ONLY when every observation content is
- *    provably in the ledger fold — otherwise kept for the sweep.
- *  - sweepOldResults: age-based safety net for orphans (crash between commit and unlink)
- *    and pre-GC legacy files. cost.json is NEVER touched.
- */
-import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { describe, expect, it } from "bun:test";
+
 import {
-	runCostPath,
-	runResultPath,
-	runsDir,
-	sweepOldResults,
-	unlinkCommittedResult,
-	writeObserverResult,
+	emptyRollup,
+	foldIntoRollup,
+	rollupPath,
+	sumRunCosts,
+	sweepRunsCost,
 	writeWorkerCost,
+	runCostPath,
 } from "../src/spawn/runs.js";
 
-const tmp = join(import.meta.dir, ".tmp-runs-gc");
+const DAY = 24 * 60 * 60 * 1000;
 
-function setup() {
-	rmSync(tmp, { recursive: true, force: true });
-	mkdirSync(runsDir(tmp), { recursive: true });
+function tmpRoot(): string {
+	return mkdtempSync(join(tmpdir(), "om-runs-gc-"));
 }
 
-afterEach(() => rmSync(tmp, { recursive: true, force: true }));
-
-describe("unlinkCommittedResult — verify-then-delete", () => {
-	test("all contents in ledger → file deleted", () => {
-		setup();
-		writeObserverResult(runResultPath(tmp, "obs-1"), {
-			observations: [
-				{ timestamp: "2026-09-05 10:19", content: "alpha" },
-				{ timestamp: "2026-09-05 10:20", content: "beta" },
-			],
-		});
-		const ok = unlinkCommittedResult(tmp, "obs-1", new Set(["alpha", "beta"]));
-		expect(ok).toBe(true);
+describe("#32 .runs cost GC — rollup keeps sums identical", () => {
+	it("foldIntoRollup splits by role and counts files", () => {
+		let r = emptyRollup();
+		r = foldIntoRollup(r, { costUsd: 0.001, role: "observer" }, "2026-09-16T00:00:00Z");
+		r = foldIntoRollup(r, { costUsd: 0.08, role: "consolidator" }, "2026-09-16T00:00:00Z");
+		r = foldIntoRollup(r, { costUsd: 0.002 }, "2026-09-16T00:00:01Z"); // legacy no-role
+		expect(r.total).toEqual({ costUsd: 0.083, runs: 3 });
+		expect(r.observer).toEqual({ costUsd: 0.001, runs: 1 });
+		expect(r.consolidator).toEqual({ costUsd: 0.08, runs: 1 });
+		expect(r.files).toBe(3);
+		expect(r.rolledUpAt).toBe("2026-09-16T00:00:01Z");
 	});
 
-	test("one observation missing from ledger → file KEPT", () => {
-		setup();
-		writeObserverResult(runResultPath(tmp, "obs-2"), {
-			observations: [
-				{ timestamp: "2026-09-05 10:19", content: "alpha" },
-				{ timestamp: "2026-09-05 10:20", content: "UNCOMMITTED" },
-			],
-		});
-		const ok = unlinkCommittedResult(tmp, "obs-2", new Set(["alpha"]));
-		expect(ok).toBe(false);
+	it("sweep folds old files into rollup; sumRunCosts totals are IDENTICAL before/after", () => {
+		const root = tmpRoot();
+		try {
+			const now = Date.now();
+			// 2 old (9 days) + 1 fresh
+			writeWorkerCost(runCostPath(root, "obs-1"), { costUsd: 0.0012, role: "observer" });
+			writeWorkerCost(runCostPath(root, "cons-1"), { costUsd: 0.09, role: "consolidator" });
+			writeWorkerCost(runCostPath(root, "obs-2"), { costUsd: 0.0013, role: "observer" });
+			utimesSync(runCostPath(root, "obs-1"), new Date(now - 9 * DAY), new Date(now - 9 * DAY));
+			utimesSync(runCostPath(root, "cons-1"), new Date(now - 9 * DAY), new Date(now - 9 * DAY));
+
+			const before = sumRunCosts(root);
+			const folded = sweepRunsCost(root, 7, now);
+			const after = sumRunCosts(root);
+
+			expect(folded).toBe(2);
+			expect(after.total.costUsd).toBeCloseTo(before.total.costUsd, 10);
+			expect(after.total.runs).toBe(before.total.runs);
+			expect(after.observer.costUsd).toBeCloseTo(before.observer.costUsd, 10);
+			expect(after.consolidator.costUsd).toBeCloseTo(before.consolidator.costUsd, 10);
+			// rollup persisted with the folded numbers
+			const rollup = JSON.parse(readFileSync(rollupPath(root), "utf8")) as { files: number; total: { runs: number } };
+			expect(rollup.files).toBe(2);
+			expect(rollup.total.runs).toBe(2);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 
-	test("empty observations array → deleted (nothing to lose)", () => {
-		setup();
-		writeObserverResult(runResultPath(tmp, "obs-3"), { observations: [] });
-		expect(unlinkCommittedResult(tmp, "obs-3", new Set())).toBe(true);
+	it("ttl<=0 disables the sweep; missing dir is a no-op", () => {
+		const root = tmpRoot();
+		try {
+			const now = Date.now();
+			writeWorkerCost(runCostPath(root, "obs-1"), { costUsd: 0.001, role: "observer" });
+			utimesSync(runCostPath(root, "obs-1"), new Date(now - 30 * DAY), new Date(now - 30 * DAY));
+			expect(sweepRunsCost(root, 0, now)).toBe(0);
+			expect(sweepRunsCost("", 7, now)).toBe(0);
+			const missing = join(root, "nope");
+			expect(sweepRunsCost(missing, 7, now)).toBe(0);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 
-	test("already-absent file → true (idempotent)", () => {
-		setup();
-		expect(unlinkCommittedResult(tmp, "obs-404", new Set())).toBe(true);
-	});
-});
-
-describe("sweepOldResults — age-based safety net", () => {
-	test("removes only result.json older than cutoff; keeps recent + cost.json", () => {
-		setup();
-		const old = runResultPath(tmp, "obs-old");
-		const recent = runResultPath(tmp, "obs-recent");
-		writeObserverResult(old, { observations: [{ timestamp: "2026-08-30 10:19", content: "legacy" }] });
-		writeObserverResult(recent, { observations: [{ timestamp: "2026-09-05 10:19", content: "fresh" }] });
-		writeWorkerCost(runCostPath(tmp, "obs-old"), { costUsd: 0.01, role: "observer" });
-
-		const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
-		utimesSync(old, tenDaysAgo, tenDaysAgo);
-
-		const removed = sweepOldResults(tmp, 7);
-		expect(removed).toBe(1);
-		// old result gone, but its cost.json survives forever (durable cost truth)
-		expect(existsSync(old)).toBe(false);
-		expect(existsSync(runCostPath(tmp, "obs-old"))).toBe(true);
-		expect(existsSync(recent)).toBe(true);
+	it("malformed old cost files are deleted without folding (rollup stays clean)", () => {
+		const root = tmpRoot();
+		try {
+			const now = Date.now();
+			const bad = runCostPath(root, "obs-bad");
+			mkdirSync(join(root, ".runs"), { recursive: true });
+			writeFileSync(bad, "{not json");
+			utimesSync(bad, new Date(now - 9 * DAY), new Date(now - 9 * DAY));
+			const folded = sweepRunsCost(root, 7, now);
+			expect(folded).toBe(0);
+			expect(sumRunCosts(root).total.runs).toBe(0);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 
-	test("maxAgeDays <= 0 disables the sweep", () => {
-		setup();
-		const stale = runResultPath(tmp, "obs-stale");
-		writeObserverResult(stale, { observations: [] });
-		const far = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
-		utimesSync(stale, far, far);
-		expect(sweepOldResults(tmp, 0)).toBe(0);
-		expect(existsSync(stale)).toBe(true);
-	});
-
-	test("missing .runs dir → 0, no throw", () => {
-		setup();
-		rmSync(runsDir(tmp), { recursive: true, force: true });
-		expect(sweepOldResults(tmp, 7)).toBe(0);
+	it("rollup roundtrips through sumRunCosts after a restart-shaped reload", () => {
+		const root = tmpRoot();
+		try {
+			const now = Date.now();
+			writeWorkerCost(runCostPath(root, "cons-1"), { costUsd: 0.5, role: "consolidator" });
+			utimesSync(runCostPath(root, "cons-1"), new Date(now - 9 * DAY), new Date(now - 9 * DAY));
+			sweepRunsCost(root, 7, now);
+			// a NEW run lands after the GC
+			writeWorkerCost(runCostPath(root, "cons-2"), { costUsd: 0.2, role: "consolidator" });
+			const totals = sumRunCosts(root);
+			expect(totals.consolidator).toEqual({ costUsd: 0.7, runs: 2 });
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 });

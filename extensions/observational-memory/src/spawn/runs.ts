@@ -75,18 +75,92 @@ export interface RunCostTotals {
 	consolidator: { costUsd: number; runs: number };
 }
 
-/**
- * Durable session-scoped cost truth: sum every .runs/*.cost.json under the
- * session memory root. The ledger's om.cost entries are a process-lifetime
- * mirror (lost on restart — the session jsonl files never persist them), so
- * this is what survives respawns and keeps "session" meaning "chat session".
- */
-export function sumRunCosts(root: string): RunCostTotals {
-	const totals: RunCostTotals = {
+/** Totals of GC'd cost files, durable across sweeps. Shape mirrors RunCostTotals + bookkeeping. */
+export interface RunsRollup {
+	v: 1;
+	total: { costUsd: number; runs: number };
+	observer: { costUsd: number; runs: number };
+	consolidator: { costUsd: number; runs: number };
+	/** Raw cost files folded in so far. */
+	files: number;
+	rolledUpAt: string;
+}
+
+export function rollupPath(root: string): string {
+	return join(runsDir(root), "rollup.json");
+}
+
+function readRollup(root: string): RunsRollup | null {
+	try {
+		const raw = JSON.parse(readFileSync(rollupPath(root), "utf8")) as unknown;
+		if (!raw || typeof raw !== "object") return null;
+		const r = raw as Record<string, unknown>;
+		const num = (x: unknown) => (typeof x === "number" && x >= 0 ? x : 0);
+		const pair = (p: unknown): { costUsd: number; runs: number } => ({
+			costUsd: num((p as Record<string, unknown> | undefined)?.costUsd),
+			runs: num((p as Record<string, unknown> | undefined)?.runs),
+		});
+		return {
+			v: 1,
+			total: pair(r.total),
+			observer: pair(r.observer),
+			consolidator: pair(r.consolidator),
+			files: num(r.files),
+			rolledUpAt: typeof r.rolledUpAt === "string" ? r.rolledUpAt : "",
+		};
+	} catch {
+		return null;
+	}
+}
+
+/** Fold one cost file's totals into a rollup. Pure — exported for tests. */
+export function foldIntoRollup(rollup: RunsRollup, cost: WorkerCostResult, at: string): RunsRollup {
+	const next: RunsRollup = {
+		...rollup,
+		total: { costUsd: rollup.total.costUsd + cost.costUsd, runs: rollup.total.runs + 1 },
+		observer: { ...rollup.observer },
+		consolidator: { ...rollup.consolidator },
+		files: rollup.files + 1,
+		rolledUpAt: at,
+	};
+	if (cost.role === "observer") next.observer = { costUsd: rollup.observer.costUsd + cost.costUsd, runs: rollup.observer.runs + 1 };
+	else if (cost.role === "consolidator") next.consolidator = { costUsd: rollup.consolidator.costUsd + cost.costUsd, runs: rollup.consolidator.runs + 1 };
+	return next;
+}
+
+/** Empty rollup seed. */
+export function emptyRollup(): RunsRollup {
+	return {
+		v: 1,
 		total: { costUsd: 0, runs: 0 },
 		observer: { costUsd: 0, runs: 0 },
 		consolidator: { costUsd: 0, runs: 0 },
+		files: 0,
+		rolledUpAt: "",
 	};
+}
+
+/**
+ * Durable session-scoped cost truth: the rollup (totals of GC'd files) PLUS every
+ * remaining .runs/*.cost.json under the session memory root. The ledger's om.cost
+ * entries are a process-lifetime mirror (lost on restart — the session jsonl files
+ * never persist them), so this is what survives respawns and keeps "session"
+ * meaning "chat session". #32: raw files are GC-able once om_worker_cost.py --verify
+ * says the transcript (source of truth) covers them; the rollup keeps the sums.
+ */
+export function sumRunCosts(root: string): RunCostTotals {
+	const rollup = readRollup(root);
+	const totals: RunCostTotals = rollup
+		? {
+				total: { ...rollup.total },
+				observer: { ...rollup.observer },
+				consolidator: { ...rollup.consolidator },
+			}
+		: {
+				total: { costUsd: 0, runs: 0 },
+				observer: { costUsd: 0, runs: 0 },
+				consolidator: { costUsd: 0, runs: 0 },
+		};
 	if (!root) return totals;
 	let files: string[];
 	try {
@@ -195,4 +269,43 @@ export function sweepOldResults(root: string, maxAgeDays = RESULT_SWEEP_DAYS): n
 		}
 	}
 	return removed;
+}
+
+/**
+ * #32 GC: fold cost files older than `ttlDays` into .runs/rollup.json, then delete
+ * them. sumRunCosts() keeps returning the SAME totals (rollup + survivors). The
+ * transcript remains the source of truth (om_worker_cost.py --verify is the pre-GC
+ * gate); the rollup only preserves the om-status sums. Returns how many files were
+ * folded — 0 when ttl <= 0 (off), the dir is missing, or nothing is old enough.
+ */
+export function sweepRunsCost(root: string, ttlDays: number, now: number = Date.now()): number {
+	if (!root || ttlDays <= 0) return 0;
+	let files: string[];
+	try {
+		files = readdirSync(runsDir(root)).filter((f) => f.endsWith(".cost.json"));
+	} catch {
+		return 0;
+	}
+	const cutoff = now - ttlDays * 24 * 60 * 60 * 1000;
+	const at = new Date(now).toISOString();
+	let rollup = readRollup(root) ?? emptyRollup();
+	let folded = 0;
+	for (const f of files) {
+		const path = join(runsDir(root), f);
+		try {
+			if (statSync(path).mtimeMs >= cutoff) continue;
+			const cost = readWorkerCost(path);
+			if (!cost) {
+				rmSync(path, { force: true }); // malformed + old — nothing to fold
+				continue;
+			}
+			rollup = foldIntoRollup(rollup, cost, at);
+			folded += 1;
+			rmSync(path, { force: true });
+		} catch {
+			// raced away — fine
+		}
+	}
+	if (folded > 0 || rollup.files > 0) atomicWrite(rollupPath(root), JSON.stringify(rollup, null, "\t"));
+	return folded;
 }
