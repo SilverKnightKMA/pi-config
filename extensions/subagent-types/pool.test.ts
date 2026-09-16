@@ -20,6 +20,11 @@ import {
 	unfinished,
 	refreshPoolStatus,
 	poolNotice,
+	validateTaskInput,
+	formatTaskForChild,
+	demandsSubmission,
+	buildReminderNudge,
+	contractErrorNote,
 } from "./pool";
 
 const roles = new Map<string, { tools: readonly string[] }>([
@@ -312,5 +317,155 @@ describe("standing footer (#58)", () => {
 		const once = withStandingFooter("task");
 		expect(withStandingFooter(once)).toBe(once);
 		expect(once.match(/Standing rule:/g)).toHaveLength(1);
+	});
+});
+
+// ── v1.4.89 (#102): structured task schema — hard validator + formatter ──
+
+describe("validateTaskInput (#102)", () => {
+	test("plain string passes (legacy, structured=false)", () => {
+		const r = validateTaskInput("Find the failing test", "task");
+		expect(r.ok).toBe(true);
+		if (r.ok) expect(r.structured).toBe(false);
+	});
+	test("empty string rejected with actionable text", () => {
+		const r = validateTaskInput("   ", "task");
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.text).toContain("must not be empty");
+	});
+	test("full object passes with structured=true", () => {
+		const r = validateTaskInput({ goal: "Ship the fix", context: ["repo at /x"], instructions: "Use research_report" }, "task");
+		expect(r.ok).toBe(true);
+		if (r.ok) {
+			expect(r.structured).toBe(true);
+			expect(r.task).toEqual({ goal: "Ship the fix", context: ["repo at /x"], instructions: "Use research_report" });
+		}
+	});
+	test("missing goal rejected — names the field", () => {
+		const r = validateTaskInput({ context: ["x"] }, "items[0].task");
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.text).toContain("items[0].task.goal is required");
+	});
+	test("unknown field rejected — lists allowed fields (hard validator)", () => {
+		const r = validateTaskInput({ goal: "g", prio: 1 }, "task");
+		expect(r.ok).toBe(false);
+		if (!r.ok) {
+			expect(r.text).toContain('"prio"');
+			expect(r.text).toContain("goal, context, instructions");
+		}
+	});
+	test("empty context array rejected (omit instead)", () => {
+		const r = validateTaskInput({ goal: "g", context: [] }, "task");
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.text).toContain("non-empty array");
+	});
+	test("non-string instructions rejected", () => {
+		const r = validateTaskInput({ goal: "g", instructions: 5 }, "task");
+		expect(r.ok).toBe(false);
+	});
+	test("number input rejected with the expected shape", () => {
+		const r = validateTaskInput(42, "task");
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.text).toContain("{ goal, context?, instructions? }");
+	});
+});
+
+describe("formatTaskForChild (#102)", () => {
+	test("string passes through unchanged", () => {
+		expect(formatTaskForChild("do the thing")).toBe("do the thing");
+	});
+	test("object renders Goal/Context/Instructions in order, context as bullets", () => {
+		const out = formatTaskForChild({ goal: "G", context: ["c1", "c2"], instructions: "I" });
+		expect(out).toBe("## Goal\nG\n\n## Context\n- c1\n- c2\n\n## Instructions\nI");
+	});
+	test("missing sections omitted cleanly", () => {
+		const out = formatTaskForChild({ goal: "G" });
+		expect(out).toBe("## Goal\nG");
+	});
+});
+
+describe("parsePoolSpec accepts structured tasks (#102)", () => {
+	test("structured item passes and spec.task carries the rendered markdown", () => {
+		const r = parsePoolSpec(
+				{ items: [{ role: "scout", task: { goal: "Map the module", context: ["src/a.ts"], instructions: "Report via research_report" } }, { role: "scout", task: "plain two" }], concurrency: 2 },
+				roles,
+			);
+		expect(r.ok).toBe(true);
+		if (r.ok) {
+			expect(r.items[0].task).toContain("## Goal\nMap the module");
+			expect(r.items[0].task).toContain("- src/a.ts");
+			expect(r.items[1].task).toBe("plain two");
+		}
+	});
+	test("malformed structured item rejected with the item index", () => {
+		const r = parsePoolSpec(
+				{ items: [{ role: "scout", task: { context: ["x"] } }, { role: "scout", task: "ok" }] },
+				roles,
+			);
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.text).toContain("items[0].task.goal is required");
+	});
+});
+
+// ── v1.4.89 (#102): reminder-once — deterministic contract detection ──
+
+describe("demandsSubmission (#102)", () => {
+	test("expect gate demands a submission", () => {
+		expect(demandsSubmission("anything", "TOKEN-X")).toBe(true);
+	});
+	test("task naming research_report or message_main demands one", () => {
+		expect(demandsSubmission("Submit via research_report with token T")).toBe(true);
+		expect(demandsSubmission("Reply using message_main")).toBe(true);
+	});
+	test("plain task with no channel and no expect does not", () => {
+		expect(demandsSubmission("Read the file and summarize")).toBe(false);
+	});
+});
+
+describe("buildReminderNudge (#102)", () => {
+	test("names research_report + the token when the task used it", () => {
+		const n = buildReminderNudge("Submit via research_report", "TOKEN-X");
+		expect(n).toContain("[reminder-once]");
+		expect(n).toContain("research_report");
+		expect(n).toContain('"TOKEN-X"');
+		expect(n).toContain("only reminder");
+	});
+	test("falls back to message_main when only the gate expects a submission", () => {
+		const n = buildReminderNudge("Do the research", "TOK");
+		expect(n).toContain("message_main");
+	});
+});
+
+describe("finishItem note (#102)", () => {
+	test("note prefixes a gate_failed error (contract-error visible in aggregate)", () => {
+		const st = initPool("p1", [{ key: "1", role: "scout", task: "t", expect: "TOKEN" }], 2, "2026-09-17T00:00:00Z");
+		markRunning(st, "1", "child-1");
+		finishItem(st, "1", { status: "done", report: "no token here", note: contractErrorNote("2026-09-17T01:00:00Z") });
+		expect(st.items[0].status).toBe("gate_failed");
+		expect(st.items[0].error).toContain("[contract-error]");
+		expect(st.items[0].error).toContain("1 reminder sent 2026-09-17T01:00:00Z");
+		expect(st.items[0].error).toContain("does not contain the declared substring");
+	});
+	test("note prefixes a done report when there is no gate", () => {
+		const st = initPool("p1", [{ key: "1", role: "scout", task: "t" }], 2);
+		markRunning(st, "1", "child-1");
+		finishItem(st, "1", { status: "done", report: "digest text", note: contractErrorNote() });
+		expect(st.items[0].status).toBe("done");
+		expect(st.items[0].report).toContain("[contract-error]");
+		expect(st.items[0].report).toContain("digest text");
+	});
+});
+
+describe("PoolItem.nudged survives the ledger round-trip (#102)", () => {
+	test("nudged/nudgedAt persist on the item and replay back", () => {
+		const st = initPool("p2", [{ key: "1", role: "scout", task: "t" }], 2);
+		markRunning(st, "1", "child-9");
+		st.items[0].nudged = true;
+		st.items[0].nudgedAt = "2026-09-17T02:00:00Z";
+		const replayed = replayPools([{ type: "custom", customType: "pool-state", data: st }]);
+		const p = replayed.get("p2");
+		expect(p).toBeDefined();
+		expect(p?.items[0].nudged).toBe(true);
+		expect(p?.items[0].nudgedAt).toBe("2026-09-17T02:00:00Z");
 	});
 });

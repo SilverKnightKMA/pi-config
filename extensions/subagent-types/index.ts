@@ -70,7 +70,11 @@ import {
 	POOL_MAX_CONCURRENCY,
 	POOL_STATE,
 	aggregateReport,
+	buildReminderNudge,
+	contractErrorNote,
+	demandsSubmission,
 	finishItem,
+	formatTaskForChild,
 	initPool,
 	poolNotice,
 	withStandingFooter,
@@ -83,6 +87,7 @@ import {
 	timeoutRunning,
 	unfinished,
 	readoptable,
+	validateTaskInput,
 	POOL_LABEL,
 	detachReply,
 	type PoolState,
@@ -455,11 +460,43 @@ export function thinkingValid(level: string | undefined, providerFamily: string)
 
 const SpawnParams = Type.Object({
 	role: Type.String({ description: "Role id from the agents/ definitions (scout, researcher, worker, mermaid-maker, svg-maker)" }),
-	task: Type.String({ description: "Self-contained task description — the child has no other context." }),
+	// v1.4.89 (#102): structured form { goal, context?, instructions? } — hard
+	// validated (unknown fields rejected), rendered as Goal/Context/Instructions
+	// markdown for the child. Plain strings stay accepted (with a one-line note).
+	task: Type.Union(
+		[
+			Type.String({ description: "Plain self-contained task description — the child has no other context." }),
+			Type.Object(
+				{
+					goal: Type.String({ description: "Required — the OUTCOME the child must deliver, one sentence, result-shaped." }),
+					context: Type.Optional(Type.Array(Type.String(), { description: "Facts/pointers the child cannot discover itself (paths, ids, decisions already made)." })),
+					instructions: Type.Optional(Type.String({ description: "How to work: order of steps, constraints, and the submission channel (research_report / message_main)." })),
+				},
+				{ description: "Structured form (preferred) — validated, rendered as Goal/Context/Instructions." },
+			),
+		],
+		{ description: "Self-contained task — the child sees nothing else. Preferred: { goal, context?, instructions? }; plain string still accepted." },
+	),
 	name: Type.Optional(Type.String({ description: "Optional display title for the child agent." })),
 	model: Type.Optional(Type.String({ description: "Optional model override for this spawn (model id from paseo_list_models). Ignored when the role pins a model in its .md." })),
 	thinking: Type.Optional(Type.String({ description: "Thinking level for this spawn when the role does not pin one: off | minimal | low | medium | high | xhigh | max." })),
 });
+
+/** v1.4.89 (#102): normalize a raw task input into the child-facing text.
+ *  Hard validator — malformed objects are rejected with actionable text,
+ *  never silently coerced; plain strings pass with a migration note. */
+function normalizeTaskInput(v: unknown, where: string):
+	| { ok: true; text: string; structured: boolean; legacyNote: string }
+	| { ok: false; text: string } {
+	const r = validateTaskInput(v, where);
+	if (!r.ok) return r;
+	return {
+		ok: true,
+		text: formatTaskForChild(r.task),
+		structured: r.structured,
+		legacyNote: r.structured ? "" : "note: task accepted as a plain string — the structured form { goal, context, instructions } is preferred for clearer delegation.",
+	};
+}
 
 interface SpawnDetails {
 	spawnable?: string[];
@@ -586,7 +623,7 @@ async function kickOutbound(): Promise<void> {
 	// delivery renders as a user_message the app + plugins can transform.
 	pi.on("turn_end", () => {
 		void kickOutbound();
-		const msgs = flushInbound();
+		const msgs = flushInbound().map(annotateNudged);
 		if (msgs.length === 0) return;
 		// steer keeps the report inside the CURRENT run (flushed at the next
 		// turn boundary) without starting a new one.
@@ -595,7 +632,7 @@ async function kickOutbound(): Promise<void> {
 
 	pi.on("agent_settled", () => {
 		void kickOutbound();
-		const msgs = flushInbound();
+		const msgs = flushInbound().map(annotateNudged);
 		if (msgs.length > 0) {
 			// settled + pending report: deliver as a queued prompt so the agent
 			// wakes to process the payload (beats the auto-ping text-only ping;
@@ -888,7 +925,9 @@ async function createChildAgent(
 			const capped = await capRejection(endpoint);
 			if (capped) return { content: [{ type: "text" as const, text: capped }], details: { role: params.role } };
 
-			const spawned = await createChildAgent(params, gate.def, cfg, myAgentId, endpoint);
+			const norm = normalizeTaskInput(params.task, "task");
+			if (!norm.ok) return { content: [{ type: "text" as const, text: norm.text }], details: { role: params.role } };
+			const spawned = await createChildAgent({ ...params, task: norm.text }, gate.def, cfg, myAgentId, endpoint);
 			if (!spawned.ok) {
 				return { content: [{ type: "text" as const, text: `Spawn failed: ${spawned.error}` }], details: { role: params.role, model: cfg.modelId, thinking: cfg.thinking } };
 			}
@@ -896,10 +935,10 @@ async function createChildAgent(
 				content: [
 					{
 						type: "text" as const,
-						text: `Spawned ${params.role} agent ${spawned.agentId} (status: ${spawned.status ?? "running"}). Its result arrives via notification; poll with paseo_get_agent_activity("${spawned.agentId}") when needed.`,
-				},
+						text: `Spawned ${params.role} agent ${spawned.agentId} (status: ${spawned.status ?? "running"}). Its result arrives via notification; poll with paseo_get_agent_activity("${spawned.agentId}") when needed.${norm.legacyNote ? `\n${norm.legacyNote}` : ""}`,
+					},
 				],
-				details: { role: params.role, model: cfg.modelId, thinking: cfg.thinking, agentId: spawned.agentId },
+				details: { role: params.role, model: cfg.modelId, thinking: cfg.thinking, agentId: spawned.agentId, structuredTask: norm.structured },
 			};
 		},
 	});
@@ -916,6 +955,52 @@ async function createChildAgent(
 		return new Promise((r) => setTimeout(r, ms));
 	}
 
+	// ── v1.4.89 (#102) reminder-once bookkeeping ──
+	/** Children this parent already nudged once (single-spawn path; pool
+	 *  nudges live on PoolItem.nudged). Capped FIFO. A second silent settle
+	 *  after the nudge is annotated as a contract-error by annotateNudged on
+	 *  the inbound auto-report. */
+	const nudgedOnce = new Set<string>();
+
+	function rememberNudged(childId: string): void {
+		nudgedOnce.add(childId);
+		if (nudgedOnce.size > 64) nudgedOnce.delete(nudgedOnce.values().next().value as string);
+	}
+
+	/** Queue the one reminder to a settled child; flush the kick ONLY when the
+	 *  caller is not mid-tool-stream (the detached pool driver — same context
+	 *  as refillPool's direct create calls). Blocking paths defer to the
+	 *  parent's turn_end kickOutbound: a send_agent_prompt fired while the
+	 *  parent is streaming is the abort class (2026-09-01). */
+	async function sendReminderNudge(endpoint: McpEndpoint, childId: string, task: string, expect: string | undefined, flushNow: boolean): Promise<void> {
+		const msg: ChannelMessage = {
+			id: `${Date.now()}-rm`,
+			from: myAgentId ?? "?",
+			fromRole: myRole ?? "main",
+			text: buildReminderNudge(task, expect),
+			ts: new Date().toISOString(),
+			kind: "message",
+		};
+		pushToQueue(childId, msg);
+		markKick(childId, false);
+		if (flushNow) {
+			try {
+				await flushKicks(endpoint, { mainAgentId: myAgentId ?? undefined });
+			} catch {
+				// the kick stays pending — the next turn_end retries it
+			}
+		}
+	}
+
+	/** #102: an auto-report backstop from a child already nudged once carries
+	 *  the contract-error verdict — the model reads it as the final state. */
+	function annotateNudged(m: ChannelMessage): ChannelMessage {
+		if (nudgedOnce.has(m.from) && isAutoReport(m)) {
+			return { ...m, text: `${m.text}\n${contractErrorNote()}` };
+		}
+		return m;
+	}
+
 	pi.registerTool<typeof SpawnParams, SpawnDetails>({
 		name: "spawn_paseo_subagent",
 		label: "spawn_paseo_subagent",
@@ -925,8 +1010,8 @@ async function createChildAgent(
 			"Use spawn_paseo_subagent when you need the child's result to continue your own work — it blocks and returns the report inline.",
 		promptGuidelines: [
 			"Use spawn_paseo_subagent when the next step needs the child's output; for background work plain spawn_subagent is better.",
-			"task must be self-contained: the child sees no prior conversation.",
-			`Waits up to ${Math.round(SUBAGENT_WAIT_MS / 60000)} min (SUBAGENT_WAIT_MS); on timeout the child keeps running and the result still arrives via the normal channel.`,
+			"task must be self-contained: the child sees no prior conversation. Prefer the structured object { goal, context?, instructions? }; plain strings still work.",
+			`Waits up to ${Math.round(SUBAGENT_WAIT_MS / 60000)} min (SUBAGENT_WAIT_MS); on timeout the child keeps running and the result still arrives via the normal channel. Reminder-once: a child that finishes without submitting gets exactly one nudge when the task demanded a submission.`,
 		],
 		parameters: SpawnParams,
 		async execute(_id, params, _signal, _onUpdate, ctx) {
@@ -943,7 +1028,9 @@ async function createChildAgent(
 			const capped = await capRejection(endpoint);
 			if (capped) return { content: [{ type: "text" as const, text: capped }], details: { role: params.role } };
 
-			const spawned = await createChildAgent(params, gate.def, cfg, myAgentId, endpoint);
+			const norm = normalizeTaskInput(params.task, "task");
+			if (!norm.ok) return { content: [{ type: "text" as const, text: norm.text }], details: { role: params.role } };
+			const spawned = await createChildAgent({ ...params, task: norm.text }, gate.def, cfg, myAgentId, endpoint);
 			if (!spawned.ok) {
 				return { content: [{ type: "text" as const, text: `Spawn failed: ${spawned.error}` }], details: { role: params.role, model: cfg.modelId, thinking: cfg.thinking } };
 			}
@@ -980,16 +1067,32 @@ async function createChildAgent(
 			const real = collected.filter((m) => !isAutoReport(m));
 			if (real.length > 0) {
 				return {
-					content: [{ type: "text" as const, text: real.map((m) => m.text).join("\n\n") }],
-					details: { role: params.role, model: cfg.modelId, thinking: cfg.thinking, agentId: childId },
+					content: [{ type: "text" as const, text: real.map((m) => m.text).join("\n\n") + (norm.legacyNote ? `\n${norm.legacyNote}` : "") }],
+					details: { role: params.role, model: cfg.modelId, thinking: cfg.thinking, agentId: childId, structuredTask: norm.structured },
+				};
+			}
+			// v1.4.89 (#102) reminder-once: the child finished WITHOUT submitting.
+			// When the task demanded a submission and this child was never nudged,
+			// queue exactly ONE nudge — it fires at this turn's end (a mid-stream
+			// send_agent_prompt is the abort class, 2026-09-01). Return now; the
+			// report (if any) arrives as a message on the parent's next turn.
+			if (finished && !nudgedOnce.has(childId) && demandsSubmission(norm.text)) {
+				rememberNudged(childId);
+				await sendReminderNudge(endpoint, childId, norm.text, undefined, false);
+				const summary = await getActivitySummary(endpoint, childId);
+				return {
+					content: [{ type: "text" as const, text: `[reminder-once queued] Child ${params.role} agent ${childId} finished WITHOUT submitting its report — exactly one nudge has been sent; it fires when this call ends. The child's report (if any) arrives as a message on your next turn. Curated activity so far:\n${summary}` }],
+					details: { role: params.role, model: cfg.modelId, thinking: cfg.thinking, agentId: childId, reminderQueued: true },
 				};
 			}
 			if (finished) {
 				// Settled without a real payload (auto-ping only) — pull the curated
-				// activity digest as the report.
+				// activity digest as the report. A child already nudged once that
+				// still stayed silent gets the contract-error verdict inline.
 				const summary = await getActivitySummary(endpoint, childId);
+				const contract = nudgedOnce.has(childId) ? `${contractErrorNote()}\n\n` : "";
 				return {
-					content: [{ type: "text" as const, text: `(child finished without message_main — curated activity follows)\n${summary}` }],
+					content: [{ type: "text" as const, text: `${contract}(child finished without message_main — curated activity follows)\n${summary}` }],
 					details: { role: params.role, model: cfg.modelId, thinking: cfg.thinking, agentId: childId },
 				};
 			}
@@ -1251,7 +1354,7 @@ NEXT: revise the report text (sections per template, token on first line) and ca
 		endpoint: McpEndpoint,
 		childId: string,
 		deadline: number,
-	): Promise<{ finished: boolean; report: string; stalled?: string }> {
+	): Promise<{ finished: boolean; report: string; stalled?: string; submitted: boolean }> {
 		const collected: ChannelMessage[] = [];
 		let closedTicks = 0;
 		const loopCfg = loopGuardConfigFromEnv();
@@ -1273,6 +1376,7 @@ NEXT: revise the report text (sections per template, token on first line) and ca
 							return {
 								finished: true,
 								report: "",
+								submitted: false,
 								stalled: `[stopped: no progress] child ${childId} ${v.reason} — aborted by loop-guard (${how})`,
 							};
 						}
@@ -1286,7 +1390,7 @@ NEXT: revise the report text (sections per template, token on first line) and ca
 		}
 		collected.push(...takeMessagesFrom(childId, myAgentId ?? ""));
 		const real = collected.filter((m) => !isAutoReport(m));
-		if (real.length > 0) return { finished: true, report: real.map((m) => m.text).join("\n\n") };
+		if (real.length > 0) return { finished: true, report: real.map((m) => m.text).join("\n\n"), submitted: true };
 		// Pool children answer in-session (auto-report only) — the 2026-09-10
 		// E2E caught this: a settled child with no channel message was reported
 		// "still running" forever because finished depended on message_main.
@@ -1294,9 +1398,9 @@ NEXT: revise the report text (sections per template, token on first line) and ca
 		// child's own activity, which the expect gate needs anyway.
 		const settled = await getAgentStatus(endpoint, childId);
 		if (settled.ok && !isBusy(settled.status)) {
-			return { finished: true, report: await getActivitySummary(endpoint, childId, 12) };
+			return { finished: true, report: await getActivitySummary(endpoint, childId, 12), submitted: false };
 		}
-		return { finished: false, report: "" };
+		return { finished: false, report: "", submitted: false };
 	}
 
 	/** Spawn pending items up to the pool's concurrency. Shared by the
@@ -1334,20 +1438,44 @@ NEXT: revise the report text (sections per template, token on first line) and ca
 		}
 	}
 
-	/** Await the running children once (bounded slice), drain their reports. */
-	async function awaitRunning(endpoint: McpEndpoint, state: PoolState, sliceMs: number): Promise<void> {
+	/** Await the running children once (bounded slice), drain their reports.
+	 *  v1.4.89 (#102) reminder-once: a child that settles WITHOUT submitting,
+	 *  on a task that demanded a submission, gets exactly one nudge and stays
+	 *  `running` for one more slice; a second silent settle finishes the item
+	 *  with a [contract-error] note. Deterministic, model-free. */
+	async function awaitRunning(endpoint: McpEndpoint, state: PoolState, sliceMs: number, opts: { flushNudge?: boolean } = {}): Promise<void> {
 		const running = state.items.filter((i) => i.status === "running");
 		if (running.length === 0) return;
 		const results = await Promise.all(running.map((i) => awaitChild(endpoint, i.agentId!, Date.now() + sliceMs)));
-		running.forEach((item, idx) => {
-			if (results[idx].finished) {
-				if (results[idx].stalled) finishItem(state, item.key, { status: "failed", error: results[idx].stalled });
-				else finishItem(state, item.key, { status: "done", report: results[idx].report || getActivitySummarySafe(item.agentId!) });
+		for (let idx = 0; idx < running.length; idx++) {
+			const item = running[idx];
+			const r = results[idx];
+			if (r.finished) {
+				if (r.stalled) {
+					finishItem(state, item.key, { status: "failed", error: r.stalled });
+				} else if (!r.submitted && !item.nudged && item.agentId && demandsSubmission(item.task, item.expect)) {
+					item.nudged = true;
+					item.nudgedAt = new Date().toISOString();
+					persistPool(state);
+					await sendReminderNudge(endpoint, item.agentId, item.task, item.expect, opts.flushNudge === true);
+					// stays `running` — the nudged child gets a fresh turn and the
+					// next slice reads its submission
+				} else if (!r.submitted && item.nudged) {
+					// kick still pending → the child never saw the nudge; do not
+					// blame it yet. The deadline sweep still bounds the pool.
+					if (item.agentId && pendingKickIds().includes(item.agentId)) {
+						persistPool(state);
+						continue;
+					}
+					finishItem(state, item.key, { status: "done", report: r.report || getActivitySummarySafe(item.agentId!), note: contractErrorNote(item.nudgedAt) });
+				} else {
+					finishItem(state, item.key, { status: "done", report: r.report || getActivitySummarySafe(item.agentId!) });
+				}
 			}
 			// Still busy stays `running`; the caller re-awaits until the pool
 			// deadline sweep decides (timeout) or the child closes.
 			persistPool(state);
-		});
+		}
 	}
 
 	async function runPoolWave(endpoint: McpEndpoint, state: PoolState, deadlineMs: number, ctx: unknown): Promise<void> {
@@ -1389,7 +1517,10 @@ NEXT: revise the report text (sections per template, token on first line) and ca
 						// callbacks all froze; that was the 2026-09-13 session-freeze.
 						break;
 					}
-					await awaitRunning(endpoint, state, 60_000);
+					// flushNudge: the driver runs outside any parent turn (same context
+					// as refillPool's direct create calls), so the one reminder fires at
+					// once instead of waiting for the parent's next turn_end.
+					await awaitRunning(endpoint, state, 60_000, { flushNudge: true });
 					// Early notice on the FIRST hard failure - main may want to act
 					// before the pool drains. One ping per pool, max.
 					const firstBad = state.items.find((i) => i.status === "gate_failed" || i.status === "failed");
@@ -1429,7 +1560,22 @@ NEXT: revise the report text (sections per template, token on first line) and ca
 	const PoolItemParams = Type.Object({
 		name: Type.Optional(Type.String({ description: "Optional unique name for this item (registry + report label)." })),
 		role: Type.String({ description: "Pool-safe role (read-mostly): scout, researcher…" }),
-		task: Type.String({ description: "Self-contained task — the child sees nothing else." }),
+		// v1.4.89 (#102): structured form accepted here too — validated in
+		// parsePoolSpec and rendered as Goal/Context/Instructions markdown.
+		task: Type.Union(
+			[
+				Type.String({ description: "Plain self-contained task — the child sees nothing else." }),
+				Type.Object(
+					{
+						goal: Type.String({ description: "Required — the OUTCOME the child must deliver, one sentence, result-shaped." }),
+						context: Type.Optional(Type.Array(Type.String(), { description: "Facts/pointers the child cannot discover itself (paths, ids, decisions already made)." })),
+						instructions: Type.Optional(Type.String({ description: "How to work: order of steps, constraints, and the submission channel (research_report / message_main)." })),
+					},
+					{ description: "Structured form (preferred) — validated, rendered as Goal/Context/Instructions." },
+				),
+			],
+			{ description: "Self-contained task — the child sees nothing else. Preferred: { goal, context?, instructions? }; plain string still accepted." },
+		),
 		model: Type.Optional(Type.String({ description: "Override the role's default model." })),
 		thinking: Type.Optional(Type.String({ description: "Override the role's default thinking level." })),
 		expect: Type.Optional(Type.String({ description: "Deterministic gate: substring the child's report MUST contain, else the item lands gate_failed." })),
@@ -1443,9 +1589,10 @@ NEXT: revise the report text (sections per template, token on first line) and ca
 		promptSnippet:
 			"Use spawn_pool for read-only fan-out (e.g. 3 parallel researchers): one call, capped concurrency, one aggregated report with per-item gates. Sequential single-writer work stays OUT of the pool.",
 		promptGuidelines: [
-			"Pool items must be independent; each task self-contained.",
+			"Pool items must be independent; each task self-contained. Prefer the structured form { goal, context?, instructions? } — validated and rendered as Goal/Context/Instructions.",
 			`Optional per-item expect: "report must contain X" — items failing the substring gate come back gate_failed.`,
 			"On timeout the aggregate reports partials; pool_resume(poolId) re-checks running children and spawns queued ones.",
+			"Reminder-once: a child that finishes without submitting (expect gate or a named submission channel) gets exactly one nudge; a second silent finish is a [contract-error] in the aggregate.",
 		],
 		parameters: Type.Object({
 			items: Type.Array(PoolItemParams, { minItems: 2, maxItems: 12, description: "2-12 independent, self-contained tasks." }),

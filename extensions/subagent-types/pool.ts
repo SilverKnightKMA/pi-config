@@ -59,6 +59,9 @@ export interface PoolItem extends PoolItemSpec {
 	error?: string;
 	startedAt?: string;
 	endedAt?: string;
+	/** v1.4.89 (#102) reminder-once: this child already got its one nudge. */
+	nudged?: boolean;
+	nudgedAt?: string;
 }
 
 export interface PoolState {
@@ -71,6 +74,113 @@ export interface PoolState {
 
 export interface RoleLike {
 	tools: readonly string[];
+}
+
+// ── v1.4.89 (#102): structured task input — pi-crew CrewTask-inspired ──
+// The caller may pass an object { goal, context?, instructions? } instead of
+// a free-form string. The validator is HARD: malformed objects are rejected
+// with actionable text, never silently coerced; plain strings keep working
+// (accept-with-warning, gradual migration). The formatter renders
+// deterministic 3-heading markdown for the child. Role profiles (agents/*.md)
+// are untouched — this shapes the DELEGATION, not who the child is.
+
+export interface StructuredTask {
+	goal: string;
+	context?: string[];
+	instructions?: string;
+}
+export type TaskInput = string | StructuredTask;
+
+const STRUCTURED_FIELDS = ["goal", "context", "instructions"];
+
+export function isStructuredTask(v: unknown): v is StructuredTask {
+	return typeof v === "object" && v !== null && "goal" in v;
+}
+
+export type TaskValidation =
+	| { ok: true; task: TaskInput; structured: boolean }
+	| { ok: false; text: string };
+
+/** Deterministic validation of a task input (string or structured object). */
+export function validateTaskInput(v: unknown, where: string): TaskValidation {
+	if (typeof v === "string") {
+		const t = v.trim();
+		if (!t) return { ok: false, text: `${where} must not be empty — the child sees nothing else, so the task IS its whole world.` };
+		return { ok: true, task: t, structured: false };
+	}
+	if (typeof v !== "object" || v === null || Array.isArray(v)) {
+		return { ok: false, text: `${where} must be a string or an object { goal, context?, instructions? } (received ${Array.isArray(v) ? "array" : typeof v}).` };
+	}
+	const rec = v as Record<string, unknown>;
+	const extra = Object.keys(rec).filter((k) => !STRUCTURED_FIELDS.includes(k));
+	if (extra.length > 0) {
+		return { ok: false, text: `${where}: unknown field(s) ${extra.map((k) => `"${k}"`).join(", ")} — allowed: goal, context, instructions.` };
+	}
+	const goal = typeof rec.goal === "string" ? rec.goal.trim() : "";
+	if (!goal) {
+		return { ok: false, text: `${where}.goal is required — one sentence stating the OUTCOME the child must deliver (not a topic).` };
+	}
+	let context: string[] | undefined;
+	if (rec.context !== undefined) {
+		if (!Array.isArray(rec.context) || rec.context.length === 0) {
+			return { ok: false, text: `${where}.context must be a non-empty array of strings — omit it entirely when there is no extra context.` };
+		}
+		const lines = rec.context.map((c) => (typeof c === "string" ? c.trim() : ""));
+		if (lines.some((l) => !l)) {
+			return { ok: false, text: `${where}.context entries must be non-empty strings.` };
+		}
+		context = lines;
+	}
+	let instructions: string | undefined;
+	if (rec.instructions !== undefined) {
+		if (typeof rec.instructions !== "string" || !rec.instructions.trim()) {
+			return { ok: false, text: `${where}.instructions must be a non-empty string — omit it entirely when there are none.` };
+		}
+		instructions = rec.instructions.trim();
+	}
+	return {
+		ok: true,
+		task: { goal, ...(context ? { context } : {}), ...(instructions ? { instructions } : {}) },
+		structured: true,
+	};
+}
+
+/** Render the validated input as the child-facing task text. Deterministic. */
+export function formatTaskForChild(task: TaskInput): string {
+	if (typeof task === "string") return task;
+	const parts: string[] = [`## Goal\n${task.goal}`];
+	if (task.context?.length) parts.push(`## Context\n${task.context.map((c) => `- ${c}`).join("\n")}`);
+	if (task.instructions) parts.push(`## Instructions\n${task.instructions}`);
+	return parts.join("\n\n");
+}
+
+// ── v1.4.89 (#102): reminder-once — pi-crew reminder-inspired ──
+// A child that finishes without submitting its report (observed twice with
+// researchers on 2026-09-16) gets exactly ONE nudge naming the submission
+// channel; a second silent finish is a contract-error. Deterministic,
+// model-free: the contract is detected from the task text + expect gate.
+
+/** Does this task demand a durable submission? expect gate OR a named
+ *  submission channel in the task text. */
+export function demandsSubmission(task: string, expect?: string): boolean {
+	if (expect) return true;
+	const t = task.toLowerCase();
+	return t.includes("research_report") || t.includes("message_main");
+}
+
+/** The one nudge sent when a child settles without submitting. Names the
+ *  exact channel derived from the task; never suggests workarounds. */
+export function buildReminderNudge(task: string, expect?: string): string {
+	const t = task.toLowerCase();
+	const via = t.includes("research_report")
+		? `Call research_report NOW with your complete report${expect ? ` (completion token "${expect}" on the first line)` : ""}`
+		: "Send your complete final report via message_main NOW (one message, no partial drafts)";
+	return `[reminder-once] You finished without submitting your report. ${via}. This is your only reminder — if you cannot produce the report, reply via message_main stating exactly what you need, then wait.`;
+}
+
+/** Contract-error annotation when the child stayed silent after the nudge. */
+export function contractErrorNote(nudgedAt?: string): string {
+	return `[contract-error] the child never submitted a report${nudgedAt ? ` (1 reminder sent ${nudgedAt})` : ""} — the task demanded a durable submission.`;
 }
 
 export type ParseResult = { ok: true; items: PoolItemSpec[]; concurrency: number } | { ok: false; text: string };
@@ -115,9 +225,12 @@ export function parsePoolSpec(
 		const raw = rawItems[i];
 		if (!isRecord(raw)) return { ok: false, text: `items[${i}] must be an object.` };
 		const role = typeof raw.role === "string" ? raw.role.trim() : "";
-		const task = typeof raw.task === "string" ? raw.task.trim() : "";
 		if (!role) return { ok: false, text: `items[${i}] is missing \`role\`.` };
-		if (!task) return { ok: false, text: `items[${i}] is missing \`task\` (self-contained: the child sees nothing else).` };
+		const tv = validateTaskInput(raw.task, `items[${i}].task`);
+		if (!tv.ok) return { ok: false, text: tv.text };
+		// Structured objects are rendered to markdown here — PoolItemSpec.task
+		// stays a string, so the persisted pool ledger shape is unchanged.
+		const task = formatTaskForChild(tv.task);
 		if (task.length > MAX_TASK_CHARS) return { ok: false, text: `items[${i}].task is over ${MAX_TASK_CHARS} chars — split it up.` };
 		const key = String(i + 1);
 		let name: string | undefined;
@@ -215,19 +328,20 @@ export function gateCheck(expect: string | undefined, report: string | undefined
 export function finishItem(
 	state: PoolState,
 	key: string,
-	result: { status: "done" | "failed"; report?: string; error?: string },
+	result: { status: "done" | "failed"; report?: string; error?: string; note?: string },
 	at = new Date().toISOString(),
 ): void {
 	const item = state.items.find((i) => i.key === key);
 	if (!item || (item.status !== "running" && item.status !== "timeout" && item.status !== "pending")) return;
+	const note = result.note ? `${result.note}${result.note.endsWith(".") ? "" : "."} ` : "";
 	if (result.status === "done") {
 		const gate = gateCheck(item.expect, result.report);
 		item.status = gate.ok ? "done" : "gate_failed";
-		item.report = clip(result.report ?? "", MAX_REPORT_CHARS);
-		if (!gate.ok) item.error = gate.reason;
+		item.report = clip((note ? note + "\n" : "") + (result.report ?? ""), MAX_REPORT_CHARS);
+		if (!gate.ok) item.error = note + gate.reason;
 	} else {
 		item.status = "failed";
-		item.error = clip(result.error ?? "spawn/child error", MAX_REPORT_CHARS);
+		item.error = clip(note + (result.error ?? "spawn/child error"), MAX_REPORT_CHARS);
 	}
 	item.endedAt = at;
 }
@@ -360,6 +474,10 @@ export function sanitizePoolState(raw: unknown): PoolState | null {
 			...(typeof r.error === "string" ? { error: clip(r.error, MAX_REPORT_CHARS) } : {}),
 			...(typeof r.startedAt === "string" ? { startedAt: r.startedAt } : {}),
 			...(typeof r.endedAt === "string" ? { endedAt: r.endedAt } : {}),
+			// v1.4.89 (#102): reminder-once state must survive respawn — a
+			// replayed pool without `nudged` would nudge the same child again.
+			...(r.nudged === true ? { nudged: true } : {}),
+			...(typeof r.nudgedAt === "string" ? { nudgedAt: r.nudgedAt } : {}),
 		});
 	}
 	const status = raw.status === "done" ? "done" : unfinished({ poolId: "", createdAt: "", concurrency: 1, status: "running", items }) ? "partial" : "done";

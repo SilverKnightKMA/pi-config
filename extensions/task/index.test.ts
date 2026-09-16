@@ -12,7 +12,6 @@ import assert from "node:assert/strict";
 import {
 	TASK_STATE,
 	createTask,
-	EMPTY,
 	newlyReady,
 	openBlockers,
 	readyTasks,
@@ -800,7 +799,6 @@ test("verify wiring: projection carries verify/audit fields for the Paseo panel"
 
 import { _setJudgeRunnerForTests } from "./index.ts";
 import { MAX_JUDGE_ROUNDS } from "./src/judge.ts";
-import { applyControlAction } from "./src/control.ts";
 
 function stubJudge(reply: string | null) {
 	const calls: string[] = [];
