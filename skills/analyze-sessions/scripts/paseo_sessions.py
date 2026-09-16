@@ -119,6 +119,11 @@ class AgentSummary:
     transcript: Optional[Path]
     # session kind: main | subagent | om-observer | om-consolidator
     kind: str = KIND_MAIN
+    # raw labels dict (subagent.role / subagent.parent / ...) — kept for
+    # callers that need parent mapping (paseo_subagents.py, O1 #105)
+    labels: dict = field(default_factory=dict)
+    # pi session id from persistence (dedupe key across resumed records)
+    session_id: str = ""
     # filled lazily from transcript scan
     cost_usd: float = 0.0
     message_count: int = 0
@@ -178,6 +183,8 @@ def iter_agent_records(filters: Filters) -> Iterator[AgentSummary]:
                 provider=provider,
                 title=d.get("title") or "",
                 workspace=ws_dir.name,
+                labels=labels,
+                session_id=(d.get("persistence") or {}).get("sessionId") or "",
                 cwd=cwd,
                 created=created,
                 updated=ts_from_iso(d.get("updatedAt") or d.get("createdAt") or "1970-01-01T00:00:00Z"),

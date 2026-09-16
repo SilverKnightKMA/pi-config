@@ -76,6 +76,43 @@ Groupings: `total`, `day`, `workspace`, `provider`, `model`, `kind`, `agent`. Wh
 python3 scripts/paseo_cost.py --since 30d --by kind
 ```
 
+### `paseo_subagents.py` — per-child-run subagent cost (O1, #105)
+
+Splits the subagent kind into PER-RUN rows with parent mapping
+(labels `subagent.role` + `subagent.parent`), cost from each child's own
+transcript. Double-count guards: records sharing one persistence.sessionId
+count once (newest activity wins, dups reported); missing transcripts are
+flagged `no-transcript`, never silently dropped. Verified 2026-09-16: total
+matches `paseo_cost.py --by kind` subagent line exactly ($8.1174 / 115 runs).
+
+```bash
+python3 scripts/paseo_subagents.py --since 30d --by run --limit 10   # most expensive children
+python3 scripts/paseo_subagents.py --since 30d --by role             # worker/researcher/scout rollup
+python3 scripts/paseo_subagents.py --since 30d --by parent           # cost per parent agent
+python3 scripts/paseo_subagents.py --since 30d --json                # machine-readable
+```
+
+Groupings: `run` (default) | `role` | `parent` | `total`. Shared filters apply.
+
+### `ccusage_crosscheck.py` — independent audit vs ccusage (O5, #105)
+
+`ccusage` v20+ (installed as a global external CLI, `npm i -g ccusage`)
+reads pi sessions natively via its `pi` subcommand. This script diffs its
+`pi session --json` totals against a direct scan of the same JSONL: token
+totals MUST match exactly (both sides sum input/output/cacheRead/cacheWrite
+per assistant record); $ comes from different price tables in general, so
+the ratio is reported, not failed. 2026-09-16 result: 30/30 sessions
+token-exact, cost ratio 1.00x (ccusage honors pi's provider-reported cost
+for pi model ids).
+
+```bash
+python3 scripts/ccusage_crosscheck.py --limit 30      # newest N sessions
+python3 scripts/ccusage_crosscheck.py --session <sid-prefix>
+```
+
+Exit 0 = PASS (all compared sessions token-exact), 1 = INVESTIGATE, 2 =
+ccusage failed to run.
+
 ### `om_worker_cost.py` — OM-worker cost rebuilt from transcripts (#32)
 
 The `.memory/<sid>/.runs/*.cost.json` files are a durable cache; the worker transcripts
@@ -196,6 +233,8 @@ Available on `paseo_cost.py`, `paseo_prompts.py`, `paseo_search.py` — NOT `pas
 | Total cost in the last 7 days | `python3 scripts/paseo_cost.py --since 7d --by total` |
 | Daily spend trend, last 30 days | `python3 scripts/paseo_cost.py --since 30d --by day` |
 | Cost split main vs subagent vs om workers | `python3 scripts/paseo_cost.py --since 30d --by kind` |
+| Which parent spent what on children | `python3 scripts/paseo_subagents.py --since 30d --by parent` |
+| Audit pi token/cost numbers independently | `python3 scripts/ccusage_crosscheck.py --limit 30` |
 | Most expensive workspaces this month | `python3 scripts/paseo_cost.py --since 30d --by workspace --limit 10` |
 | Cost of one workspace | `python3 scripts/paseo_cost.py --workspace learn` |
 | Patterns in my prompting | `python3 scripts/paseo_prompts.py --since 30d --max-chars 1500` → read the output |
