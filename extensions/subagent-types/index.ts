@@ -266,54 +266,14 @@ export function buildAutoPing(role: string, agentId: string, title: string | und
 	return `[auto-report] Subagent ${who} (${agentId}) finished and went idle without calling message_main. Use paseo_activity(agentId) if you need its result.`;
 }
 
-/** v1.4.51: is any goal run currently running (reads the goal-state dir —
- * file bridge, no goal ext import). Auto-ping yields to goal wake. */
-export function goalWakeActive(dir?: string): boolean {
-	const d = dir ?? join(process.env.HOME ?? homedir(), ".pi", "agent", "goal-state");
-	try {
-		for (const f of readdirSync(d)) {
-			if (!f.endsWith(".json")) continue;
-			try {
-				const st = JSON.parse(readFileSync(join(d, f), "utf8")) as { status?: unknown };
-				if (st?.status === "running") return true;
-			} catch {
-				// junk file — skip
-			}
-		}
-	} catch {
-		// no dir — no goal
-	}
-	return false;
-}
-
-/** v1.4.69 (#61 Phase C): is any bridged plan still waking (mode tracking +
- *  planId + steps remaining — reads the plan ext's status projections).
- *  Auto-ping yields to the plan continuation loop too (single-waker priority:
- *  goal > plan > task). */
-export function planWakeActive(dir?: string): boolean {
-	const d = dir ?? join(process.env.HOME ?? homedir(), ".pi", "agent", "plan-control");
-	try {
-		for (const f of readdirSync(d)) {
-			if (!f.endsWith(".status.json")) continue;
-			try {
-				const st = JSON.parse(readFileSync(join(d, f), "utf8")) as { mode?: unknown; planId?: unknown; stepsDone?: unknown; stepsTotal?: unknown; quiescent?: unknown };
-				if (st?.mode !== "tracking" || typeof st?.planId !== "string" || !st.planId.startsWith("p-")) continue;
-				// v1.4.77 (#80): quiescent plans (only parked/blocked steps) have
-				// disarmed their wake loop — the task auto-ping owns the cadence
-				// instead, else a reopen would have NO waker at all.
-				if (st?.quiescent === true) continue;
-				const done = typeof st?.stepsDone === "number" ? (st.stepsDone as number) : 0;
-				const total = typeof st?.stepsTotal === "number" ? (st.stepsTotal as number) : 0;
-				if (total > 0 && done < total) return true;
-			} catch {
-				// junk file — skip
-			}
-		}
-	} catch {
-		// no dir — no plan
-	}
-	return false;
-}
+/**
+ * v1.4.51: is any goal run currently running. v1.4.90 (#103): moved to
+ * _shared/unattended.ts (single source of truth for the unattended window -
+ * the interactive ban reads the same files); re-exported so existing callers
+ * and tests keep working. Auto-ping yields to goal wake.
+ */
+export { goalWakeActive, planWakeActive } from "../_shared/unattended.ts";
+import { goalWakeActive, planWakeActive } from "../_shared/unattended.ts";
 
 /** Identity mapping retained for call sites; .md files now use live names. */
 export function mapToolName(tool: string): string {

@@ -2,6 +2,14 @@ import { describe, expect, test } from "bun:test";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import askUserQuestion from "./index";
 
+// #103 (v1.4.90): point the unattended-window detector at empty temp dirs —
+// a live goal/plan on this host must never refuse these scripted executes.
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+process.env.UNATTENDED_GOAL_DIR = mkdtempSync(join(tmpdir(), "auq-goal-"));
+process.env.UNATTENDED_PLAN_DIR = mkdtempSync(join(tmpdir(), "auq-plan-"));
+
 // ---------------------------------------------------------------------------
 // Harness: capture registerTool and drive execute() with a scripted mock ctx.ui
 // ---------------------------------------------------------------------------

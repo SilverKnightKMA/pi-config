@@ -28,6 +28,7 @@
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
+import { interactiveBanText, unattendedWindow } from "../_shared/unattended.ts";
 
 // ---------------------------------------------------------------------------
 // Types (identical to original)
@@ -539,7 +540,7 @@ export default function quiz(pi: ExtensionAPI) {
 		name: "quiz",
 		label: "quiz",
 		description:
-			"Pose a single multiple-choice question that HAS a correct answer, grade the user's selection instantly, and show feedback (✓/✗, the correct answer, an explanation) to both the user and the agent. Options only — no free-text mode. Use for checking understanding during teaching/learning sessions.",
+			"Pose a single multiple-choice question that HAS a correct answer, grade the user's selection instantly, and show feedback (✓/✗, the correct answer, an explanation) to both the user and the agent. Options only — no free-text mode. Use for checking understanding during teaching/learning sessions. REFUSED while a goal is running or a plan session is tracking steps (unattended mode #103) — park the decision as a decision-pair instead.",
 		promptSnippet: "Use this tool to quiz the user with exactly one graded multiple-choice question at a time.",
 		promptGuidelines: [
 			"Ask exactly one question per tool call.",
@@ -556,6 +557,13 @@ export default function quiz(pi: ExtensionAPI) {
 			const context = params.details?.trim() || undefined;
 			const explanation = params.explanation.trim();
 			const mode: QuizMode = params.multiSelect ? "multi-select" : "single-select";
+
+			// v1.4.90 (#103): quiz hangs exactly like ask_user_question while a
+			// goal/plan run is unattended — refuse with the same envelope.
+			const ban = unattendedWindow();
+			if (ban.active && ban.kind) {
+				return unavailableResult(params.question, mode, interactiveBanText("quiz", ban.kind), [], context);
+			}
 
 			let options: QuizOption[];
 			try {

@@ -21,6 +21,7 @@
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
+import { interactiveBanText, unattendedWindow } from "../_shared/unattended.ts";
 
 interface AskOption {
 	label: string;
@@ -406,11 +407,12 @@ export default function askUserQuestion(pi: ExtensionAPI) {
 		name: "ask_user_question",
 		label: "ask_user_question",
 		description:
-			"Ask the user a single question and pause execution until they answer. Use this when requirements are ambiguous, user preferences are needed, a decision would materially affect implementation, or you need confirmation before proceeding. Ask exactly one question per tool call, and prefer multiple separate tool calls over bundling unrelated questions together.",
+			"Ask the user a single question and pause execution until they answer. Use this when requirements are ambiguous, user preferences are needed, a decision would materially affect implementation, or you need confirmation before proceeding. Ask exactly one question per tool call, and prefer multiple separate tool calls over bundling unrelated questions together. REFUSED while a goal is running or a plan session is tracking steps (unattended mode #103) — record decisions as decision-pairs (task awaitsDecision:true) instead.",
 		promptSnippet:
 			"Use this tool to ask exactly one clarifying question, missing-requirement question, preference question, or decision question before continuing.",
 		promptGuidelines: [
 			"Ask exactly one question per tool call.",
+			"While a goal is running or a plan is tracking steps this tool is refused (unattended mode) — park the decision with task_create awaitsDecision:true and continue other work; the user answers on return.",
 			"If you need answers to multiple questions, make multiple separate ask_user_question tool calls instead of combining them into one prompt.",
 			'Users will always be able to select "Other" to provide custom text input when options are provided.',
 			"Use multiSelect: true only when you need multiple answers to the same question. Multi-select answers are collected as free-form numeric selection (e.g. \"1,3\") and are parsed and validated by the extension.",
@@ -426,6 +428,17 @@ export default function askUserQuestion(pi: ExtensionAPI) {
 			const context = params.details?.trim() || undefined;
 			const mode: AskUserQuestionMode =
 				options.length === 0 ? "text" : params.multiSelect ? "multi-select" : "single-select";
+
+			// v1.4.90 (#103, user-approved A + lifecycle): the goal/plan
+			// unattended window — while a goal is running or a plan session is
+			// tracking steps the session is UNATTENDED. The user is not at the
+			// keyboard and this call would hang it. Refuse with the #43 envelope;
+			// decisions go through the decision-pair instead. Escape hatches are
+			// user-owned: /goal pause, /plan off, INTERACTIVE_BAN=0.
+			const ban = unattendedWindow();
+			if (ban.active && ban.kind) {
+				return unavailableResult(params.question, mode, interactiveBanText("ask_user_question", ban.kind), context);
+			}
 
 			if (signal?.aborted) {
 				return cancelledResult(params.question, mode, context);

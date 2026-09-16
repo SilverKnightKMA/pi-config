@@ -8,7 +8,8 @@
 		"noEmit": true,
 		"types": [
 			"bun-types"
-		]
+		],
+		"allowImportingTsExtensions": true
 	},
 	"include": [
 		"index.ts",
