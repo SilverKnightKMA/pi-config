@@ -183,9 +183,14 @@ export function recordEpoch(state: GoalState, n: number, at: string, created: nu
 /** Spinning: ≥2 consecutive epochs with 0 tasks completed (creating new tasks does NOT count
  *  as progress). #89: fresh completions credited during the CURRENT epoch sit in
  *  pendingCompleted — if any exist the goal is making progress RIGHT NOW, never stop. */
-export function spinning(state: GoalState): boolean {
+export function spinning(state: GoalState, inProgress = 0): boolean {
 	const es = state.epochs;
+	// #89: mid-turn completions not yet flushed into an epoch record are progress — never stop.
 	if ((state.pendingCompleted ?? 0) > 0) return false;
+	// #90: a member task actively in_progress means real work is underway — a task legitimately
+	// spanning >2 epochs with no completions must not look like spinning. The epoch budget (20)
+	// remains the hard stop for a goal whose member stays stuck in_progress forever.
+	if (inProgress > 0) return false;
 	return es.length >= 2 && es[es.length - 1].completed === 0 && es[es.length - 2].completed === 0;
 }
 

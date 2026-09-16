@@ -236,4 +236,19 @@ describe("goal-state (#37)", () => {
 		expect(reloaded!.credited).toBe(1);
 		expect(reloaded!.pendingCompleted).toBe(1);
 	});
+	// #90 (2026-09-16): a member task legitimately spanning >2 epochs with no
+	// completions is WORK IN FLIGHT, not spinning. Incident: goal false-stopped at
+	// epoch 5 while #32 (multi-epoch build) sat in_progress the whole time.
+	test("#90 spinning: member in_progress (or held) blocks the stop; idle board still stops", () => {
+		let st = startGoal("s1", "finish 8 tasks", NOW);
+		st = confirmGoal(st, [34, 43], NOW);
+		st = recordEpoch(st, 4, NOW, 0, 0);
+		st = recordEpoch(st, 5, NOW, 0, 0);
+		expect(spinning(st)).toBe(true); // nothing completed AND nothing underway → stops
+		expect(spinning(st, 0)).toBe(true); // explicit idle call-site
+		expect(spinning(st, 1)).toBe(false); // #90: 1 member actively in_progress → no stop
+		expect(spinning(st, 2)).toBe(false); // held counts as active work too (judge-feedback actionable)
+		const credited = creditProgress(st, 1);
+		expect(spinning(credited, 0)).toBe(false); // #89 path intact: pending credit still blocks
+	});
 });

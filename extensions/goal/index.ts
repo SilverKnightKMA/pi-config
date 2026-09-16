@@ -180,7 +180,9 @@ export default function activate(pi: ExtensionAPI): void {
 			wrapUp(pi2, creditedSt, "mechanical goal-done: no open task-members left");
 			return;
 		}
-		if (spinning(creditedSt)) {
+		// #90: members actively in_progress = real work underway — not spinning.
+		const inProgressNow = members.filter((t) => t.status === "in_progress" || t.status === "held").length;
+		if (spinning(creditedSt, inProgressNow)) {
 			wrapUp(pi2, st, "spinning: 2 consecutive epochs with no task completed");
 			return;
 		}
