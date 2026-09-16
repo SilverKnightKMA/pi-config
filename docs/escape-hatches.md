@@ -97,6 +97,20 @@ and after every compaction. Knobs: `LESSONS_INJECT=0` disables all injection;
 `LESSONS_FILE` overrides the path (tests/isolation). Review 2027-01-15:
 expected to stay — revisit the caps after real usage data.
 
+## PI_TELEMETRY / PI_TELEMETRY_DIR / PI_TELEMETRY_STALE_MS / PI_TELEMETRY_TOUCH_MS (v1.4.97, default on)
+
+`extensions/telemetry` (O4, #105 — borrow from pi-telemetry 0.1.3) writes one
+atomic JSON per pi process at `~/.pi/agent/telemetry/instances/<pid>.json` on
+lifecycle events (session_start, turn_start, turn_end, session_compact,
+session_shutdown) plus a 30s touch during long turns. Payload: activity
+(working/waiting_input/shutdown), turn index, context usage and pressure
+(near ≥85%, close ≥95% of the context window) — counts only, never prompt or
+log content (SOC on-box rule). Consumers read the directory; a file whose
+updatedAt is older than `PI_TELEMETRY_STALE_MS` (default 120000) describes a
+dead instance. Stale files with dead pids are swept at session_start.
+Knobs: `PI_TELEMETRY=0` disables; `PI_TELEMETRY_DIR` relocates (tests);
+`PI_TELEMETRY_STALE_MS` and `PI_TELEMETRY_TOUCH_MS` retune thresholds.
+
 ## SUBAGENT_LOOP_GUARD / SUBAGENT_LOOP_REPEAT (v1.4.84, default OFF)
 
 The pool loop-guard (`extensions/subagent-types/loop-guard.ts`, ported from
