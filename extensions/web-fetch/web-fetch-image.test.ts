@@ -24,6 +24,8 @@ function captureTool(): CapturedTool {
 }
 
 const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
+/** A real 1x1 PNG (69 bytes) — exercises the resize path with decodable bytes. */
+const VALID_PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
 
 function imageResponse(type: string, body: BodyInit, headers: Record<string, string> = {}): Response {
 	return new Response(body, { status: 200, headers: { "content-type": type, ...headers } });
@@ -93,6 +95,18 @@ describe("web_fetch image/* attachment (#109)", () => {
 		expect(res.content[0].type).toBe("text");
 		expect(res.content[0].text).toContain("hello world");
 		expect(res.details.image).toBeUndefined();
+	});
+
+	test("decodable image runs the resize path and still attaches (resized or fallback)", async () => {
+		const tool = captureTool();
+		const valid = Uint8Array.from(atob(VALID_PNG_B64), (c) => c.charCodeAt(0));
+		(globalThis as any).fetch = async () => imageResponse("image/png", valid);
+		const res = await tool.execute("t7", { url: "https://x.test/tiny.png" });
+		const img = res.content[1];
+		expect(img.type).toBe("image");
+		expect(img.mimeType.startsWith("image/")).toBe(true); // PNG kept, or JPEG if resize picked the smaller encode
+		expect(img.data.length).toBeGreaterThan(0);
+		expect(res.details.bytes).toBeLessThanOrEqual(5 * 1024 * 1024);
 	});
 
 	test("body larger than 5MB refuses even without content-length", async () => {

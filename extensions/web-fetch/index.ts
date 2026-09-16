@@ -9,6 +9,7 @@
  * pi-web-access is the power toolkit (needs keys for some modes).
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { resizeImage } from "@earendil-works/pi-coding-agent";
 import type { Text } from "@earendil-works/pi-tui";
 
 // v1.4.72: pi-tui is not resolvable from the installed extension tree, so the
@@ -467,13 +468,38 @@ async function extractViaHttp(
 					error: `Image too large (${Math.round(buffer.byteLength / 1024 / 1024)}MB > 5MB) — open the URL directly`,
 				};
 			}
+			const bytes = new Uint8Array(buffer);
 			const mimeType = contentType.split(";")[0].trim() || "image/png";
+			// v1.4.95 (#109 resize step): shrink to sane model-facing dimensions
+			// with pi's public resizeImage (Photon WASM, same one the read tool
+			// uses). Best-effort — decode failure (or animated GIF, where a
+			// single-frame JPEG re-encode would kill the animation) falls back to
+			// the original bytes, which the 5MB cap already bounds.
+			let out = { data: Buffer.from(bytes).toString("base64"), mimeType, bytes: bytes.byteLength, resizeNote: "" };
+			if (mimeType !== "image/gif") {
+				try {
+					const r = await resizeImage(bytes, mimeType, { maxWidth: 1600, maxHeight: 1600, maxBytes: 1024 * 1024 });
+					if (r) {
+						const resizedBytes = Math.floor((r.data.length * 3) / 4);
+						if (resizedBytes < out.bytes) {
+							out = {
+								data: r.data,
+								mimeType: r.mimeType,
+								bytes: resizedBytes,
+								resizeNote: r.wasResized ? `, resized ${r.originalWidth}x${r.originalHeight}→${r.width}x${r.height}` : ", fit as-is",
+							};
+						}
+					}
+				} catch {
+					/* best-effort resize: original bytes still ≤5MB */
+				}
+			}
 			return {
 				url,
 				title: new URL(url).pathname.split("/").pop() || url,
-				content: `Fetched image: ${url} (${mimeType}, ${Math.round(buffer.byteLength / 1024)}KB). The image is attached below — visible to vision-capable models; otherwise open the URL.`,
+				content: `Fetched image: ${url} (${mimeType}${out.resizeNote}, ${Math.round(out.bytes / 1024)}KB). The image is attached below — visible to vision-capable models; otherwise open the URL.`,
 				error: null,
-				image: { data: Buffer.from(buffer).toString("base64"), mimeType, bytes: buffer.byteLength },
+				image: { data: out.data, mimeType: out.mimeType, bytes: out.bytes },
 			};
 		}
 
