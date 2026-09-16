@@ -56,6 +56,10 @@ export interface Task {
    * board (registration + verification reuse the task machinery). */
   planId?: string;
   stepIndex?: number;
+  /** v1.4.88 #101-hardening: this task is a [CHỜ USER QUYẾT] stage for task #N.
+   * Typed field (NOT a description marker — the model can edit descriptions, it
+   * cannot touch this): guards read it to keep the pair's existence user-owned. */
+  decisionOf?: number;
   /** v1.4.38: append-only diff trail of description rewrites (agent AND user),
    * capped length; the judge packet carries this so layer-2 can weigh
    * self-serving rewrites (live lesson: judge only sees the CURRENT sheet). */

@@ -559,6 +559,9 @@ export default function taskExtension(pi: ExtensionAPI) {
 					Date.now(),
 					{ lane: "judgment", probes: [], strict: false },
 					undefined, // no goalId: user stage, never a goal member
+					undefined, // planId
+					undefined, // stepIndex
+					a.id, // v1.4.88: typed pair link — model cannot strip it via description edits
 				);
 				if (decisionPair.error) decisionPair = null; // pair is best-effort: A stands alone
 			}
@@ -674,6 +677,19 @@ export default function taskExtension(pi: ExtensionAPI) {
 			if (params.blockedBy !== undefined) patch.blockedBy = params.blockedBy;
 			if (params.evidence !== undefined) patch.evidence = params.evidence;
 
+			// v1.4.88 #101-hardening: the pair's EXISTENCE is user-owned, like PARK.
+			// The model may put B on the board (via A's awaitsDecision) but never
+			// remove it — B closes only on the user's answer, or the user's own cancel
+			// (panel → control file). A chat request to drop B gets it PARKED
+			// (model-reachable) and the user clears it on the panel. Closes P2.
+			if (
+				params.status === "cancelled" &&
+				state.tasks.find((t) => t.id === params.id)?.decisionOf !== undefined
+			) {
+				throw new Error(
+					`[task] #${params.id} is a [CHỜ USER QUYẾT] stage — its existence is user-owned; the model cannot cancel it. Valid paths: the user answers the decision (then complete B quoting their reply), or the user clicks "cancel (user)" on the task panel (control file), or asks in chat — then PARK B (model-reachable) and tell the user to cancel/reopen it on the panel.`,
+				);
+			}
 			// PARK is one-way for the model (v1.4.28): the model may put a task INTO park
 			// (appeal/cap) but never take it out — a worker un-parking itself bypasses the
 			// entire verdict (user report 2026-09-09). The only way out: the panel button
@@ -885,14 +901,20 @@ export default function taskExtension(pi: ExtensionAPI) {
 			const prevStatus = prevTask?.status ?? null;
 			const result = updateTask(state, params.id, patch, Date.now());
 			if (result.error) throw new Error(result.error);
-			// v1.4.87 #101: cancelling A also cancels its pending [CHỜ USER QUYẾT] pair —
-			// there is nothing left to decide when the source work is withdrawn.
+			// v1.4.87 #101 A→B decision pair; v1.4.88 hardening: the cascade PARKS
+			// (not cancels) — a withdrawn A must not erase the decision stage; parked
+			// is one-way-out-for-user, so the pair survives until the user clears it.
+			// Closes P1 (model cancels A → B dies) and P3 (completed A flipped to
+			// cancelled outside a goal → B dies after the research already landed).
 			let cascadeState = result.state;
 			if (patch.status === "cancelled") {
 				for (const t of result.state.tasks) {
-					const m = /^decisionOf:#(\d+)\n/.exec(t.description);
-				if (m && Number(m[1]) === params.id && t.status === "pending") {
-						const casc = updateTask(cascadeState, t.id, { status: "cancelled" }, Date.now());
+					const isPair = t.decisionOf === params.id || /^decisionOf:#(\d+)\n/.test(t.description);
+				if (isPair && t.status === "pending") {
+						const casc = updateTask(cascadeState, t.id, {
+							status: "parked",
+							appealReason: `A #${params.id} bị hủy — không còn nguồn quyết định. User: "cancel (user)" để dọn, hoặc reopen nếu A bị hủy nhầm.`,
+						}, Date.now());
 						if (!casc.error) cascadeState = casc.state;
 					}
 				}

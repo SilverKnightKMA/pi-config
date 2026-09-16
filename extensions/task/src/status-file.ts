@@ -43,6 +43,8 @@ export interface TaskStatusFile {
 		/** v1.4.68 plan bridge (#47 Phase B): step-task stamp — the plan panel derives step status from these. */
 		planId?: string;
 		stepIndex?: number;
+		/** v1.4.88: [CHỜ USER QUYẾT] pair link (typed; model cannot edit it). */
+		decisionOf?: number;
 		/** v1.4.38 doneCheck guard: agent rewrite count (cap 2) + trail for the panel chip. */
 		descAmendments?: number;
 		proposals?: Array<{ id: string; at: number; from: string; to: string; reason: string; status: string; decidedAt?: number }>;
@@ -102,6 +104,7 @@ export function buildTaskStatus(state: TaskState, sessionId: string, now = Date.
 			appealReason: task.appealReason,
 			goalId: task.goalId,
 			planId: task.planId,
+			decisionOf: task.decisionOf,
 			stepIndex: task.stepIndex,
 			descAmendments: task.descAmendments,
 			proposals: (task.proposals ?? []).slice(-4).map((p) => ({

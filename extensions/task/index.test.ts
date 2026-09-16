@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import {
 	TASK_STATE,
 	createTask,
+	EMPTY,
 	newlyReady,
 	openBlockers,
 	readyTasks,
@@ -19,6 +20,7 @@ import {
 	updateTask,
 	wouldCycle,
 } from "./src/graph.ts";
+import { applyControlAction } from "./src/control.ts";
 import { buildCompletionSweep, buildNudge, classifyTurn, completionSignature, shouldNudge } from "./src/nudge.ts";
 import { buildWidgetLines } from "./src/widget.ts";
 import { buildTaskStatus, taskStatusPath } from "./src/status-file.ts";
@@ -1238,7 +1240,7 @@ test("v1.4.87 decision pair: without awaitsDecision nothing extra is created (no
 	assert.equal(out.details!.tasks!.length, 1);
 });
 
-test("v1.4.87 decision pair: cancelling A cascades cancel to its pending pair B", async () => {
+test("v1.4.88 hardening: model cancels A → pending B is PARKED (not cancelled) — P1/P3 closed", async () => {
 	const f = fakePi();
 	taskExtension(f.pi as never);
 	await f.tool("task_create").execute("c1", { subject: "eval ext Y", awaitsDecision: true }, undefined, undefined, f.ctx);
@@ -1247,5 +1249,41 @@ test("v1.4.87 decision pair: cancelling A cascades cancel to its pending pair B"
 	};
 	const statuses = Object.fromEntries((cancelled.details!.tasks ?? []).map((t) => [t.id, t.status]));
 	assert.equal(statuses[1], "cancelled");
-	assert.equal(statuses[2], "cancelled");
+	assert.equal(statuses[2], "parked", "B must survive as parked — never silently erased");
+});
+
+test("v1.4.88 hardening: model cannot cancel B directly — P2 closed (user-owned existence)", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	await f.tool("task_create").execute("c1", { subject: "eval ext Z", awaitsDecision: true }, undefined, undefined, f.ctx);
+	await assert.rejects(
+		f.tool("task_update").execute("c2", { id: 2, status: "cancelled" }, undefined, undefined, f.ctx),
+		/CHỜ USER QUYẾT.*user-owned.*cancel \(user\)/s,
+	);
+});
+
+test("v1.4.88 hardening: typed decisionOf survives description edits (marker strip closed)", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	await f.tool("task_create").execute("c1", { subject: "eval ext W", awaitsDecision: true }, undefined, undefined, f.ctx);
+	await f.tool("task_update").execute("c2", { id: 2, description: "marker stripped, no decisionOf line" }, undefined, undefined, f.ctx);
+	const ledger = f.entries.at(-1)!.data as { tasks: { id: number; description: string; decisionOf?: number }[] };
+	const b = ledger.tasks.find((x) => x.id === 2)!;
+	assert.equal(b.decisionOf, 1, "typed field intact after description rewrite");
+	assert.equal(b.description, "marker stripped, no decisionOf line");
+	// guard still fires on the typed field even though the description marker is gone
+	await assert.rejects(
+		f.tool("task_update").execute("c3", { id: 2, status: "cancelled" }, undefined, undefined, f.ctx),
+		/user-owned/,
+	);
+});
+
+test("v1.4.88 control: user cancel action genuinely cancels, with genuine pair cascade", () => {
+	const s0 = createTask(EMPTY_STATE, "A", "", [], 1).state!;
+	const s1 = createTask(s0, "B", "", [1], 2, { lane: "judgment", probes: [], strict: false }, undefined, undefined, undefined, 1).state!;
+	const r = applyControlAction(s1, { v: 1, action: "cancel", id: 1 }, 3);
+	assert.ok(r.applied);
+	const statuses = Object.fromEntries(r.state.tasks.map((t) => [t.id, t.status]));
+	assert.equal(statuses[1], "cancelled");
+	assert.equal(statuses[2], "cancelled", "user-origin cancel may genuinely drop the pair");
 });

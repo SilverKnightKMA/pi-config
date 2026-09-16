@@ -117,6 +117,7 @@ export function createTask(
   goalId?: string,
   planId?: string,
   stepIndex?: number,
+  decisionOf?: number,
 ): OpResult {
   const warnings: string[] = [];
   if (!subject.trim()) return { state, task: null, warnings, error: "subject is required" };
@@ -136,6 +137,7 @@ export function createTask(
     goalId: goalId ?? undefined,
     planId: planId ?? undefined,
     stepIndex: typeof stepIndex === "number" && stepIndex > 0 ? stepIndex : undefined,
+    decisionOf: typeof decisionOf === "number" ? decisionOf : undefined,
     createdAt: now,
     updatedAt: now,
   };

@@ -19,7 +19,7 @@ import { homedir } from "node:os";
 import { openBlockers, updateTask } from "./graph.ts";
 import type { TaskState } from "./types.ts";
 
-export type TaskControlAction = "unpark" | "strict" | "reopen" | "amend" | "proposal-decide";
+export type TaskControlAction = "unpark" | "strict" | "reopen" | "amend" | "proposal-decide" | "cancel";
 
 export interface TaskControlFile {
 	v: 1;
@@ -108,6 +108,25 @@ export interface ControlApplyResult {
 export function applyControlAction(state: TaskState, payload: TaskControlFile, now: number): ControlApplyResult {
 	const task = state.tasks.find((t) => t.id === payload.id);
 	if (!task) return { state, note: `no task #${payload.id}`, applied: false };
+	// v1.4.88 cancel (user-only): the panel/chat-user force-cancel. The model
+	// path NEVER reaches here (tool-layer guard refuses decisionOf pairs), so a
+	// [CHỜ USER QUYẾT] stage can only be dropped by a genuine user action.
+	// Cancelling A here also genuinely cancels its pending pairs (user origin).
+	if (payload.action === "cancel") {
+		if (task.status === "completed") {
+			return { state, note: `#${payload.id} already completed — cancel not applicable`, applied: false };
+		}
+		const r = updateTask(state, payload.id, { status: "cancelled" }, now);
+		if (r.error) return { state, note: r.error, applied: false };
+		let next = r.state;
+		for (const t of next.tasks) {
+			if (t.decisionOf === payload.id && t.status === "pending") {
+				const casc = updateTask(next, t.id, { status: "cancelled" }, now);
+				if (!casc.error) next = casc.state;
+			}
+		}
+		return { state: next, note: `#${payload.id} cancelled (user)`, applied: true };
+	}
 	if (payload.action === "unpark") {
 		if (task.status !== "parked") {
 			return { state, note: `#${payload.id} not in parked status`, applied: false };
