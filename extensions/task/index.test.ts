@@ -1203,3 +1203,49 @@ test("v1.4.76 wiring: write/edit enter runLog and satisfy layer-1 probes", async
 	assert.match(out.content[0]!.text, /completed/i);
 	assert.doesNotMatch(out.content[0]!.text, /NOT passed layer-1|held/i);
 });
+
+test("v1.4.87 decision pair: awaitsDecision creates a [CHỜ USER QUYẾT] stage blocked by A", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	const out = (await f.tool("task_create").execute(
+		"c1",
+		{ subject: "eval ext X", awaitsDecision: true },
+		undefined,
+		undefined,
+		f.ctx,
+	)) as { content: { text: string }[]; details?: { tasks?: { id: number; subject: string; status: string; blockedBy: number[]; description: string; verify?: { lane: string } }[] } };
+	assert.match(out.content[0]!.text, /Created #1: eval ext X/);
+	assert.match(out.content[0]!.text, /Decision pair: #2 \[CHỜ USER QUYẾT\] created blocked by #1/);
+	const tasks = out.details!.tasks!;
+	assert.equal(tasks.length, 2);
+	const b = tasks.find((t) => t.id === 2)!;
+	assert.equal(b.subject, "[CHỜ USER QUYẾT] eval ext X (#1)");
+	assert.equal(b.status, "pending");
+	// full fields (blockedBy/description/verify) live in the ledger state, not the slim details projection
+	const ledger = f.entries.at(-1)!.data as { tasks: { id: number; blockedBy: number[]; description: string; verify?: { lane: string } }[] };
+	const lb = ledger.tasks.find((t) => t.id === 2)!;
+	assert.deepEqual(lb.blockedBy, [1]);
+	assert.match(lb.description, /^decisionOf:#1\n/);
+	assert.equal(lb.verify?.lane, "judgment");
+});
+
+test("v1.4.87 decision pair: without awaitsDecision nothing extra is created (no regression)", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	const out = (await f.tool("task_create").execute("c1", { subject: "plain task" }, undefined, undefined, f.ctx)) as {
+		details?: { tasks?: unknown[] };
+	};
+	assert.equal(out.details!.tasks!.length, 1);
+});
+
+test("v1.4.87 decision pair: cancelling A cascades cancel to its pending pair B", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	await f.tool("task_create").execute("c1", { subject: "eval ext Y", awaitsDecision: true }, undefined, undefined, f.ctx);
+	const cancelled = (await f.tool("task_update").execute("c2", { id: 1, status: "cancelled" }, undefined, undefined, f.ctx)) as {
+		details?: { tasks?: { id: number; status: string }[] };
+	};
+	const statuses = Object.fromEntries((cancelled.details!.tasks ?? []).map((t) => [t.id, t.status]));
+	assert.equal(statuses[1], "cancelled");
+	assert.equal(statuses[2], "cancelled");
+});

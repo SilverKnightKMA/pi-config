@@ -452,11 +452,24 @@ export default function taskExtension(pi: ExtensionAPI) {
 			"survives compaction. blockedBy lists ids of tasks that must complete first (cycles and " +
 			"dangling ids are dropped with warnings). Create tasks BEFORE starting the work they describe. " +
 			"Tasks are OPTIONAL — never create one just to be allowed to work: chat, explanations, " +
-			"quick reads and 1-2 step jobs need no task; a junk task is fake evidence.",
+			"quick reads and 1-2 step jobs need no task; a junk task is fake evidence. " +
+			"DECISION PAIR: set awaitsDecision:true on research/eval/proposal tasks whose output ends in a " +
+			"user decision — the engine atomically creates a paired '[CHỜ USER QUYẾT]' task blocked by this " +
+			"one (lane judgment, completes on the USER's reply; it is a user stage, not agent work, so it " +
+			"never joins a goal or fires wakes). Benefit: the decision is tracked on the board from the " +
+			"start, so a verdict can never be lost inside a completed task. Implementing the approved " +
+			"outcome = a NEW task created after the user answers.",
 		parameters: Type.Object({
 			subject: Type.String({ description: "Short imperative subject" }),
 			description: Type.Optional(Type.String()),
 			blockedBy: Type.Optional(Type.Array(Type.Number())),
+			awaitsDecision: Type.Optional(
+				Type.Boolean({
+						description:
+						"true = this task's output ends in a user decision; auto-create the paired " +
+						"[CHỜ USER QUYẾT] stage (blocked by this task, completes on the user's reply)",
+				}),
+			),
 			verify: Type.Optional(
 				Type.Object({
 					lane: Type.Optional(
@@ -483,7 +496,13 @@ export default function taskExtension(pi: ExtensionAPI) {
 		}),
 		async execute(
 			_id,
-			params: { subject: string; description?: string; blockedBy?: number[]; verify?: unknown },
+			params: {
+				subject: string;
+				description?: string;
+				blockedBy?: number[];
+				awaitsDecision?: boolean;
+				verify?: unknown;
+			},
 			_signal,
 			_onUpdate,
 			ctx,
@@ -516,17 +535,53 @@ export default function taskExtension(pi: ExtensionAPI) {
 				goal?.goalId,
 			);
 			if (result.error) throw new Error(result.error);
-			commit(ctx as UiContext, result.state);
+			// v1.4.87 #101 A→B decision pair: a research/eval task that ends in a user
+			// decision gets a tracked [CHỜ USER QUYẾT] stage created ATOMICALLY with it, so
+			// the verdict can never be lost inside a completed task (miss-class failure,
+			// case #24: task completed, the approval it awaited silently evaporated).
+			// B is deliberately NOT stamped with goalId: a user stage is not agent work —
+			// it must not block the mechanical goal-done check, and pending never wakes.
+			// The `decisionOf:#A` marker in B's description lets cancel-propagation find it.
+			let decisionPair: ReturnType<typeof createTask> | null = null;
+			if (params.awaitsDecision) {
+				const a = result.task!;
+				const bDesc =
+					`decisionOf:#${a.id}\n` +
+					`Task quyết sinh tự động từ #${a.id} (awaitsDecision). Khi #${a.id} hoàn tất: đọc artifact ` +
+					`của nó, trình user TÓM TẮT các lựa chọn kèm khuyến nghị. HOÀN TẤT BẰNG CHÍNH câu trả lời ` +
+					`của user (trích nguyên văn làm evidence) — agent không tự quyết thay. Nếu user duyệt một ` +
+					`hướng → tạo task implement MỚI sau khi đóng task này.`;
+				decisionPair = createTask(
+					result.state,
+					`[CHỜ USER QUYẾT] ${a.subject} (#${a.id})`,
+					bDesc,
+					[a.id],
+					Date.now(),
+					{ lane: "judgment", probes: [], strict: false },
+					undefined, // no goalId: user stage, never a goal member
+				);
+				if (decisionPair.error) decisionPair = null; // pair is best-effort: A stands alone
+			}
+			const finalState = decisionPair ? decisionPair.state : result.state;
+			commit(ctx as UiContext, finalState);
 			const warn = result.warnings.length > 0 ? `\nWarnings: ${result.warnings.join(" ")}` : "";
 			const verifyNote = verifySpec
 				? `\nVerify: lane=${verifySpec.lane}${verifySpec.probes.length > 0 ? `, ${verifySpec.probes.length} probe` : ""}${verifySpec.strict ? ", STRICT" : ""} — layer-1 audit runs when you declare completed (probes must be green in the run log).`
 				: "";
+			const pairNote = decisionPair
+				? `\nDecision pair: #${decisionPair.task!.id} [CHỜ USER QUYẾT] created blocked by #${result.task!.id} — completes on the USER's reply; when they approve an outcome, create the implement task then.`
+				: "";
 			return {
-				content: [{ type: "text", text: `Created #${result.task!.id}: ${result.task!.subject}${warn}${verifyNote}` }],
+				content: [
+					{
+					type: "text",
+					text: `Created #${result.task!.id}: ${result.task!.subject}${warn}${verifyNote}${pairNote}`,
+				},
+			],
 				details: {
 					id: result.task!.id,
 					warnings: result.warnings,
-					tasks: detailsTasks(result.state),
+					tasks: detailsTasks(finalState),
 					changes: changeFor(result.task!.id, null, result.task!.status),
 				},
 			};
@@ -830,8 +885,20 @@ export default function taskExtension(pi: ExtensionAPI) {
 			const prevStatus = prevTask?.status ?? null;
 			const result = updateTask(state, params.id, patch, Date.now());
 			if (result.error) throw new Error(result.error);
-			const unblocked = newlyReady(state, result.state);
-			commit(ctx as UiContext, result.state);
+			// v1.4.87 #101: cancelling A also cancels its pending [CHỜ USER QUYẾT] pair —
+			// there is nothing left to decide when the source work is withdrawn.
+			let cascadeState = result.state;
+			if (patch.status === "cancelled") {
+				for (const t of result.state.tasks) {
+					const m = /^decisionOf:#(\d+)\n/.exec(t.description);
+				if (m && Number(m[1]) === params.id && t.status === "pending") {
+						const casc = updateTask(cascadeState, t.id, { status: "cancelled" }, Date.now());
+						if (!casc.error) cascadeState = casc.state;
+					}
+				}
+			}
+			const unblocked = newlyReady(state, cascadeState);
+			commit(ctx as UiContext, cascadeState);
 			const warn = result.warnings.length > 0 ? `\nWarnings: ${result.warnings.join(" ")}` : "";
 			const auditNote = result.task!.audit ? `\nAudit: ${result.task!.audit.summary.replace(/\n/g, "; ")}` : "";
 			const parkedNote =
@@ -880,7 +947,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 					status: result.task!.status,
 					warnings: result.warnings,
 					ready: unblocked.map((t) => t.id),
-					tasks: detailsTasks(result.state),
+					tasks: detailsTasks(cascadeState),
 					changes: changeFor(result.task!.id, prevStatus, result.task!.status),
 					// #45: field-level diff — "pending => pending" said nothing about
 					// WHAT changed (user 2026-09-13). Panel card renders these lines.
