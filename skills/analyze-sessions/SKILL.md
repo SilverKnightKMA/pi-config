@@ -76,6 +76,30 @@ Groupings: `total`, `day`, `workspace`, `provider`, `model`, `kind`, `agent`. Wh
 python3 scripts/paseo_cost.py --since 30d --by kind
 ```
 
+### `om_worker_cost.py` — OM-worker cost rebuilt from transcripts (#32)
+
+The `.memory/<sid>/.runs/*.cost.json` files are a durable cache; the worker transcripts
+at `~/.pi/agent/sessions/<ws>-.memory-<sid>--/*.jsonl` are the SOURCE OF TRUTH (verified
+5/5 exact match 2026-09-16). This script REPLACES the .runs analysis role and gates their GC:
+
+```bash
+# cost per parent bucket (default), per role (observer/consolidator), per day, total
+python3 scripts/om_worker_cost.py --by role
+
+# pre-GC gate: every .runs dollar must be covered by the transcript sum
+python3 scripts/om_worker_cost.py --verify
+# verdict SAFE_TO_GC = runs ≤ transcript (+0.005 tol); MISMATCH-cache-overclaims = investigate
+
+# what a GC would delete: .runs cost files older than N days + the $ a rollup must retain
+python3 scripts/om_worker_cost.py --gc-plan 7
+
+python3 scripts/om_worker_cost.py --self-test   # 8/8
+```
+
+Role classification probes the first 4KB of each transcript (consolidator prompt marker:
+"You are folding the observations") — no shape assumptions beyond the probed
+`usage.cost.total` path.
+
 ### `anomaly_report.py` — deterministic anomaly analysis
 
 Ranked anomaly report over sessions + `~/.pi/agent/sse-probe.jsonl` + `~/.pi/agent/zombie-watchdog.jsonl` + OM worker-run costs. Stdlib only, no model calls.

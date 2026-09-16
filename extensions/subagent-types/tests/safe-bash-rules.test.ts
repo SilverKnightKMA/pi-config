@@ -100,6 +100,19 @@ describe("safe-bash AST guard (#34)", () => {
 		// but block devices + protected paths still apply
 		expect(checkBash("echo x > /dev/sda", { home: HOME, role: "worker", writeAllowlist: null })?.rule).toBe("write-block-device");
 	});
+	test("#48-pool /dev/null is a universal idiom, never a write surface (2026-09-16 incident)", () => {
+		// researcher's FIRST recon command habitually ends in 2>/dev/null — denying it
+		// sent pool children into retry flail and loop-guard killed them.
+		const opts = { home: HOME, role: "researcher", writeAllowlist: [CWD, "/tmp"] };
+		expect(checkBash(`ls ~ 2> /dev/null`, opts)).toBeNull();
+		expect(checkBash(`find ~ -name x 2>/dev/null | head -3 > /dev/null`, opts)).toBeNull();
+		expect(checkBash("echo x &> /dev/null", opts)).toBeNull();
+		// unknown-role floor: still allowed (writes nothing)
+		expect(checkBash("echo x > /dev/null", { home: HOME, writeAllowlist: ["/tmp"] })).toBeNull();
+		// real devices stay denied
+		expect(checkBash("echo x > /dev/sda", opts)?.rule).toBe("write-block-device");
+		expect(checkBash("echo x > /dev/null0fake", opts)?.rule).toBe("role-write-allowlist");
+	});
 	test("defaultWriteAllowlist floors unknown roles to /tmp", () => {
 		expect(defaultWriteAllowlist(undefined, CWD)).toEqual(["/tmp"]);
 		expect(defaultWriteAllowlist("researcher", CWD)).toEqual([CWD, "/tmp"]);

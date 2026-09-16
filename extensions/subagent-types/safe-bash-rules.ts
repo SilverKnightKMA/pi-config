@@ -199,7 +199,9 @@ function deny(
 
 /** Mandatory-deny + role-allowlist check for a write target (redirect or tee arg). */
 function checkWriteTarget(target: string, ctx: WalkCtx, pos: number, end: number, how: string): BashDenial | null {
-	if (DEV_BLOCK_RE.test(normalizePath(target, ctx.home))) {
+	const norm = normalizePath(target, ctx.home);
+	if (norm === "/dev/null") return null; // universal idiom (2>/dev/null etc.) — discarding output writes nothing
+	if (DEV_BLOCK_RE.test(norm)) {
 		return deny(
 			"write-block-device",
 			`write to a block device (${target})`,
