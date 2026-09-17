@@ -60,7 +60,12 @@ const lessonsIdx = read("lessons/index.ts");
 	});
 
 	test("A: real auto-report prefix at the emit site", () => {
-		expect(subIdx).toContain("`[auto-report] Subagent ${who} (${agentId}) finished");
+		// v1.4.99 #112: the builder moved to auto-report-join.ts (group-join
+		// batching); index.ts keeps the send wiring. Pin BOTH sides.
+		const subJoin = read("subagent-types/auto-report-join.ts");
+		expect(subJoin).toContain("`[auto-report] Subagent ${who} (${agentId}) finished");
+		expect(subJoin).toContain("`[auto-report] ${pings.length} subagents finished");
+		expect(subIdx).toContain("flushJoinWindow");
 	});
 
 	test("A: real channel-nack prefix with agentId + reason", () => {

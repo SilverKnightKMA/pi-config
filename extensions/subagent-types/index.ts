@@ -261,11 +261,6 @@ export function shouldAutoPing(role: string | undefined, calledMessageMain: bool
 	return !poolChild && resolvedIdentity && !!role && role !== MAIN_ROLE && !calledMessageMain;
 }
 
-export function buildAutoPing(role: string, agentId: string, title: string | undefined): string {
-	const who = title ? `${role} "${title}"` : role;
-	return `[auto-report] Subagent ${who} (${agentId}) finished and went idle without calling message_main. Use paseo_activity(agentId) if you need its result.`;
-}
-
 /**
  * v1.4.51: is any goal run currently running. v1.4.90 (#103): moved to
  * _shared/unattended.ts (single source of truth for the unattended window -
@@ -274,6 +269,16 @@ export function buildAutoPing(role: string, agentId: string, title: string | und
  */
 export { goalWakeActive, planWakeActive } from "../_shared/unattended.ts";
 import { goalWakeActive, planWakeActive } from "../_shared/unattended.ts";
+import {
+	appendPending,
+	buildAutoPing,
+	buildBatchText,
+	claimPending,
+	joinMsFromEnv,
+	readPending,
+	windowDelayMs,
+} from "./auto-report-join.ts";
+export { buildAutoPing } from "./auto-report-join.ts";
 
 /** Identity mapping retained for call sites; .md files now use live names. */
 export function mapToolName(tool: string): string {
@@ -623,6 +628,24 @@ async function kickOutbound(): Promise<void> {
 		if (!mainId || !myAgentId) return;
 		const endpoint = findMcpEndpoint(myAgentId);
 		if (!endpoint) return;
+		const ep: McpEndpoint = endpoint; // narrowed copy — closures keep the guard's guarantee (MƯỢN #111 from @tintinweb/pi-subagents): batch
+		// sibling settles into ONE combined [auto-report] so an ad-hoc fan-out
+		// (N spawn_subagent finishing near each other) wakes main once instead
+		// of shredding it into N turns. Window = AUTO_REPORT_JOIN_MS (default
+		// 10s) from the FIRST pending line; every appender arms the same
+		// absolute end; rename-claim picks one flusher; latecomers open the next
+		// window (straggler re-batch). JOIN_MS=0 → legacy immediate send.
+		const joinMs = joinMsFromEnv(process.env.AUTO_REPORT_JOIN_MS);
+		if (joinMs > 0) {
+			appendPending(mainId, { agentId: myAgentId, role: myRole, title: self.title, ts: new Date().toISOString() });
+			const delay = windowDelayMs(readPending(mainId), joinMs);
+			const t = setTimeout(() => {
+				void flushJoinWindow(mainId, ep);
+			}, delay);
+			t.unref?.(); // never hold the process open for a backstop
+			return;
+		}
+
 		const text = buildAutoPing(myRole, myAgentId, self.title);
 		const msg: ChannelMessage = {
 			id: `${Date.now()}-ap`,
@@ -633,6 +656,27 @@ async function kickOutbound(): Promise<void> {
 		};
 		try {
 			await sendToMain(endpoint, mainId, msg); // busy-main → queue; idle-main → wake now
+		} catch {
+			// never let a reporting backstop break settlement
+		}
+	}
+
+	/** Claim the window and send ONE combined notice; null-safe and
+	 *  throw-safe by design (a backstop must never break settlement). */
+	async function flushJoinWindow(mainId: string, endpoint: McpEndpoint): Promise<void> {
+		try {
+			const pings = claimPending(mainId);
+			if (!pings || pings.length === 0) return; // a sibling flushed first / empty window
+			const text = buildBatchText(pings);
+			const last = pings[pings.length - 1];
+			const msg: ChannelMessage = {
+				id: `${Date.now()}-apj`,
+				from: last.agentId,
+				fromRole: last.role,
+				text,
+				ts: new Date().toISOString(),
+			};
+			await sendToMain(endpoint, mainId, msg);
 		} catch {
 			// never let a reporting backstop break settlement
 		}

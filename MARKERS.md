@@ -73,8 +73,8 @@ consumes to restyle them as cards. Two repos, one contract:
 
 | Field | Value |
 |---|---|
-| Emitted by | `subagent-types` (`buildAutoPing`) |
-| Mechanism | plain message (renders as assistant text) |
+| Emitted by | `subagent-types` (`buildAutoPing`/`buildBatchText` in `auto-report-join.ts`; sent from `autoPingOnSettle`/`flushJoinWindow` in `index.ts`) |
+| Mechanism | plain message (renders as assistant text); v1.4.99 #112: settles within AUTO_REPORT_JOIN_MS batch into ONE combined ping (N≥2 wording) |
 | Line prefix (exact) | `[auto-report] ` |
 | Payload | `Subagent <role> (<agentId>) finished… Use paseo_activity(agentId)…` |
 | Hard limit | ≤ 300 chars, one line, no result payload |
