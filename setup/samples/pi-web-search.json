@@ -1,0 +1,6 @@
+{
+  "exaApiKey": "<YOUR-EXA-API-KEY>",
+  "jinaApiKey": "<YOUR-JINA-API-KEY>",
+  "searxngBaseUrl": "http://<YOUR-SEARXNG-HOST>:<PORT>",
+  "fetchRouting": {}
+}

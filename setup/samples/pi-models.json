@@ -1,0 +1,31 @@
+{
+  "providers": {
+    "cli-openai": {
+      "api": "openai-completions",
+      "apiKey": "<YOUR-API-KEY>",
+      "baseUrl": "https://<YOUR-OPENAI-COMPATIBLE-ENDPOINT>/v1",
+      "compat": {
+        "supportsReasoningEffort": true,
+        "thinkingFormat": "<THINKING-FORMAT>"
+      },
+      "models": [
+        {
+          "id": "<MODEL-ID>",
+          "name": "<MODEL-NAME>",
+          "reasoning": true,
+          "input": [
+            "text"
+          ],
+          "contextWindow": 1048576,
+          "maxTokens": 16384,
+          "cost": {
+            "input": 0.03,
+            "output": 0.16,
+            "cacheRead": 0.01,
+            "cacheWrite": 0.03
+          }
+        }
+      ]
+    }
+  }
+}

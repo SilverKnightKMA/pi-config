@@ -20,7 +20,7 @@
  * --exclude=node_modules leaves them alone).
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -52,7 +52,13 @@ const PACKED = [
 	"web-fetch",
 	"zombie-watchdog",
 ];
-const SKILLS = ["analyze-sessions", "pdf-reader", "task", "teach", "visualize", "youtube-transcript"];
+// Skills ship as directories carrying SKILL.md — auto-listed so a new skill
+// dir is picked up without editing this file (the static list went stale once:
+// 6 of 10 real skills, found 2026-09-17 while building the standalone setup path).
+const SKILLS = readdirSync(devSkills, { withFileTypes: true })
+	.filter((e) => e.isDirectory() && existsSync(path.join(devSkills, e.name, "SKILL.md")))
+	.map((e) => e.name)
+	.sort();
 
 const args = process.argv.slice(2);
 const wantAll = args.length === 0 || args[0] === "all";
@@ -66,10 +72,57 @@ const rsyncArgs = ["-a", "--delete",
 	"--exclude", "*.test.ts",
 	"--exclude", "node_modules",
 	"--exclude", ".tmp*"];
+
+// v1.4.100 (#115): native-Windows support. rsync is not available there, so when
+// it is missing the sync falls back to a pure-node mirror with identical
+// semantics: dst mirrors src for non-excluded entries; excluded names in dst
+// are protected from deletion (live node_modules survive) and never copied.
+const EXCLUDES = [/\.test\.ts$/, /^node_modules$/, /^\.tmp/];
+const isExcluded = (name) => EXCLUDES.some((re) => re.test(name));
+
+function haveRsync() {
+	try {
+		execFileSync("rsync", ["--version"], { stdio: "ignore" });
+		return true;
+	} catch {
+		return false;
+	}
+}
+const useRsync = haveRsync();
+
+function mirrorDir(src, dst) {
+	mkdirSync(dst, { recursive: true });
+	const srcNames = new Set(readdirSync(src));
+	for (const name of readdirSync(dst)) {
+		if (isExcluded(name) || srcNames.has(name)) continue;
+		rmSync(path.join(dst, name), { recursive: true, force: true });
+	}
+	for (const name of srcNames) {
+		if (isExcluded(name)) continue;
+		const s = path.join(src, name);
+		const d = path.join(dst, name);
+		if (statSync(s).isDirectory()) {
+			// type change file→dir in dst would make copyFileSync throw — clear it first.
+			try {
+				if (!statSync(d).isDirectory()) rmSync(d, { force: true });
+			} catch {
+				// dst entry does not exist yet
+			}
+			mirrorDir(s, d);
+		} else {
+			copyFileSync(s, d);
+		}
+	}
+}
+
 function rsync(src, dst) {
 	if (!existsSync(src)) throw new Error(`dev copy missing: ${src}`);
 	mkdirSync(dst, { recursive: true });
-	execFileSync("rsync", [...rsyncArgs, src + "/", dst + "/"], { stdio: "inherit" });
+	if (useRsync) {
+		execFileSync("rsync", [...rsyncArgs, src + "/", dst + "/"], { stdio: "inherit" });
+		return;
+	}
+	mirrorDir(src, dst);
 }
 for (const name of targets) {
 	console.log(`[sync] extensions/${name}/`);
@@ -81,4 +134,5 @@ if (wantSkills) {
 		rsync(path.join(devSkills, name), path.join(liveSkills, name));
 	}
 }
+console.log(useRsync ? "[sync] mode: rsync" : "[sync] mode: node mirror (rsync not found — Windows native path)");
 console.log('[sync] done — run bun test (dev) and pi -p "reply OK" (loader) to verify.');

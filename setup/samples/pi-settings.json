@@ -1,0 +1,37 @@
+{
+  "defaultProvider": "cli-openai",
+  "defaultModel": "cli-openai/<MODEL-ID>:high",
+  "defaultThinkingLevel": "high",
+  "enabledModels": [
+    "cli-openai/<FAST-MODEL-ID>:high",
+    "cli-openai/<MAIN-MODEL-ID>:high",
+    "cli-openai/<REASONING-MODEL-ID>:high"
+  ],
+  "thinkingBudgets": {
+    "minimal": 1024,
+    "low": 4096,
+    "medium": 8192,
+    "high": 16384
+  },
+  "observational-memory": {
+    "models": {
+      "observer": {
+        "provider": "cli-openai",
+        "id": "<FAST-MODEL-ID>",
+        "thinking": "medium"
+      },
+      "consolidator": {
+        "provider": "cli-openai",
+        "id": "<REASONING-MODEL-ID>",
+        "thinking": "high"
+      }
+    },
+    "passive": false,
+    "compactAtContextTokens": 150000
+  },
+  "packages": [
+    "npm:pi-mcp-adapter",
+    "npm:pi-web-access"
+  ],
+  "theme": "dark"
+}
