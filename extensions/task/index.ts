@@ -17,8 +17,10 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync, realpathSync, renameSync, watch, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, realpathSync, renameSync, watch, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { homedir } from "node:os";
+import { randomUUID } from "node:crypto";
 
 import {
 	TASK_STATE,
@@ -111,6 +113,26 @@ export function _setJudgeRunnerForTests(fn: ((packet: string) => Promise<string 
 	judgeRunnerOverride = fn;
 }
 
+/** Session path for a one-shot judge run (v1.4.101): dedicated `--judge--`
+ * subdir under the sessions root, so bulk import skips judge sessions
+ * STRUCTURALLY (path + registry) instead of content fingerprinting. Filename
+ * keeps the `<ts>_<uuid>.jsonl` convention for analyze-sessions/ccusage. */
+export function judgeSessionPath(sessionsRoot: string, at: Date = new Date()): string {
+	const ts = at.toISOString().replace(/:/g, "-").replace(/\./g, "-");
+	return `${sessionsRoot}/--judge--/${ts}_${randomUUID()}.jsonl`;
+}
+
+/** Marker h?ng nh?t cho m?i l?n spawn judge: 1 d?ng JSON. Import filter d?c
+ * registry (path chính xác); fingerprint 6-record ch? c?n fallback cho judge
+ * sinh tru?c v1.4.101. */
+export function appendJudgeRegistry(agentHome: string, entry: { ts: string; cwd: string; path: string }): void {
+	try {
+		appendFileSync(`${agentHome}/judge-sessions.jsonl`, JSON.stringify(entry) + "\n");
+	} catch {
+		// best-effort; the --judge-- subdir is the primary signal
+	}
+}
+
 /** Spawn a headless, tool-less, extension-less pi on the judge model with the
  *  packet as the one prompt. Resolves stdout, or null on any failure/timeout
  *  (the tool layer treats null as judge-unavailable → fail-closed refusal). */
@@ -125,6 +147,15 @@ function runJudge(packet: string, cwd: string): Promise<string | null> {
 			resolve(v);
 		};
 		const pi = resolvePiBinary();
+		// v1.4.101: pin the judge session to a chosen path (--judge-- subdir) + registry line.
+		const agentHome = `${homedir()}/.pi/agent`;
+		const sessionPath = judgeSessionPath(`${agentHome}/sessions`);
+		try {
+			mkdirSync(dirname(sessionPath), { recursive: true });
+		} catch {
+			/* pi có th? t? t?o; spawn failure du?c x? lý du?i */
+		}
+		appendJudgeRegistry(agentHome, { ts: new Date().toISOString(), cwd, path: sessionPath });
 		const argv = [
 			...pi.baseArgs,
 			"--no-extensions",
@@ -134,6 +165,8 @@ function runJudge(packet: string, cwd: string): Promise<string | null> {
 			"--no-builtin-tools",
 			"--model",
 			resolveJudgeModel(cwd),
+			"--session",
+			sessionPath,
 			"-p",
 			packet,
 		];

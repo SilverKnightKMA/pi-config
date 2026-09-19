@@ -116,7 +116,12 @@ describe("zombie-watchdog wiring", () => {
 			},
 		} as never;
 
-		const tick = wire(pi, { now: () => fakeNow, logPath });
+		// isolate from the REAL ~/.pi/agent/zombie-watchdog.runs: a dead process's
+		// open turn on this machine would make recoverStale() prepend a
+		// "crash-recovered" detection into logPath and break this test (observed
+		// live 2026-09-19 after a container restart left stale records).
+		const ledgerDir = join(tmpdir(), `zw-wiring-ledger-${Date.now()}`);
+		const tick = wire(pi, { now: () => fakeNow, logPath, ledgerDir });
 		try {
 			handlers.get("session_start")!(undefined, { hasUI: true, ui, sessionFile: "/tmp/s.jsonl" });
 			handlers.get("turn_start")!();
@@ -144,6 +149,7 @@ describe("zombie-watchdog wiring", () => {
 		} finally {
 			handlers.get("session_shutdown")?.();
 			rmSync(dir, { recursive: true, force: true });
+			rmSync(ledgerDir, { recursive: true, force: true });
 		}
 	});
 });
