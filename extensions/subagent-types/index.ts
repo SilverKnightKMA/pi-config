@@ -41,6 +41,8 @@ import { LoopGuard, loopGuardConfigFromEnv } from "./loop-guard.ts";
 import { validateResearchReport, researchReportDigest } from "./research-report.ts";
 import {
 	createAgent,
+	spawnViaCli,
+	replyDoorNote,
 	findMcpEndpoint,
 	flushKicks,
 	getActivityDigest,
@@ -64,6 +66,7 @@ import {
 	sweepOrphanedSubagents,
 	type ChannelMessage,
 	type McpEndpoint,
+	type SpawnResult,
 } from "./paseo-channel.ts";
 import {
 	POOL_DEFAULT_CONCURRENCY,
@@ -445,7 +448,17 @@ const SpawnParams = Type.Object({
 	name: Type.Optional(Type.String({ description: "Optional display title for the child agent." })),
 	model: Type.Optional(Type.String({ description: "Optional model override for this spawn (model id from paseo_list_models). Ignored when the role pins a model in its .md." })),
 	thinking: Type.Optional(Type.String({ description: "Thinking level for this spawn when the role does not pin one: off | minimal | low | medium | high | xhigh | max." })),
+	provider: Type.Optional(Type.String({ description: "v1.4.102: foreign harness for the child, as provider/model (e.g. codex/gpt-5.6-luna, claude/opus). Default: pi with the role's model. Foreign children get role-free tool access inside their own sandbox." })),
+	mode: Type.Optional(Type.String({ description: "v1.4.102: normalized containment knob — read-only | auto | review | full. Default: auto for foreign children. Enforced by the subagent-reply plugin floor (full needs daemon opt-in); translated per harness (codex/claude presets; pi uses roles)." })),
 });
+
+/** v1.4.102 (#120): the four normalized containment knobs. */
+export const MODE_KNOBS = ["read-only", "auto", "review", "full"] as const;
+
+/** Fail-fast client-side knob check (the plugin floor is the real gate). */
+export function validModeKnob(mode: string | undefined): boolean {
+	return mode === undefined || (MODE_KNOBS as readonly string[]).includes(mode);
+}
 
 /** v1.4.89 (#102): normalize a raw task input into the child-facing text.
  *  Hard validator — malformed objects are rejected with actionable text,
@@ -841,31 +854,60 @@ function resolveSpawnConfig(
 /** Create the child via the daemon MCP + register its name. Shared tail of
  *  both spawn tools. The caller never assembles the create payload itself:
  *  labels must come from this extension or the child's allowlist cannot be
- *  trusted. */
+ *  trusted.
+ *
+ * v1.4.102 (#120): when the parent knows its own agent id, spawns go through
+ * the CLI reply-door carrier (PASEO_PARENT_AGENT_ID env) — the subagent-reply
+ * plugin swaps the child's full daemon MCP catalog for the one-tool
+ * reply_to_parent door. The MCP-endpoint create stays as the standalone
+ * fallback (no agent id → no door, classic channel). */
 async function createChildAgent(
-	params: { role: string; task: string; name?: string; poolId?: string },
+	params: { role: string; task: string; name?: string; poolId?: string; provider?: string; mode?: string },
 	def: RoleDef,
 	cfg: { modelId: string; thinking: string },
 	myAgentIdValue: string | null,
 	endpoint: McpEndpoint,
 ): Promise<{ ok: true; agentId?: string; status?: string } | { ok: false; error: string }> {
 	const title = params.name ?? `${params.role}: ${params.task.slice(0, 40)}`;
-	const initialPrompt = `${def.systemPrompt}\n\n---\nTASK:\n${params.task}`;
+	const foreign = Boolean(params.provider);
+	const initialPrompt = [
+		foreign ? undefined : def.systemPrompt,
+		"---",
+		`TASK:\n${params.task}`,
+		replyDoorNote(foreign),
+	]
+		.filter((s): s is string => s !== undefined)
+		.join("\n\n");
 	const labels = {
 		[ROLE_LABEL]: params.role,
 		...(myAgentIdValue ? { "subagent.parent": myAgentIdValue } : {}),
 		...(params.poolId ? { [POOL_LABEL]: params.poolId } : {}),
 	};
-	const spawned = await createAgent(
-		{
-			provider: providerStringFor(cfg.modelId, "pi"),
+	let spawned: SpawnResult;
+	if (myAgentIdValue) {
+		// Reply-door path: env carrier + containment knob, translated + floored
+		// by the paseo plugin (mode defaults to the contained 'auto' for foreign).
+		spawned = await spawnViaCli({
+			provider: params.provider ?? providerStringFor(cfg.modelId, "pi"),
 			title,
 			labels,
 			initialPrompt,
-			thinkingOptionId: cfg.thinking,
-		},
-		endpoint,
-	);
+			thinkingOptionId: foreign ? "" : cfg.thinking,
+			parentAgentId: myAgentIdValue,
+			mode: foreign ? (params.mode ?? "auto") : params.mode,
+		});
+	} else {
+		spawned = await createAgent(
+			{
+				provider: params.provider ?? providerStringFor(cfg.modelId, "pi"),
+				title,
+				labels,
+				initialPrompt,
+				thinkingOptionId: cfg.thinking,
+			},
+			endpoint,
+		);
+	}
 	if (!spawned.ok) return { ok: false, error: spawned.error ?? "unknown error" };
 	if (params.name && spawned.agentId) {
 		// Name registry: re-address this child by name later
@@ -919,7 +961,14 @@ async function createChildAgent(
 			const gate = roleGate(params);
 			if ("text" in gate) return { content: [{ type: "text" as const, text: gate.text }], details: { spawnable: gate.spawnable } };
 
-			const cfg = resolveSpawnConfig(params, gate.def, ctx);
+			if (!validModeKnob(params.mode)) {
+				return { content: [{ type: "text" as const, text: `mode "${params.mode}" is not a normalized knob (read-only | auto | review | full).` }], details: { role: params.role } };
+			}
+			// v1.4.102 (#120): foreign providers skip pi model/thinking resolution —
+			// containment is the normalized mode knob, translated by the plugin.
+			const cfg = params.provider
+				? { kind: "ready" as const, modelId: "", thinking: "" }
+				: resolveSpawnConfig(params, gate.def, ctx);
 			if (cfg.kind !== "ready") return { content: [{ type: "text" as const, text: cfg.text }], details: { role: params.role } };
 
 			const endpoint = findMcpEndpoint(myAgentId);
@@ -1022,7 +1071,14 @@ async function createChildAgent(
 			const gate = roleGate(params);
 			if ("text" in gate) return { content: [{ type: "text" as const, text: gate.text }], details: { spawnable: gate.spawnable } };
 
-			const cfg = resolveSpawnConfig(params, gate.def, ctx);
+			if (!validModeKnob(params.mode)) {
+				return { content: [{ type: "text" as const, text: `mode "${params.mode}" is not a normalized knob (read-only | auto | review | full).` }], details: { role: params.role } };
+			}
+			// v1.4.102 (#120): foreign providers skip pi model/thinking resolution —
+			// containment is the normalized mode knob, translated by the plugin.
+			const cfg = params.provider
+				? { kind: "ready" as const, modelId: "", thinking: "" }
+				: resolveSpawnConfig(params, gate.def, ctx);
 			if (cfg.kind !== "ready") return { content: [{ type: "text" as const, text: cfg.text }], details: { role: params.role } };
 
 			const endpoint = findMcpEndpoint(myAgentId);

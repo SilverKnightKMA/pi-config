@@ -157,6 +157,89 @@ export async function createAgent(req: SpawnRequest, endpoint: McpEndpoint): Pro
 }
 
 // ---------------------------------------------------------------------------
+// v1.4.102 (#120): CLI spawn path — the reply-door carrier.
+//
+// `paseo run` is the ONLY creation path whose create_agent_request carries
+// env (the MCP create_agent tool has no env parameter, and the
+// before("agent.create") plugin hook only sees {config, env}). Children
+// spawned here with PASEO_PARENT_AGENT_ID get the subagent-reply plugin's
+// scoped one-tool door instead of the daemon's full MCP catalog — pi children
+// included, so every child speaks the same child→parent protocol.
+// ---------------------------------------------------------------------------
+
+export interface CliSpawnRequest extends SpawnRequest {
+	/** Parent paseo agent id — becomes the env carrier the plugin consumes. */
+	parentAgentId: string;
+	/** Normalized containment knob: read-only | auto | review | full. */
+	mode?: string;
+}
+
+/** Pure argv builder (tested): every option is a separate argv entry — no
+ *  shell interpolation anywhere (execFile, not exec). */
+export function buildSpawnCliArgs(req: CliSpawnRequest): string[] {
+	const args = ["run", "-d", "--json", "--provider", req.provider, "--title", req.title];
+	for (const [k, v] of Object.entries(req.labels)) args.push("--label", `${k}=${v}`);
+	args.push("--env", `PASEO_PARENT_AGENT_ID=${req.parentAgentId}`);
+	if (req.mode) args.push("--env", `PASEO_CHILD_MODE=${req.mode}`);
+	if (req.thinkingOptionId) args.push("--thinking", req.thinkingOptionId);
+	args.push(req.initialPrompt);
+	return args;
+}
+
+/** Parse `paseo run -d --json` output. Single JSON object expected; a
+ *  line-scan fallback keeps this robust if the CLI ever prefixes lines. */
+export function parseCliSpawnOutput(out: string): { agentId?: string; status?: string } | null {
+	const attempt = (v: unknown): { agentId?: string; status?: string } | null =>
+		v && typeof v === "object" && typeof (v as { agentId?: unknown }).agentId === "string"
+			? (v as { agentId?: string; status?: string })
+			: null;
+	try {
+		const direct = attempt(JSON.parse(out));
+		if (direct) return direct;
+	} catch {
+		// fall through to line scan
+	}
+	for (const line of out.split("\n")) {
+		try {
+			const hit = attempt(JSON.parse(line));
+			if (hit) return hit;
+		} catch {
+			// next line
+		}
+	}
+	return null;
+}
+
+/** Create the child via the CLI reply-door path. Background (-d): returns as
+ *  soon as the daemon created the agent (no finish notification — the session
+ *  create path never registers one, so the parent's stream is never aborted). */
+export async function spawnViaCli(req: CliSpawnRequest, cwd?: string, bin = "paseo"): Promise<SpawnResult> {
+	const { execFile } = await import("node:child_process");
+	return new Promise((resolve) => {
+		execFile(
+			bin,
+			buildSpawnCliArgs(req),
+			{ cwd: cwd ?? process.cwd(), timeout: 90_000, maxBuffer: 4 * 1024 * 1024 },
+			(err, stdout, stderr) => {
+				if (err) {
+					resolve({
+						ok: false,
+					error: `paseo run failed: ${err.message}${stderr ? ` :: ${String(stderr).slice(0, 300)}` : ""}`,
+				});
+					return;
+				}
+				const parsed = parseCliSpawnOutput(String(stdout));
+				if (!parsed?.agentId) {
+					resolve({ ok: false, error: `unexpected paseo run output: ${String(stdout).slice(0, 300)}` });
+					return;
+				}
+				resolve({ ok: true, agentId: parsed.agentId, status: parsed.status });
+			},
+		);
+	});
+}
+
+// ---------------------------------------------------------------------------
 // File queue (persistent, cross-process, no daemon involvement)
 // ---------------------------------------------------------------------------
 
@@ -642,4 +725,25 @@ export async function waitForReply(
 		if (Date.now() >= deadline) return undefined;
 		await new Promise((r) => setTimeout(r, Math.min(pollMs, deadline - Date.now())));
 	}
+}
+
+// ---------------------------------------------------------------------------
+// v1.4.102 (#120): reply-door prompt note (one protocol, all providers)
+// ---------------------------------------------------------------------------
+
+/** Reply-door instruction appended to every child's initial prompt. */
+export function replyDoorNote(foreign: boolean): string {
+	return foreign
+		? [
+				"REPLY PROTOCOL (mandatory):",
+				"- Your ONLY channel back to the parent agent that spawned you is the MCP tool `reply_to_parent` (prompt: string).",
+				"- Call it with your final report, key findings, questions, or when you need a decision before continuing.",
+				"- Do NOT try to reach any other agent, file, or notification channel — none are available to you.",
+			].join("\n")
+		: [
+				"REPLY PROTOCOL:",
+				"- Preferred channel to the parent that spawned you: message_main (batched, supports ask_question).",
+				"- Universal fallback (also the ONLY channel foreign harnesses have): the MCP tool `reply_to_parent` (prompt: string).",
+				"- Report via exactly one of the two — never duplicate a report through both.",
+			].join("\n");
 }
