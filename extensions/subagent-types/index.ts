@@ -36,6 +36,12 @@ import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { Type } from "@sinclair/typebox";
 import { REPLY_DOOR_TOOL, findDoorUrlForAgent, callReplyDoor } from "./door-tool.ts";
+import {
+	readArchiveRemindMinutes,
+	toIdleChildren,
+	shouldRemindIdleArchive,
+	ARCHIVE_REMIND_REARM_MS,
+} from "./idle-archive.ts";
 import safeBash from "./safe-bash.ts";
 import registerReadonlyTools from "./readonly-tools.ts";
 import { LoopGuard, loopGuardConfigFromEnv } from "./loop-guard.ts";
@@ -516,6 +522,12 @@ export default function subagentTypes(pi: ExtensionAPI) {
 		readSettingsJson(join(process.cwd(), ".pi", "settings.json")),
 		readSettingsJson(join(homedir(), ".pi", "agent", "settings.json")),
 	);
+	// #129 idle-archive reminder: minutes of collective child idleness before
+	// nudging the parent to archive (15 default, 0 disables, workspace wins).
+	const archiveRemindMinutes = readArchiveRemindMinutes(
+		readSettingsJson(join(process.cwd(), ".pi", "settings.json")),
+		readSettingsJson(join(homedir(), ".pi", "agent", "settings.json")),
+	);
 	let myRole: string | undefined;
 	let myAgentId: string | null = null;
 	let messageMainCalledThisRun = false;
@@ -630,6 +642,40 @@ async function kickOutbound(): Promise<void> {
 	}
 }
 
+	// #129 idle-archive reminder: REMIND, never auto-archive (user-approved
+	// 2026-09-20). Fires when every child is quiescent (no running/initializing,
+	// no parked/attention child) and the NEWEST has been idle ≥ the configured
+	// minutes; one steer-injected line with a paste-ready command — it lands in
+	// the CURRENT run and never wakes an idle parent for housekeeping.
+	// Archive safety (verified live 2026-09-20): soft-delete; sending to an
+	// archived child auto-unarchives it, so reminders can never strand work.
+	let archiveRemindArmed = true;
+	let lastArchiveRemindAt = 0;
+	let archiveRemindInFlight = false;
+	async function maybeRemindIdleArchive(): Promise<void> {
+		if (archiveRemindInFlight || !myAgentId || archiveRemindMinutes <= 0) return;
+		if (!archiveRemindArmed && Date.now() - lastArchiveRemindAt < ARCHIVE_REMIND_REARM_MS) return;
+		const endpoint = findMcpEndpoint(myAgentId);
+		if (!endpoint) return;
+		archiveRemindInFlight = true;
+		try {
+			const children = toIdleChildren(await listAgents(endpoint, { limit: 200 }), myAgentId);
+			const r = shouldRemindIdleArchive(children, Date.now(), archiveRemindMinutes);
+			if (!r) return;
+			archiveRemindArmed = false;
+			lastArchiveRemindAt = Date.now();
+			pi.sendUserMessage(
+				`[housekeeping] ${children.length} subagents đã idle ≥${archiveRemindMinutes} phút, không con nào đang chạy/parked. Archive để giữ danh sách gọn (soft-delete — gửi tin cho con sẽ tự unarchive, đã verify):
+${r.command}`,
+				{ deliverAs: "steer" },
+			);
+		} catch {
+			// never throw from an event handler; the next turn retries
+		} finally {
+			archiveRemindInFlight = false;
+		}
+	}
+
 	// v1.2.7 delivery pivot — user-role instead of custom messages.
 	// Custom messages are turn-start cut points in pi core: injected mid-run
 	// they desync the daemon's turn state (app shows no STOP while streaming,
@@ -637,6 +683,7 @@ async function kickOutbound(): Promise<void> {
 	// delivery renders as a user_message the app + plugins can transform.
 	pi.on("turn_end", () => {
 		void kickOutbound();
+		void maybeRemindIdleArchive();
 		const msgs = flushInbound().map(annotateNudged);
 		if (msgs.length === 0) return;
 		// steer keeps the report inside the CURRENT run (flushed at the next
@@ -945,6 +992,7 @@ async function createChildAgent(
 		);
 	}
 	if (!spawned.ok) return { ok: false, error: spawned.error ?? "unknown error" };
+	archiveRemindArmed = true; // fresh spawn re-arms the idle-archive reminder (#129)
 	if (params.name && spawned.agentId) {
 		// Name registry: re-address this child by name later
 		// (message_subagent name=..., resume after it finishes).

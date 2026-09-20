@@ -121,3 +121,14 @@ Never scanned yet (open if needed):
 
 | 2026-09-16 | **pi-crew** (EVAL mode-2: @melihmucuk/pi-crew 1.0.34 + npm pi-crew 0.11.0 phát hiện là project khác của baphuongna) | `learn/pi-crew-eval-2026-09-16.md` (14.5KB) | Đề xuất **DROP cả 2 + BORROW 2 mảnh**: (1) reminder-once khi child xong task không nộp report (bổ trợ research_report), (2) structured task schema {goal,context,instructions} cho spawn_pool/subagent task text. Trùng ~90% subagent-types; in-process + RAM state vs disk-is-truth/daemon-owns-children. **Chờ user chốt** |
 | 2026-09-17 | **@tintinweb/pi-subagents** (EVAL mode-2: tarball npm 0.19.0, MIT — focus 2 cơ chế group-join + consume-dedupe theo duyệt chat #95 channel 3/5) | `learn/tintinweb-pi-subagents-eval-2026-09-17.md` (10.9KB) | User chốt 2026-09-17 (#111): **MƯỢN group-join** (timer-from-first-completion + straggler re-batch + implicit parent grouping, viết lại ~60 dòng vào subagent-types, port task #112) **· DROP consume-dedupe** (trùng shouldAutoPing/calledMessageMain consume-mark; hardening re-check-at-send-time ghi sổ khi-đau) · 6 mảnh nhỏ giữ "gộp khi đau" |
+
+## Landscape: subagent lifecycle / auto-archive / agent GC (2026-09-20, #129)
+| Ứng viên | Cơ chế | Verdict |
+|---|---|---|
+| pi-cleanup | `/cleanup` dry-run xóa cruft ~/.pi (session >14 ngày, run-N >7 ngày) | DROP cho #129 (lớp đĩa pi, không phải Paseo records); SET ASIDE riêng cho hygiene ~/.pi |
+| @ogulcancelik/pi-codex-subagents | retentionDays=7 xóa run codex lúc load | DROP (lớp đĩa codex) |
+| pi-tmux-subagents | auto-stop con tmux đã xong | DROP — daemon Paseo đã có tương đương: flag autoArchive = archive-on-terminal (verify registerAutoArchiveOnTerminalState); archive-ngay giết resume-by-name |
+| pi-session-cleanup | TUI batch-select xóa session | DROP (TUI-only) |
+| oh-my-opencode (opencode) | taskCleanupDelayMs 10m / taskTtlMs 30m / staleTimeoutMs 3m | BORROW defaults (bộ số anchor cho ngưỡng nhắc) |
+| Claude Code | không có — pain đang mở issue #27639/#58154 | (bằng chứng ngược: chưa ai giải upstream) |
+Quyết định user 2026-09-20: build in-house trong subagent-types — reminder 15 phút (≥3 con, loại parked/waiting, re-arm khi spawn mới hoặc 60 phút), không auto-archive. Archive soft-delete đã verify wake-tự-unarchive (9ebf7be6 → ARCHIVED-WOKE). Ship v1.4.106.

@@ -419,6 +419,12 @@ export interface AgentListItem {
 	id: string;
 	status: string | null;
 	labels: Record<string, string> | null;
+	/** ISO timestamps as served by list_agents (present since daemon ≥0.8);
+	 * null when the payload omits them. Used by the idle-archive reminder. */
+	lastActivityAt?: string | null;
+	updatedAt?: string | null;
+	attentionTimestamp?: string | null;
+	title?: string | null;
 }
 
 /** Pure: unwrap list_agents payloads across the shapes seen on the wire
@@ -441,7 +447,16 @@ export function parseAgentList(data: unknown): AgentListItem[] {
 			raw.labels && typeof raw.labels === "object" && !Array.isArray(raw.labels)
 				? (raw.labels as Record<string, string>)
 				: null;
-		out.push({ id, status, labels });
+		const str = (v: unknown): string | null => (typeof v === "string" && v.length > 0 ? v : null);
+		out.push({
+			id,
+			status,
+			labels,
+			lastActivityAt: str(raw.lastActivityAt),
+			updatedAt: str(raw.updatedAt),
+			attentionTimestamp: str(raw.attentionTimestamp),
+			title: str(raw.title),
+		});
 	}
 	return out;
 }
