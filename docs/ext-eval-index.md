@@ -132,3 +132,16 @@ Never scanned yet (open if needed):
 | oh-my-opencode (opencode) | taskCleanupDelayMs 10m / taskTtlMs 30m / staleTimeoutMs 3m | BORROW defaults (bộ số anchor cho ngưỡng nhắc) |
 | Claude Code | không có — pain đang mở issue #27639/#58154 | (bằng chứng ngược: chưa ai giải upstream) |
 Quyết định user 2026-09-20: build in-house trong subagent-types — reminder 15 phút (≥3 con, loại parked/waiting, re-arm khi spawn mới hoặc 60 phút), không auto-archive. Archive soft-delete đã verify wake-tự-unarchive (9ebf7be6 → ARCHIVED-WOKE). Ship v1.4.106.
+
+## Landscape: port subagent-types -> Paseo plugin 100% (2026-09-20, EVAL nội bộ /skill:pi-ext-eval)
+Câu hỏi: toàn bộ subagent stack của pi (spawn, kênh, pool/swarm, reminder) port thành Paseo plugin để mọi harness dùng không?
+| Khối | Verdict |
+|---|---|
+| spawn + blocking wait | PORT (agents.create có env+labels+parent native — sạch hơn CLI carrier; waitForFinish/subscribe có sẵn) |
+| reply door + mode floor + idle-archive | PORT (door+floor đã là plugin từ v1.0.67/v1.4.102; reminder chạy 24/7 tốt hơn turn_end) |
+| pool/swarm, kênh truyền | PORT (send() envelope thay file-queue = hướng F2; plugin giữ pool state) |
+| ask_question park-reply | PORT ĐIỀU KIỆN (blocking MCP tool = F4/CANDIDATE deferred; per-harness MCP timeout) |
+| role allowlist tool-level + gates pi (research_report/readonly floor/safe-bash/loop-guard) | KHÔNG PORT (pi session API — giữ ở extension, chỉ áp dụng khi child là pi) |
+| pi main/children zero-residue | KHÔNG — cần shim mỏng (tổng quát hóa door-tool.ts: proxy mọi mcp__paseo__* từ record) vì pi 0.85.1 http-MCP gap |
+Tổng: ~90% port được, phần port chạy sạch hơn. Rủi ro phải verify: before(agent.create) cho main từ app UI (mới có bằng chứng CLI path).
+Quyết định user 2026-09-20 (verbatim): "cái này breaking changes đấy, chắc cần phải plan lại kỹ hơn, mình sẽ bật plan mode" — KHÔNG mở task build; vào plan mode (learn/decision-2026-09-20-plugin-port.md).
