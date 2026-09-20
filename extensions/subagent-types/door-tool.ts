@@ -18,6 +18,7 @@
  */
 import { readdirSync, readFileSync, type Dirent } from "node:fs";
 import { join } from "node:path";
+import { Type, type TSchema } from "@sinclair/typebox";
 
 export const REPLY_DOOR_TOOL = "reply_to_parent";
 
@@ -129,5 +130,125 @@ export async function callReplyDoor(
 		return { ok: true, text: text ?? "delivered" };
 	} catch (err) {
 		return { ok: false, error: `reply door unreachable: ${String(err)}` };
+	}
+}
+
+/** Map a door tool's JSON Schema (loose) to a TypeBox object — deterministic,
+ *  unknown property types degrade to string; optional honored via `required`. */
+export function doorSchemaToTypeBox(
+	schema: Record<string, unknown> | undefined,
+	isReplyLegacy: boolean,
+): TSchema {
+	if (isReplyLegacy && !schema) {
+		return Type.Object({
+			prompt: Type.String({ description: "Your report, key findings, question, or decision request for the parent." }),
+		});
+	}
+	if (!schema || typeof schema !== "object") return Type.Object({});
+	const props = schema.properties as Record<string, Record<string, unknown>> | undefined;
+	if (!props || typeof props !== "object") return Type.Object({});
+	const required = new Set(Array.isArray(schema.required) ? (schema.required as unknown[]).map(String) : []);
+	const out: Record<string, TSchema> = {};
+	for (const [key, p] of Object.entries(props)) {
+		const desc = typeof p?.description === "string" ? p.description : undefined;
+		let t: TSchema;
+		switch (p?.type) {
+			case "number":
+			case "integer":
+				t = Type.Number({ description: desc });
+				break;
+			case "boolean":
+				t = Type.Boolean({ description: desc });
+				break;
+			case "array":
+				t = Type.Array(Type.Unknown(), { description: desc });
+				break;
+			default:
+				t = Type.String({ description: desc });
+		}
+		out[key] = required.has(key) ? t : Type.Optional(t);
+	}
+	return Type.Object(out);
+}
+
+// ── Door proxy generalization (#142 / plan step 8) ────────────────────────
+// The scoped door already filters its tool list by caller (canSpawn/depth).
+// A pi child cannot register http MCP tools natively (pi 0.85.1), so the
+// shim fetches tools/list ONCE from the door and registers a native proxy
+// for every tool it is allowed to see — reply_to_parent today, spawn tools
+// when the role permits grandchildren. Fail-closed: fetch error → fall back
+// to registering reply_to_parent only (v1.4.103 behavior).
+
+export interface DoorToolSpec {
+	name: string;
+	description?: string;
+	inputSchema?: Record<string, unknown>;
+}
+
+export type DoorToolsResult = { ok: true; tools: DoorToolSpec[] } | { ok: false; error: string };
+
+/** POST tools/list to the scoped door. Never throws. */
+export async function fetchDoorTools(
+	url: string,
+	fetchImpl: DoorFetch = fetch as unknown as DoorFetch,
+): Promise<DoorToolsResult> {
+	const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+	try {
+		const res = await fetchImpl(url, {
+			method: "POST",
+			headers: { "content-type": "application/json", accept: "application/json" },
+			body,
+			signal: AbortSignal.timeout(10_000),
+		});
+		if (res.status === 401) {
+			return { ok: false, error: "door rejected this session's caller token (401) — token stale after daemon/plugin restart" };
+		}
+		const data = (await res.json().catch(() => null)) as
+			| { error?: { code?: number; message?: string }; result?: { tools?: Array<{ name?: string; description?: string; inputSchema?: Record<string, unknown> }> } }
+			| null;
+		if (!data) return { ok: false, error: `door tools/list returned non-JSON (HTTP ${res.status})` };
+		if (data.error) return { ok: false, error: `door tools/list error ${data.error.code ?? ""}: ${data.error.message ?? "unknown"}` };
+		const tools = (data.result?.tools ?? [])
+			.filter((t): t is { name: string; description?: string; inputSchema?: Record<string, unknown> } => typeof t?.name === "string" && t.name.length > 0)
+			.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }));
+		return { ok: true, tools };
+	} catch (err) {
+		return { ok: false, error: `door unreachable: ${String(err)}` };
+	}
+}
+
+/** POST one tools/call for ANY door tool. Never throws. */
+export async function callDoorTool(
+	url: string,
+	name: string,
+	args: Record<string, unknown>,
+	fetchImpl: DoorFetch = fetch as unknown as DoorFetch,
+): Promise<DoorResult> {
+	const body = JSON.stringify({
+		jsonrpc: "2.0",
+		id: 1,
+		method: "tools/call",
+		params: { name, arguments: args },
+	});
+	try {
+		const res = await fetchImpl(url, {
+			method: "POST",
+			headers: { "content-type": "application/json", accept: "application/json" },
+			body,
+			signal: AbortSignal.timeout(60_000),
+		});
+		if (res.status === 401) {
+			return { ok: false, error: `door rejected this session's caller token (401) for tool '${name}' — token stale after restart` };
+		}
+		const data = (await res.json().catch(() => null)) as
+			| { error?: { code?: number; message?: string }; result?: { isError?: boolean; content?: Array<{ text?: string }> } }
+			| null;
+		if (!data) return { ok: false, error: `door returned non-JSON (HTTP ${res.status}) for tool '${name}'` };
+		if (data.error) return { ok: false, error: `door error ${data.error.code ?? ""} for tool '${name}': ${data.error.message ?? "unknown"}` };
+		const text = data.result?.content?.[0]?.text;
+		if (data.result?.isError) return { ok: false, error: text ?? `door tool '${name}' failed` };
+		return { ok: true, text: text ?? "ok" };
+	} catch (err) {
+		return { ok: false, error: `door unreachable for tool '${name}': ${String(err)}` };
 	}
 }

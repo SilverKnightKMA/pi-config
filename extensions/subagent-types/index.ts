@@ -35,7 +35,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { Type } from "@sinclair/typebox";
-import { REPLY_DOOR_TOOL, findDoorUrlForAgent, callReplyDoor } from "./door-tool.ts";
+import { REPLY_DOOR_TOOL, findDoorUrlForAgent, fetchDoorTools, callDoorTool, doorSchemaToTypeBox, type DoorToolSpec } from "./door-tool.ts";
 import {
 	readArchiveRemindMinutes,
 	toIdleChildren,
@@ -586,21 +586,43 @@ export default function subagentTypes(pi: ExtensionAPI) {
 	// subagent-reply plugin at spawn time). Main agents never match the door
 	// shape (/mcp + caller token), so they never see this tool.
 	const registerReplyDoorTool = (doorUrl: string): void => {
+		// #142 (plan step 8): fetch tools/list from the scoped door and register a
+		// native proxy for EVERY tool this caller may see (door filters by
+		// canSpawn/depth — fail-closed by construction). Fetch error → fall back
+		// to the v1.4.103 single reply_to_parent tool so nothing regresses.
+		void (async () => {
+			const list = await fetchDoorTools(doorUrl);
+			const tools: DoorToolSpec[] = list.ok ? list.tools.filter((t) => t.name === REPLY_DOOR_TOOL || /^[a-z][a-z0-9_]*$/.test(t.name)) : [];
+			if (!list.ok || !tools.some((t) => t.name === REPLY_DOOR_TOOL)) {
+				registerSingleDoorTool(doorUrl);
+			return;
+			}
+			for (const t of tools) registerDoorProxy(doorUrl, t);
+		})();
+	};
+
+	/** v1.4.103 behavior — one hardcoded reply_to_parent (fallback path). */
+	const registerSingleDoorTool = (doorUrl: string): void => {
+		registerDoorProxy(doorUrl, { name: REPLY_DOOR_TOOL });
+	};
+
+	const registerDoorProxy = (doorUrl: string, spec: DoorToolSpec): void => {
+		const isReply = spec.name === REPLY_DOOR_TOOL;
 		pi.registerTool({
-			name: REPLY_DOOR_TOOL,
-			label: REPLY_DOOR_TOOL,
+			name: spec.name,
+			label: spec.name,
 			description:
-				"Deliver your report/question to the parent agent that spawned you. Universal channel — identical on every harness; the caller token in your door URL pins the destination, you cannot address anyone else. If message_main is also available, send each report through exactly ONE of them, never duplicate.",
-			parameters: Type.Object({
-				prompt: Type.String({ description: "Your report, key findings, question, or decision request for the parent." }),
-			}),
+				isReply
+					? "Deliver your report/question to the parent agent that spawned you. Universal channel — identical on every harness; the caller token in your door URL pins the destination, you cannot address anyone else. If message_main is also available, send each report through exactly ONE of them, never duplicate."
+					: spec.description ?? `Paseo subagent door tool '${spec.name}' (proxied through the scoped door of this agent).`,
+			parameters: doorSchemaToTypeBox(spec.inputSchema, isReply),
 			async execute(_id, params) {
-				const r = await callReplyDoor(doorUrl, params.prompt);
+				const r = await callDoorTool(doorUrl, spec.name, params as Record<string, unknown>);
 				return {
 					content: [{ type: "text" as const, text: r.ok ? `DELIVERED to parent: ${r.text}` : `DELIVERY FAILED — ${r.error}` }],
 					details: {},
-			};
-			},
+				};
+		},
 		});
 	};
 
