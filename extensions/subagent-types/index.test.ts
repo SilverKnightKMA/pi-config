@@ -121,6 +121,7 @@ describe("allowlistFor — the default-deny core", () => {
 			"edit_mermaid",
 			"render_mermaid",
 			"read",
+			"reply_to_parent",
 			"message_main",
 			"message_subagent",
 			"ask_question",

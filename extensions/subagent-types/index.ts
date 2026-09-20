@@ -35,6 +35,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { Type } from "@sinclair/typebox";
+import { REPLY_DOOR_TOOL, findDoorUrlForAgent, callReplyDoor } from "./door-tool.ts";
 import safeBash from "./safe-bash.ts";
 import registerReadonlyTools from "./readonly-tools.ts";
 import { LoopGuard, loopGuardConfigFromEnv } from "./loop-guard.ts";
@@ -190,6 +191,7 @@ export function floorTools(): string[] {
 		"find",
 		"ls",
 		"message_main",
+		REPLY_DOOR_TOOL,
 		"enter_plan_mode",
 		"write_plan",
 		"exit_plan_mode",
@@ -211,7 +213,7 @@ export function allowlistFor(role: string | undefined, roles: Map<string, RoleDe
 	// Channel tools are always available to defined roles (a subagent that
 	// cannot ask its main, or a main that cannot steer its children, defeats
 	// the point of the channel).
-	const out = [...new Set([...def.tools.map(mapToolName), "message_main", "message_subagent", "ask_question"])];
+	const out = [...new Set([...def.tools.map(mapToolName), REPLY_DOOR_TOOL, "message_main", "message_subagent", "ask_question"])];
 	// The blocking wrapper travels with spawn_subagent (same internal role
 	// gate re-checks spawnableRoles per call, so appending it here grants no
 	// extra spawn power — only the call style).
@@ -530,6 +532,14 @@ export default function subagentTypes(pi: ExtensionAPI) {
 			myAgentId = self.agentId;
 			resolved = true;
 
+			// #128: one universal child→parent door — pi children get it as a
+			// native extension tool (pi 0.85.1 does not register http MCP
+			// servers); foreign children already see it over MCP.
+			if (myAgentId) {
+				const doorUrl = findDoorUrlForAgent(PASEO_AGENTS_DIR, myAgentId);
+				if (doorUrl) registerReplyDoorTool(doorUrl);
+			}
+
 			const allowed = allowlistFor(myRole, roles);
 			if (allowed[0] === "*") {
 				ctx.ui.notify(`subagent-types: main agent (full tools)${roles.size ? ` — ${roles.size} roles loadable` : ""}`, "info");
@@ -555,6 +565,29 @@ export default function subagentTypes(pi: ExtensionAPI) {
 			}
 		}
 	}
+
+	// #128: the universal child→parent door, registered for spawned children
+	// whose agent record carries the scoped door URL (written by the
+	// subagent-reply plugin at spawn time). Main agents never match the door
+	// shape (/mcp + caller token), so they never see this tool.
+	const registerReplyDoorTool = (doorUrl: string): void => {
+		pi.registerTool({
+			name: REPLY_DOOR_TOOL,
+			label: REPLY_DOOR_TOOL,
+			description:
+				"Deliver your report/question to the parent agent that spawned you. Universal channel — identical on every harness; the caller token in your door URL pins the destination, you cannot address anyone else. If message_main is also available, send each report through exactly ONE of them, never duplicate.",
+			parameters: Type.Object({
+				prompt: Type.String({ description: "Your report, key findings, question, or decision request for the parent." }),
+			}),
+			async execute(_id, params) {
+				const r = await callReplyDoor(doorUrl, params.prompt);
+				return {
+					content: [{ type: "text" as const, text: r.ok ? `DELIVERED to parent: ${r.text}` : `DELIVERY FAILED — ${r.error}` }],
+					details: {},
+			};
+			},
+		});
+	};
 
 	// ── Inbound drain (turn-boundary pickup) ─────────────────────────────
 	// The file queue written by sendToMain/sendToSubagent is drained by the
