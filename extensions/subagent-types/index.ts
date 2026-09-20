@@ -528,12 +528,9 @@ export default function subagentTypes(pi: ExtensionAPI) {
 			sessionIdRef.value = sessionId;
 			const self = resolveSelf(sessionId);
 			if (!self.agentId) return; // record not written yet — retry on next event
-			if (self.role === undefined) {
-				// #128 race (E2E f1-parent-e2e): CLI-spawned records can exist with
-				// sessionId before labels land; locking now would floor a main
-				// agent permanently. Retry on the next event instead.
-				return;
-			}
+			// NOTE (#128 E2E post-mortem): role=undefined for a machine-spawned
+			// record is the ANTI-SPOOF guard working (resolveSelf: parent-stamped
+			// children can never be main), NOT a labels race — lock immediately.
 			myRole = self.role;
 			myAgentId = self.agentId;
 			resolved = true;
