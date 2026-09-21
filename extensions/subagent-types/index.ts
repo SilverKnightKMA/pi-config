@@ -208,7 +208,7 @@ export function floorTools(): string[] {
 }
 
 /** Resolve the active tool allowlist for a role. */
-export function allowlistFor(role: string | undefined, roles: Map<string, RoleDef>): string[] {
+export function allowlistFor(role: string | undefined, roles: Map<string, RoleDef>, doorChild = false): string[] {
 	if (!role) return floorTools();
 	if (role === MAIN_ROLE) {
 		// main keeps every tool the session already has; caller passes "*".
@@ -220,7 +220,10 @@ export function allowlistFor(role: string | undefined, roles: Map<string, RoleDe
 	// Channel tools are always available to defined roles (a subagent that
 	// cannot ask its main, or a main that cannot steer its children, defeats
 	// the point of the channel).
-	const out = [...new Set([...def.tools.map(mapToolName), REPLY_DOOR_TOOL, "message_main", "message_subagent", "ask_question", "ask_parent"])];;
+	// doorChild (#132/F2): con có scoped door KHÔNG nhận message_main — kênh
+	// legacy file-queue thay bằng reply_to_parent/ask_parent qua door (1 cửa).
+	const out = [...new Set([...def.tools.map(mapToolName), REPLY_DOOR_TOOL, "message_subagent", "ask_question", "ask_parent"])] as string[];
+	if (!doorChild) out.push("message_main");
 	// The blocking wrapper travels with spawn_subagent (same internal role
 	// gate re-checks spawnableRoles per call, so appending it here grants no
 	// extra spawn power — only the call style).
@@ -267,10 +270,12 @@ function readSettingsJson(path: string): Record<string, unknown> | null {
  * notice and let main pull the transcript itself (paseo_activity) only when it
  * needs it. No text duplication into main's context.
  */
-export function shouldAutoPing(role: string | undefined, calledMessageMain: boolean, resolvedIdentity: boolean, poolChild = false): boolean {
+export function shouldAutoPing(role: string | undefined, calledMessageMain: boolean, resolvedIdentity: boolean, poolChild = false, doorChild = false): boolean {
 	// poolChild: children spawned by spawn_pool stay silent — the pool driver
 	// owns waking main (ONE aggregate message, not one ping per child).
-	return !poolChild && resolvedIdentity && !!role && role !== MAIN_ROLE && !calledMessageMain;
+	// doorChild (#132/F2): con có scoped door đã được plugin deliver
+	// [child-report] đánh thức parent — auto-ping sẽ thành ping đôi.
+	return !poolChild && !doorChild && resolvedIdentity && !!role && role !== MAIN_ROLE && !calledMessageMain;
 }
 
 /**
@@ -572,7 +577,7 @@ export default function subagentTypes(pi: ExtensionAPI) {
 				if (doorUrl) registerReplyDoorTool(doorUrl);
 			}
 
-			const allowed = allowlistFor(myRole, roles);
+			const allowed = allowlistFor(myRole, roles, Boolean(myRole !== MAIN_ROLE && myAgentId && findDoorUrlForAgent(PASEO_AGENTS_DIR, myAgentId)));
 			if (allowed[0] === "*") {
 				ctx.ui.notify(`subagent-types: main agent (full tools)${roles.size ? ` — ${roles.size} roles loadable` : ""}`, "info");
 			} else {
@@ -757,7 +762,7 @@ ${r.command}`,
 		const self = resolveSelf(sessionIdRef.value);
 		// Pool children skip the backstop entirely — their pool driver in main
 		// owns the wake (one aggregate, not one ping per child; v1.4.44).
-		if (!shouldAutoPing(myRole, messageMainCalledThisRun, resolved, Boolean(self.labels[POOL_LABEL]))) return;
+		if (!shouldAutoPing(myRole, messageMainCalledThisRun, resolved, Boolean(self.labels[POOL_LABEL]), doorChildOf())) return;
 		if (!myRole) return; // belt-and-suspenders narrowing for TS
 		const mainId = self.labels["subagent.parent"] ?? self.labels["paseo.parent-agent-id"];
 		if (!mainId || !myAgentId) return;
@@ -868,9 +873,13 @@ ${r.command}`,
 
 	// Defense in depth: block anything outside the allowlist even if it slips
 	// through before setActiveTools applies (first turn race).
+	// doorChild (#132/F2): con có scoped door — allowlist bỏ message_main
+	// (kênh thay: reply_to_parent/ask_parent qua door).
+	const doorChildOf = (): boolean =>
+		Boolean(myAgentId && myRole && myRole !== MAIN_ROLE && findDoorUrlForAgent(PASEO_AGENTS_DIR, myAgentId));
 	pi.on("tool_call", (event) => {
 		if (myRole === MAIN_ROLE) return;
-		const allowed = allowlistFor(myRole, roles);
+		const allowed = allowlistFor(myRole, roles, doorChildOf());
 		if (allowed.includes("*")) return;
 		const toolName =
 			"toolName" in event && typeof event.toolName === "string" ? event.toolName : undefined;
@@ -1353,6 +1362,13 @@ async function createChildAgent(
 		}),
 		async execute(_id, params) {
 			messageMainCalledThisRun = true;
+			// #132/F2: con có scoped door — proxy thẳng qua door (không ghi
+			// file-queue; plugin deliver [child-report] đánh thức parent).
+			const doorUrl = myAgentId ? findDoorUrlForAgent(PASEO_AGENTS_DIR, myAgentId) : null;
+			if (doorUrl) {
+				const r = await callDoorTool(doorUrl, "reply_to_parent", { prompt: params.message });
+				return { content: [{ type: "text" as const, text: r.ok ? "(đã gửi qua door reply_to_parent) " + r.text : `door delivery failed: ${r.error ?? "unknown"}` }], details: {} };
+			}
 			const parent = myAgentId ? (resolveSelf(sessionIdRef.value).labels["subagent.parent"] ?? null) : null;
 			const mainId = parent ?? (myAgentId ? (resolveSelf(sessionIdRef.value).labels["paseo.parent-agent-id"] ?? null) : null);
 			if (!mainId) {

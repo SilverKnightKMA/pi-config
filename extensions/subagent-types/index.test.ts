@@ -13,6 +13,7 @@ import {
 	MODEL_GUIDANCE,
 	resolveModel,
 	MAIN_ROLE,
+	shouldAutoPing,
 } from "./index";
 import { writeFileSync, mkdirSync, rmSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";
@@ -122,11 +123,14 @@ describe("allowlistFor — the default-deny core", () => {
 			"render_mermaid",
 			"read",
 			"reply_to_parent",
-			"message_main",
 			"message_subagent",
 			"ask_question",
 			"ask_parent",
+			"message_main",
 		]);
+		// #132/F2: door child KHÔNG nhận message_main (kênh legacy file-queue)
+		expect(allowlistFor("mermaid-maker", roles, true)).not.toContain("message_main");
+		expect(allowlistFor("mermaid-maker", roles, true)).toContain("reply_to_parent");
 	});
 
 	test("UNKNOWN role → read-only floor (default-deny)", () => {
@@ -357,5 +361,13 @@ describe("MODEL_GUIDANCE", () => {
 		expect(MODEL_GUIDANCE).toContain("thinkingOptionId");
 		// must not name any concrete model of this machine
 		expect(MODEL_GUIDANCE).not.toMatch(/glm|minimax|deepseek/i);
+	});
+});
+
+// #132/F2: door children đã có plugin deliver — auto-ping tắt tránh ping đôi
+describe("shouldAutoPing — doorChild (#132/F2)", () => {
+	test("doorChild=true tắt auto-ping kể cả khi chưa gọi message_main", () => {
+		expect(shouldAutoPing("scout", false, true, false, true)).toBe(false);
+		expect(shouldAutoPing("scout", false, true, false, false)).toBe(true);
 	});
 });
