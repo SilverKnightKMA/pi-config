@@ -30,6 +30,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, watch, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { pokeBridges } from "../_shared/doorbell.ts";
+import { registerBellListener, startDoorbellServer } from "../_shared/doorbell-server.ts";
 import { fileURLToPath } from "node:url";
 
 interface Snippet {
@@ -236,6 +238,7 @@ export default function snip(pi: ExtensionAPI) {
 			const tmp = `${file}.tmp-${process.pid}`;
 			writeFileSync(tmp, JSON.stringify(payload), "utf8");
 			renameSync(tmp, file);
+			void pokeBridges("snip-control", file, sessionId || ""); // #39 doorbell ack bell
 		} catch {
 			// best-effort: /snip command flow never depends on the file
 		}
@@ -336,6 +339,17 @@ export default function snip(pi: ExtensionAPI) {
 			} catch {
 				// watch unsupported (exotic fs) — panel stays read-only
 			}
+			// #39 Phase 2: plugin bell after control writes — instant apply;
+			// fs.watch stays as fallback. Rides the shared per-session socket
+			// (started by whoever knows the session id first — task or snip).
+			registerBellListener(["snip-control"], () => {
+				if (watchDebounce) clearTimeout(watchDebounce);
+				watchDebounce = setTimeout(() => {
+					watchDebounce = undefined;
+					consumeControlFile();
+				}, 50);
+			});
+			startDoorbellServer(sessionId);
 		}
 		sweepControlFiles();
 	});

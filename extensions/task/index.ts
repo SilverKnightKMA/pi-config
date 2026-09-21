@@ -57,6 +57,8 @@ import { ackPayload, applyControlAction, controlFilePath, parseControlPayload } 
 import { EMPTY_STATE, DESC_AMEND_MAX, type TaskProposal, type TaskState, type TaskStatus } from "./src/types.ts";
 import { activeGoal, anyGoalRunning, goalIdActive, planContinuationActive, tryConsumeLease } from "./src/goal-bridge.ts";
 import { decide, nextStreak, TASK_BUDGET, continuationOwnedByHigherKind } from "../_shared/continuation-driver.ts";
+import { pokeBridges } from "../_shared/doorbell.ts";
+import { registerBellListener, startDoorbellServer } from "../_shared/doorbell-server.ts";
 import { ackPlanBridge, applyPlanBridge, planBridgePath, readPlanBridge } from "./src/plan-bridge.ts";
 
 type UiContext = ExtensionContext;
@@ -226,6 +228,9 @@ export default function taskExtension(pi: ExtensionAPI) {
 	let controlSessionId = "";
 	/** sentAt of the last control payload applied (self-write ack dedupe). */
 	let lastControlSentAt: string | undefined;
+	/** #39 Phase 2: reverse-doorbell (plugin→engine control bell) disposers. */
+	let bellStop: (() => void) | null = null;
+	let bellListeners: (() => void) | null = null;
 	let controlDebounce: ReturnType<typeof setTimeout> | undefined;
 
 	/** Ack the applied control payload so the panel can confirm the engine is live. */
@@ -237,6 +242,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 			const tmp = `${file}.tmp-${process.pid}`;
 			writeFileSync(tmp, ackPayload(payload, new Date().toISOString()), "utf8");
 			renameSync(tmp, file);
+			void pokeBridges("task-control", file, controlSessionId); // #39 doorbell ack bell
 		} catch {
 			// best-effort ack
 		}
@@ -1131,6 +1137,16 @@ export default function taskExtension(pi: ExtensionAPI) {
 			} catch {
 				// no control dir → no bridge; tools unaffected
 			}
+			// #39 Phase 2: plugin pokes the shared session bell right after
+			// writing a control file — apply in ms instead of waiting for
+			// fs.watch. fs.watch stays as the fallback for non-paseo writers.
+			// One socket per session (doorbell-server dispatcher); task routes
+			// its kinds, snip/facts register their own on the same socket.
+			bellListeners = registerBellListener(["task-control", "plan-control", "goal-control"], (bell) => {
+				if (bell.kind === "task-control") consumeControlFile();
+				else consumePlanBridge();
+			});
+			bellStop = startDoorbellServer(controlSessionId);
 		}
 
 		projectStatus();
@@ -1158,6 +1174,10 @@ export default function taskExtension(pi: ExtensionAPI) {
 		// flush pending projection writes before the process exits — otherwise a
 		// fast exit between writeFile and rename orphans the tmp file (observed
 		// live 2026-09-08 during daemon-restart churn).
+		bellStop?.();
+		bellStop = null;
+		bellListeners?.();
+		bellListeners = null;
 		await statusWriteQueue;
 		if (ctx.hasUI) ctx.ui.setWidget("task", undefined);
 	});

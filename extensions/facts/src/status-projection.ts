@@ -14,6 +14,8 @@
  */
 
 import { mkdirSync, readFileSync, readdirSync, renameSync, statSync, watch, writeFileSync } from "node:fs";
+import { pokeBridges } from "../../_shared/doorbell.ts";
+import { registerBellListener } from "../../_shared/doorbell-server.ts";
 import { join } from "node:path";
 import { isLiveFact, parseFactsFile, serializeFacts, factsFilePath, FACT_CATEGORIES, type FactCategory } from "./store.ts";
 import { factsRunsDir, readCuratorState } from "./curator-run.ts";
@@ -114,6 +116,7 @@ export function writeFactsStatus(
 	const tmp = `${target}.tmp-${process.pid}`;
 	writeFileSync(tmp, JSON.stringify(p, null, "\t") + "\n");
 	renameSync(tmp, target);
+	void pokeBridges("facts-status", target, ""); // #39 doorbell — global file, sessionId empty
 }
 
 // --- un-tombstone control ------------------------------------------------------
@@ -192,28 +195,36 @@ export function watchFactsControl(env: NodeJS.ProcessEnv = process.env, home = p
 		return () => {};
 	}
 	let timer: ReturnType<typeof setTimeout> | null = null;
+	// #39 Phase 2: plugin bell (memory un-tombstone) — instant apply; fs.watch
+	// stays as fallback. Rides the shared per-session socket via dispatcher.
+	const triggerSweep = (): void => {
+		try {
+			for (const f of readdirSync(dir).filter((x) => x.endsWith(".json"))) {
+				const full = join(dir, f);
+				let hasAck = false;
+				try {
+					hasAck = "status" in JSON.parse(readFileSync(full, "utf8"));
+				} catch {
+					continue; // partial write — next event retries
+				}
+				if (!hasAck) applyUntombstone(full, env, home);
+			}
+		} catch {
+			/* sweep errors are non-fatal */
+		}
+	};
+	const stopBell = registerBellListener(["facts-control"], () => {
+		if (timer) clearTimeout(timer);
+		timer = setTimeout(triggerSweep, 50);
+	});
 	try {
 		const w = watch(dir, () => {
 			if (timer) clearTimeout(timer);
-			timer = setTimeout(() => {
-				try {
-					for (const f of readdirSync(dir).filter((x) => x.endsWith(".json"))) {
-						const full = join(dir, f);
-						let hasAck = false;
-						try {
-							hasAck = "status" in JSON.parse(readFileSync(full, "utf8"));
-						} catch {
-							continue; // partial write — next event retries
-						}
-						if (!hasAck) applyUntombstone(full, env, home);
-					}
-				} catch {
-					/* sweep errors are non-fatal */
-				}
-			}, 200);
+			timer = setTimeout(triggerSweep, 200);
 		});
 		return () => {
 			if (timer) clearTimeout(timer);
+			stopBell?.();
 			try {
 				w.close();
 			} catch {

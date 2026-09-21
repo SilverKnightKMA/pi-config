@@ -5,6 +5,7 @@
  * messages; the file is the display channel, the panel polls it.
  */
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { pokeBridges } from "../../../_shared/doorbell.ts";
 import { dirname, join } from "node:path";
 import type { Runtime } from "../runtime.js";
 import { buildStatusLines, costForDisplay } from "../commands/status.js";
@@ -148,6 +149,8 @@ async function writeSnapshot(runtime: Runtime, path: string, events: OmStatusEve
 	await mkdir(dirname(path), { recursive: true });
 	await writeFile(tmp, JSON.stringify(snapshot, null, 2) + "\n", "utf8");
 	await rename(tmp, path);
+	// #39 doorbell: bell the plugins so panels refetch (disk stays truth)
+	void pokeBridges("om-status", path, snapshot.sessionId);
 }
 
 function buildSummary(runtime: Runtime, contextTokens: number | null, allEntries: Entry[]): OmStatusSummary {

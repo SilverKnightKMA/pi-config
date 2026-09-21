@@ -9,6 +9,7 @@
  * after session_start/session_tree replay. Write failures never break tools.
  */
 import { mkdir, readdir, rename, unlink, writeFile } from "node:fs/promises";
+import { pokeBridges } from "../../_shared/doorbell.ts";
 import { randomUUID as cryptoUuid } from "node:crypto";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -141,4 +142,6 @@ export async function writeTaskStatus(filePath: string, summary: TaskStatusFile)
 	const tmp = `${filePath}.tmp-${process.pid}-${cryptoUuid()}`;
 	await writeFile(tmp, JSON.stringify(summary, null, 2) + "\n", "utf8");
 	await rename(tmp, filePath);
+	// #39 doorbell: bell the plugins so panels refetch (disk stays truth)
+	void pokeBridges("task-status", filePath, summary.sessionId);
 }
