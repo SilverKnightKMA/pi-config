@@ -22,7 +22,10 @@
 
 import { readFileSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "@sinclair/typebox";
+import { recallFacts, renderRecallReport } from "./src/recall.ts";
 import {
+	FACT_CATEGORIES,
 	factsFilePath,
 	factsInjectConfig,
 	parseFactsFile,
@@ -61,6 +64,59 @@ function injectNow(pi: ExtensionAPI, env: NodeJS.ProcessEnv): void {
 }
 
 export default function factsExtension(pi: ExtensionAPI): void {
+	// P1c (#176): PULL recall tool — keyword search over the durable tier.
+	// Swap threshold (plan 2026-09-21): move to FTS5/BM25 when facts.md
+	// exceeds ~100KB OR false-hit noise grows; grep-grade stays right until
+	// then. Deterministic, read-only, $0 model calls.
+	pi.registerTool({
+		name: "facts_recall",
+		label: "facts_recall",
+		description:
+			"Search the durable facts tier (~/.pi/agent/facts.md) — long-term user preferences, conventions, project and decision memory that survives across sessions. PASS 1 requires EVERY keyword to appear; falls back to ANY-keyword ranking when nothing matches all. Use when the injected Facts block does not cover the topic.",
+		promptSnippet:
+			"Use this tool to recall long-term facts (preferences, conventions, decisions) by keywords before assuming you do not know them.",
+		parameters: Type.Object({
+			query: Type.String({
+				description:
+					"Space-separated keywords. A fact matches when its text contains EVERY keyword (case-insensitive); when nothing matches all keywords, results containing ANY keyword are returned ranked, marked 'partial match'.",
+			}),
+			category: Type.Optional(
+				Type.String({
+					description: `Filter by category: ${FACT_CATEGORIES.join(" | ")}. Omit to search all categories.`,
+				}),
+			),
+			include_tombstoned: Type.Optional(
+				Type.Boolean({
+					description: "Also search tombstoned (retired) facts — useful to check WHY a fact was retired (reason is shown as [dead:<reason>]). Default false.",
+				}),
+			),
+		}),
+		async execute(_toolCallId, params) {
+			let raw: string;
+			try {
+				raw = readFileSync(factsFilePath(process.env), "utf8");
+			} catch {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `facts_recall: no facts file yet (${factsFilePath(process.env)}) — the durable tier is empty on this machine`,
+						},
+					],
+					details: {},
+				};
+			}
+			const text = renderRecallReport(
+				recallFacts(parseFactsFile(raw), {
+					query: String(params.query ?? ""),
+					category: params.category ? String(params.category) : undefined,
+					includeTombstoned: params.include_tombstoned === true,
+				}),
+			);
+			return { content: [{ type: "text", text }], details: {} };
+		},
+	});
+
 	pi.on("session_start", () => {
 		injectNow(pi, process.env);
 	});

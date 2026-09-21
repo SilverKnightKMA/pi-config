@@ -22,6 +22,9 @@ function fakePi() {
 		sendMessage(msg: SentMessage) {
 			sent.push(msg);
 		},
+		registerTool(_t: unknown) {
+			/* tool wiring covered by the P1c describe block */
+		},
 	} as never;
 	return { pi, handlers, sent };
 }
@@ -153,5 +156,50 @@ describe("facts extension wire-up (PUSH injection)", () => {
 		factsExtension(pi);
 		handlers["session_start"]({}, {});
 		expect(sent).toHaveLength(0);
+	});
+});
+
+describe("facts_recall tool wiring (P1c)", () => {
+	function fakePiWithTools() {
+		const handlers: Record<string, (...args: unknown[]) => unknown> = {};
+		const tools: Array<{ name: string; execute: (id: string, params: Record<string, unknown>) => Promise<{ content: Array<{ type: string; text: string }> }> }> = [];
+		const sent: SentMessage[] = [];
+		const pi = {
+			on(name: string, fn: (...args: unknown[]) => unknown) {
+				handlers[name] = fn;
+			},
+			sendMessage(msg: SentMessage) {
+				sent.push(msg);
+			},
+			registerTool(t: { name: string; execute: (id: string, params: Record<string, unknown>) => Promise<{ content: Array<{ type: string; text: string }> }> }) {
+				tools.push(t);
+			},
+		} as never;
+		return { pi, handlers, sent, tools };
+	}
+
+	test("tool registered, executes recall over FACTS_FILE", async () => {
+		writeFileSync(
+			process.env.FACTS_FILE!,
+			[
+				"[preference][2026-09-02][P1] user prefers bun over node for test runs (#aaa001)",
+				"[ops][2026-09-01][P3] unrelated door port (#aaa003)",
+			].join("\n"),
+		);
+		const { pi, tools } = fakePiWithTools();
+		factsExtension(pi);
+		expect(tools.map((t) => t.name)).toEqual(["facts_recall"]);
+		const res = await tools[0].execute("t1", { query: "bun node" });
+		const out = res.content[0].text;
+		expect(out).toContain("mode=all-keywords");
+		expect(out).toContain("[live] [preference][2026-09-02][P1] user prefers bun over node for test runs (#aaa001)");
+	});
+
+	test("missing facts file → informative result, no throw", async () => {
+		rmSync(process.env.FACTS_FILE!, { force: true });
+		const { pi, tools } = fakePiWithTools();
+		factsExtension(pi);
+		const out = (await tools[0].execute("t1", { query: "x" })).content[0].text;
+		expect(out).toContain("no facts file yet");
 	});
 });
