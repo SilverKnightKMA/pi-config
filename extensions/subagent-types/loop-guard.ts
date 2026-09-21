@@ -80,7 +80,7 @@ export class LoopGuard {
 			return { stalled: true, reason: `repeated the same output for ${this.repeat} turns without acting` };
 		}
 
-		// Oscillating: the last 2×cycle turns are a strict A-B-A-B… alternation.
+		// Oscillating: the last 2xcycle turns are a strict A-B-A-B… alternation.
 		const need = 2 * this.cycle;
 		if (this.recent.length >= need) {
 			const tail = this.recent.slice(-need);

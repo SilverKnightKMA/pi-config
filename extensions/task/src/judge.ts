@@ -8,7 +8,7 @@
  *   2026-09-09; override via env TASK_JUDGE_MODEL or settings taskJudgeModel)
  * - judges by DONE-CHECK intent, not by probes — may rule "work done + probe
  *   wrong" on a spec-fault (amber) escalation
- * - consequences: pass → completed; high-confidence fail ×2 consecutive →
+ * - consequences: pass → completed; high-confidence fail x2 consecutive →
  *   demote in_progress with the reason delivered to the worker; low
  *   confidence → ask for more evidence, no demotion; appeal → PARK; 3 judge
  *   rounds without completion → PARK

@@ -302,17 +302,17 @@ export function wire(pi: ExtensionAPI, opts: WireOptions = {}): () => WatchdogSi
 		const tier = loop.onToolStart(te?.toolName ?? "tool", te?.args);
 		if (tier.tier === "soft") {
 			appendDetection({ ts: new Date(now()).toISOString(), sessionFile, code: "loop-soft", idleMs: 0, detail: `${tier.count} consecutive identical calls: ${tier.signature.slice(0, 120)}` });
-			if (ui) ui.notify(`zw: same tool call repeated ${tier.count}× (soft) — watching for self-correction`, "info");
+			if (ui) ui.notify(`zw: same tool call repeated ${tier.count}x (soft) — watching for self-correction`, "info");
 			if (LOOP_SOFT_STEER) {
 				try {
-					pi.sendMessage({ customType: "zw-loop-warn", content: `\n> [zw] identical tool call repeated ${tier.count}× — vary the approach or stop repeating.\n`, display: true }, { triggerTurn: false });
+					pi.sendMessage({ customType: "zw-loop-warn", content: `\n> [zw] identical tool call repeated ${tier.count}x — vary the approach or stop repeating.\n`, display: true }, { triggerTurn: false });
 				} catch {
 					/* sendMessage throws during teardown — non-fatal */
 				}
 			}
 		} else if (tier.tier === "hard") {
 			appendDetection(evidenceStamped({ ts: new Date(now()).toISOString(), sessionFile, code: "loop-hard", idleMs: 0, detail: `${tier.count} consecutive identical calls: ${tier.signature.slice(0, 120)}` }));
-			if (ui) ui.notify(`zw ⚠ same tool call repeated ${tier.count}× (hard) — escalating like a zombie`, "warning");
+			if (ui) ui.notify(`zw ⚠ same tool call repeated ${tier.count}x (hard) — escalating like a zombie`, "warning");
 			void autoStop("loop-hard", 0); // hard loop IS positive evidence of a wedged model
 		}
 	});

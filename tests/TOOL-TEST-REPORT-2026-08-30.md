@@ -67,11 +67,11 @@
 
 | Role | Micro-task | Result |
 |---|---|---|
-| scout | Vision-verify 2 PNGs + two-way channel test | ✅ VERIFIED ×2 |
+| scout | Vision-verify 2 PNGs + two-way channel test | ✅ VERIFIED x2 |
 | worker | Create a file with exact content + self-verify | ✅ |
 | researcher | Fact Node LTS + source URL | ✅ v24.20.0 |
 | mermaid-maker | 2-node diagram + publish + self vision-verify | ✅ VERIFIED |
-| svg-maker | 200×80 card + publish + self vision-verify | ✅ VERIFIED |
+| svg-maker | 200x80 card + publish + self vision-verify | ✅ VERIFIED |
 | learn-researcher | Bloom filter in 2 sentences + citation | ✅ |
 
 ## 6. Findings (important → minor)

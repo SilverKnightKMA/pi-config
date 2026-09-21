@@ -143,7 +143,7 @@ export function countWords(text: string): number {
 	return text.split(/\s+/).filter(Boolean).length;
 }
 
-/** Words ≈ tokens × 3/4; floor 50 guards against absurdly small budgets.
+/** Words ≈ tokens x 3/4; floor 50 guards against absurdly small budgets.
  * v1.4.62: drop the 1.25 tolerance (port-side) — upstream pi-observational-memory
  * guides ~750 words per 1,000 tok, no padding. The gate now matches prompt + display. */
 export function journeyWordBudget(targetTokens: number, tolerance = 1): number {

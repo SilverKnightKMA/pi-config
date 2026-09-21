@@ -151,7 +151,7 @@ Actual port result (paseo-subagents plugin + door-first extension):
 - Successfully PORTED: scoped door (mcp-server.ts), spawn_subagent detach + role pinning (roles.ts + PROVIDER_CATALOGS modeMap), spawn_pool (batch ≤4, [pool-report] aggregate), ask_parent/answer_child ([child-question]/[parent-answer] wakes the child), plugin-side idle-archive reminder (subagent.spawner label prevents duplicate prompts), main-door injection for every provider (key 'paseo-subagents').
 - KEPT in the extension (pi-only, NOT ported): tool-level role allowlist + tool_call gate, research_report/readonly floor, safe-bash, loop-guard, door-tool shim (pi 0.85.1 http-MCP gap), single-entry spawner-mode gate (#131), F2 door-first allowlist (#132).
 - Extension spawn/message_main is FROZEN to bug fixes only (marker #133 in index.ts).
-- Full E2E matrix: main/child × pi/codex/claude × spawn/pool/ask/report (evidence learn/e2e-130-phase2-matrix-2026-09-21.md + chain #140-#146).
+- Full E2E matrix: main/child x pi/codex/claude x spawn/pool/ask/report (evidence learn/e2e-130-phase2-matrix-2026-09-21.md + chain #140-#146).
 
 ## Door lifecycle for old agents + durability (2026-09-21, post-port decision)
 Source: four-question spike against daemon source (/opt/paseo @getpaseo/server dist + client 0.8.0) — details in learn/decision-2026-09-21-door-lifecycle.md.
