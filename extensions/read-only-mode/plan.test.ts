@@ -36,7 +36,7 @@ describe("planFilePath — collision counter", () => {
 	});
 });
 
-describe("parseSteps — top-level only, ports the 40×200 caps", () => {
+describe("parseSteps — top-level only, ports the 40x200 caps", () => {
 	test("numbered + bulleted top-level; nested excluded; prose ignored", () => {
 		const md = [
 			"# Plan",
