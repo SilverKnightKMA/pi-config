@@ -168,3 +168,15 @@ Detail: docs/audit-46/hcm10-results.md
 | MAX_PATH case (step-4 specific) | **NO RISK** | longest repo path 124 chars < 260 |
 
 Detail: docs/audit-46/windows-results.md
+
+## Provider axis (step 5/6)
+
+| finding | verdict |
+|---|---|
+| Dynamic swap (new provider swap46 → llm.tungvuthanh.com/v1 + zaicp/glm-5.2): `pi -p` real call `PROVIDER46-OK` exit 0, config restored | **PASS** |
+| 3 endpoints × 3 machines all 200 (container docker-DNS / hcm10 public-HTTPS / Windows LAN-IP) | **PASS** |
+| subagent-types MODEL_ALIASES (index.ts:382-385) hardcodes zaicp/glm alias targets | adapt |
+| 3 pinned model DEFAULTS (task judge, OM workers, plugin roles) — all env/settings-overridable, OM heterogeneous fleet live | portable-caveat |
+| [T]/[V]/[XL] capability-tag convention on models.json names | note (document) |
+
+Detail: docs/audit-46/provider-audit.md
