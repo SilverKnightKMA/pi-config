@@ -98,6 +98,17 @@ and after every compaction. Knobs: `LESSONS_INJECT=0` disables all injection;
 `LESSONS_FILE` overrides the path (tests/isolation). Review 2027-01-15:
 expected to stay — revisit the caps after real usage data.
 
+## FACTS_INJECT / FACTS_MAX_LINES / FACTS_MAX_CHARS / FACTS_FILE (v1.4.112, default on)
+
+`extensions/facts` (memory part 2 HYBRID, plan 2026-09-21) injects the
+durable facts tier (`~/.pi/agent/facts.md`) at session_start and after every
+compaction — P1→P2→P3 priority, newest first, capped by BOTH lines and chars.
+The injector is read-only (writers: regex trigger P2 + memory-curator P3).
+Knobs: `FACTS_INJECT=0` disables all injection; `FACTS_MAX_LINES` (default 20,
+clamp 1–50); `FACTS_MAX_CHARS` (default 2048, clamp 256–4096); `FACTS_FILE`
+overrides the path (tests/isolation). Review 2027-01-15: expected to stay —
+revisit the caps after real usage data.
+
 ## PI_TELEMETRY / PI_TELEMETRY_DIR / PI_TELEMETRY_STALE_MS / PI_TELEMETRY_TOUCH_MS (v1.4.97, default on)
 
 `extensions/telemetry` (O4, #105 — borrow from pi-telemetry 0.1.3) writes one

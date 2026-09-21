@@ -278,18 +278,57 @@ export function matchFactsByKeywords(
 	return scored;
 }
 
+// --- config + paths (P1b) -----------------------------------------------------------
+
+import { join } from "node:path";
+
+export interface FactsInjectConfig {
+	inject: boolean;
+	maxLines: number;
+	maxChars: number;
+}
+
+function clampIntEnv(v: string | undefined, min: number, max: number, dflt: number): number {
+	const n = Number.parseInt(v ?? "", 10);
+	if (Number.isNaN(n)) return dflt;
+	return Math.min(max, Math.max(min, n));
+}
+
+export function factsInjectConfig(env: NodeJS.ProcessEnv = process.env): FactsInjectConfig {
+	return {
+		inject: env.FACTS_INJECT !== "0",
+		maxLines: clampIntEnv(env.FACTS_MAX_LINES, 1, 50, 20),
+		maxChars: clampIntEnv(env.FACTS_MAX_CHARS, 256, 4096, 2048),
+	};
+}
+
+/** Default file location: ~/.pi/agent/facts.md — same HOME-aware placement as
+ *  lessons.md (NOT under .memory/, NOT under ~/.pi/agent/memory/ so it can
+ *  never collide with @pify/memory if upstream is installed some day). */
+export function factsFilePath(env: NodeJS.ProcessEnv = process.env, home = process.env.HOME ?? ""): string {
+	return env.FACTS_FILE && env.FACTS_FILE.trim() ? env.FACTS_FILE : join(home, ".pi", "agent", "facts.md");
+}
+
+export function todayIso(now: () => Date = () => new Date()): string {
+	return now().toISOString().slice(0, 10);
+}
+
 // --- PUSH injection selection --------------------------------------------------------
 
 const PRIORITY_ORDER: Record<FactPriority, number> = { P1: 0, P2: 1, P3: 2 };
 
 /** Select live facts for the injected block: P1 first, then P2, then P3;
  *  within a tier, newest origin date first. Cut by BOTH line and char budget
- *  (the rendered line must fit, so selection counts serialized length). */
+ *  (the rendered line must fit, so selection counts serialized length).
+ *  `today` (recommended at inject time): a fact whose ttl has arrived is NOT
+ *  injected even before its tombstone is physically written (injector is
+ *  read-only; the write belongs to the curator/trigger). */
 export function selectFactsForInject(
 	facts: Fact[],
 	budget: { maxLines: number; maxChars: number },
+	today?: string,
 ): Fact[] {
-	const live = facts.filter(isLiveFact);
+	const live = facts.filter((f) => isLiveFact(f) && (!today || !f.ttl || today < f.ttl));
 	const sorted = live.slice().sort((a, b) => {
 		const p = PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority];
 		if (p !== 0) return p;

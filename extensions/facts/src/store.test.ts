@@ -2,6 +2,8 @@
 import { describe, expect, test } from "bun:test";
 import {
 	buildFactLine,
+	factsFilePath,
+	factsInjectConfig,
 	expireTtlFacts,
 	factContainsSecret,
 	formatFact,
@@ -233,5 +235,29 @@ describe("renderFactsBlock", () => {
 		expect(block.split("\n")[0]).toContain("Facts");
 		expect(block).toContain("prefers bun over node (#f0e1d2)");
 		expect(renderFactsBlock([])).toBe("");
+	});
+});
+
+describe("P1b: inject config + path + ttl-expired skip", () => {
+	test("factsInjectConfig defaults + clamps", () => {
+		expect(factsInjectConfig({})).toEqual({ inject: true, maxLines: 20, maxChars: 2048 });
+		expect(factsInjectConfig({ FACTS_INJECT: "0" }).inject).toBe(false);
+		expect(factsInjectConfig({ FACTS_MAX_LINES: "5", FACTS_MAX_CHARS: "999" })).toEqual({ inject: true, maxLines: 5, maxChars: 999 });
+		expect(factsInjectConfig({ FACTS_MAX_LINES: "9999", FACTS_MAX_CHARS: "1" })).toEqual({ inject: true, maxLines: 50, maxChars: 256 });
+	});
+
+	test("factsFilePath env override wins, default under ~/.pi/agent", () => {
+		expect(factsFilePath({ FACTS_FILE: "/tmp/x.md" }, "/h")).toBe("/tmp/x.md");
+		expect(factsFilePath({}, "/h")).toBe("/h/.pi/agent/facts.md");
+	});
+
+	test("selectFactsForInject skips facts whose ttl has arrived (before tombstone)", () => {
+		const facts = [
+			L("[ops][2026-09-01][P1] expired but not yet tombstoned (#aaa111) ttl=2026-09-20"),
+			L("[ops][2026-09-01][P1] still alive (#bbb222) ttl=2026-12-31"),
+			L("[ops][2026-09-01][P1] no ttl (#ccc333)"),
+		];
+		const ids = selectFactsForInject(facts, { maxLines: 10, maxChars: 10000 }, "2026-09-21").map((f) => f.id);
+		expect(ids).toEqual(["bbb222", "ccc333"]);
 	});
 });
