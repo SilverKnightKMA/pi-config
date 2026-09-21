@@ -48,3 +48,45 @@ describe("classifyBashMemoryTouch", () => {
 		expect(classifyBashMemoryTouch("cat .memory/INDEX.md > /tmp/copy")).toBe("read"); // redirect target outside (tee anywhere stays blocked — pre-existing, conservative)
 	});
 });
+
+// --- P1d (#177, plan 2026-09-21): facts tier guard ----------------------------
+import { classifyBashFactsTierTouch, isFactsTierPath } from "../src/guard/memory-guard.ts";
+
+describe("isFactsTierPath (write/edit guard)", () => {
+	const HOME = "/home/tester";
+	test("blocks the three tier locations, tilde and absolute", () => {
+		expect(isFactsTierPath("~/.pi/agent/facts.md", "/ws", HOME)).toBe(true);
+		expect(isFactsTierPath("/home/tester/.pi/agent/facts.md", "/ws", HOME)).toBe(true);
+		expect(isFactsTierPath("~/.pi/agent/lessons.md", "/ws", HOME)).toBe(true);
+		expect(isFactsTierPath("/home/tester/.pi/agent/facts-runs/run-1.json", "/ws", HOME)).toBe(true);
+		expect(isFactsTierPath("facts.md", "/ws", HOME)).toBe(false); // workspace file, different tree
+		expect(isFactsTierPath("/ws/notes/facts.md", "/ws", HOME)).toBe(false);
+		expect(isFactsTierPath(undefined, "/ws", HOME)).toBe(false);
+	});
+});
+
+describe("classifyBashFactsTierTouch", () => {
+	const HOME = "/home/tester";
+	test("reads allowed", () => {
+		expect(classifyBashFactsTierTouch(`cat ${HOME}/.pi/agent/facts.md`, HOME)).toBe("read");
+		expect(classifyBashFactsTierTouch("grep bun ~/.pi/agent/facts.md | head", HOME)).toBe("read");
+	});
+	test("mutations blocked", () => {
+		expect(classifyBashFactsTierTouch(`echo x >> ${HOME}/.pi/agent/facts.md`, HOME)).toBe("mutate");
+		expect(classifyBashFactsTierTouch("rm ~/.pi/agent/facts.md", HOME)).toBe("mutate");
+		expect(classifyBashFactsTierTouch(`sed -i s/a/b/ ${HOME}/.pi/agent/lessons.md`, HOME)).toBe("mutate");
+		expect(classifyBashFactsTierTouch(`cp /tmp/new.md ${HOME}/.pi/agent/facts.md`, HOME)).toBe("mutate");
+		expect(classifyBashFactsTierTouch(`mkdir -p ${HOME}/.pi/agent/facts-runs/x`, HOME)).toBe("mutate");
+		expect(classifyBashFactsTierTouch(`python3 -c "open('${HOME}/.pi/agent/facts.md','w')"`, HOME)).toBe("mutate");
+	});
+	test("$HOME form expanded", () => {
+		expect(classifyBashFactsTierTouch("echo x >> $HOME/.pi/agent/facts.md", HOME)).toBe("mutate");
+	});
+	test("workspace-local facts.md is NOT the tier (none)", () => {
+		expect(classifyBashFactsTierTouch("echo x >> facts.md", HOME)).toBe("none");
+		expect(classifyBashFactsTierTouch("sed -i s/a/b/ docs/facts.md", HOME)).toBe("none");
+	});
+	test("prose mention is not a path mention", () => {
+		expect(classifyBashFactsTierTouch(`git commit -m "touch ~/.pi/agent/facts.md layout in docs"`, HOME)).toBe("none");
+	});
+});

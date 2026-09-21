@@ -35,6 +35,88 @@ export function isMemoryPath(path: string | undefined, cwd: string): boolean {
 	return abs === root || abs.startsWith(root + sep);
 }
 
+// --- facts tier guard (P1d, #177, plan 2026-09-21) ---------------------------
+// The durable tiers ~/.pi/agent/facts.md + lessons.md and the curator's
+// receipts dir ~/.pi/agent/facts-runs/ are MACHINE-WRITTEN (regex trigger P2,
+// memory-curator P3, OM consolidator). The MODEL never writes them — same
+// doctrine as .memory/ above. Reads are always fine (facts_recall / cat).
+
+/** Expand a leading `~` the way a shell would before resolving. */
+function expandTilde(p: string, home: string): string {
+	if (p === "~") return home;
+	if (p.startsWith("~/")) return home + p.slice(1);
+	return p;
+}
+
+/** True when `path` resolves to the facts tier under `home`. */
+export function isFactsTierPath(
+	path: string | undefined,
+	cwd: string,
+	home: string = process.env.HOME ?? "",
+): boolean {
+	const abs = resolveAgainst(path === undefined ? undefined : expandTilde(path, home), cwd);
+	if (!abs) return false;
+	const facts = resolve(home, ".pi/agent/facts.md");
+	const lessons = resolve(home, ".pi/agent/lessons.md");
+	const runs = resolve(home, ".pi/agent/facts-runs");
+	return abs === facts || abs === lessons || abs === runs || abs.startsWith(runs + sep);
+}
+
+/** True when `t` is a clean path token referencing the facts tier under
+ *  ~/.pi/agent — `~`-relative, `$HOME`-expanded, or absolute. A bare
+ *  `facts.md` in the workspace does NOT count (a different file). */
+function isFactsTierToken(t: string): boolean {
+	if (t.startsWith("~/")) t = t.slice(1);
+	return /(^|\/)\.pi\/agent\/(facts\.md|lessons\.md|facts-runs)(\/|$)/.test(t) || t.includes("$HOME/.pi/agent/");
+}
+
+/** Same mention-scan as mentionsMemoryPath but for facts-tier tokens. */
+export function mentionsFactsTierPath(command: string, home: string = process.env.HOME ?? ""): boolean {
+	const expanded = command.split("$HOME").join(home);
+	// reuse the span tokenizer: quoted spans count only when their head token matches
+	const spans: { text: string; quoted: boolean }[] = [];
+	let buf = "";
+	let quote: '"' | "'" | null = null;
+	for (const ch of expanded) {
+		if (quote) {
+			if (ch === quote) {
+				spans.push({ text: buf, quoted: true });
+				buf = "";
+				quote = null;
+			} else buf += ch;
+		} else if (ch === '"' || ch === "'") {
+			if (buf) spans.push({ text: buf, quoted: false });
+			buf = "";
+			quote = ch;
+		} else buf += ch;
+	}
+	if (buf) spans.push({ text: buf, quoted: false });
+	for (const s of spans) {
+		if (!s.quoted) {
+			for (const tok of s.text.split(/\s+/)) if (isFactsTierToken(tok)) return true;
+		} else {
+			const head = s.text.split(/\s+/)[0] ?? "";
+			if (isFactsTierToken(head)) return true;
+			const inner = s.text.match(/'[^']*'|"[^"]*"/g) ?? [];
+			for (const m of inner) {
+			const t = m.slice(1, -1).split(/\s+/)[0] ?? "";
+			if (isFactsTierToken(t)) return true;
+		}
+		}
+	}
+	return false;
+}
+
+/** Classify a bash command against the facts tier: "mutate" (block) /
+ *  "read" (allow) / "none" (not our tree). */
+const CP_INTO_FACTS_TIER = /\bcp\b[^|;&]*\s\S*\.pi\/agent\/(facts\.md|lessons\.md|facts-runs)(\/[^\s|;&]*)?\s*$/;
+
+export function classifyBashFactsTierTouch(command: string, home: string = process.env.HOME ?? ""): "none" | "read" | "mutate" {
+	if (!mentionsFactsTierPath(command, home)) return "none";
+	if (MUTATION.test(command) || CP_INTO_FACTS_TIER.test(command)) return "mutate";
+	return "read";
+}
+
 const MUTATION = /\b(rm|mv|tee|truncate|shred|dd|mkdir|rmdir|chmod|chown|rsync|install)\b|>>|>[ \t>]*\S*\.memory|sed\s+(-[a-zA-Z]*)*i|perl\s+(-[a-zA-Z]*)*i\b|python3?\s+-c|node\s+-e|\bxargs\b/;
 /** cp mutates only when a `.memory` path is the FINAL argument (the destination). */
 const CP_INTO_MEMORY = /\bcp\b[^|;&]*\s\S*\.memory(\/[^\s|;&]*)?\s*$/;
@@ -111,15 +193,25 @@ const POLICY =
 	"[memory-policy] The `.memory/` directory is owned by the observational-memory pipeline " +
 	"(observer/consolidator decide its content). Never create, edit, move, or delete anything " +
 	"under `.memory/` with write/edit/bash — reading (cat/ls/grep/read) is always fine. " +
+	"The durable memory tiers `~/.pi/agent/facts.md` and `~/.pi/agent/lessons.md` (and `facts-runs/`) " +
+	"are machine-written too — read them freely (facts_recall), never edit them. " +
 	"For emergency repairs ask the user to run `/om off` first.";
+
+const FACTS_ENVELOPE =
+	"memory-guard: ~/.pi/agent/facts.md, lessons.md and facts-runs/ are machine-written memory " +
+	"tiers (single writer: regex trigger / memory-curator / OM consolidator). " +
+	"WHAT: this write is blocked. WHY: model edits would race the sanctioned writers and bypass " +
+	"the tombstone lifecycle. NEXT: read is fine (facts_recall / cat); to record a durable fact " +
+	"tell the user — they own the store; for repairs ask the user to run `/om off` first.";
 
 /** Wire layers 1+2. No-op when OM is disabled (`/om off` = admin mode). */
 export function registerMemoryGuard(pi: ExtensionAPI, isEnabled: () => boolean): void {
 	pi.on("tool_call", (event: any, ctx: any) => {
 		if (!isEnabled()) return;
-		if (process.env.OM_WORKER) return; // sanctioned writer subprocesses
+		if (process.env.OM_WORKER || process.env.FACTS_WORKER) return; // sanctioned writer subprocesses
 		const tool = typeof event?.toolName === "string" ? event.toolName : "";
 		const cwd = typeof ctx?.cwd === "string" ? ctx.cwd : process.cwd();
+		const home = process.env.HOME ?? "";
 		if (tool === "write" || tool === "edit") {
 			if (isMemoryPath(event?.input?.path, cwd)) {
 				return {
@@ -128,6 +220,9 @@ export function registerMemoryGuard(pi: ExtensionAPI, isEnabled: () => boolean):
 						"memory-guard: `.memory/` is managed by observational-memory (write/edit blocked). " +
 						"Read it freely; for repairs ask the user to run `/om off` first.",
 				};
+			}
+			if (isFactsTierPath(event?.input?.path, cwd, home)) {
+				return { block: true, reason: FACTS_ENVELOPE };
 			}
 			return;
 		}
@@ -141,13 +236,16 @@ export function registerMemoryGuard(pi: ExtensionAPI, isEnabled: () => boolean):
 						"observational-memory. Reads are fine; for repairs ask the user to run `/om off` first.",
 				};
 			}
+			if (classifyBashFactsTierTouch(cmd, home) === "mutate") {
+				return { block: true, reason: FACTS_ENVELOPE };
+			}
 			return;
 		}
 	});
 
 	pi.on("context", async (event: any) => {
 		if (!isEnabled()) return undefined;
-		if (process.env.OM_WORKER) return undefined;
+		if (process.env.OM_WORKER || process.env.FACTS_WORKER) return undefined;
 		const messages = event?.messages;
 		if (!Array.isArray(messages) || messages.length === 0) return undefined;
 		if (messages[0]?.role === "system") {
