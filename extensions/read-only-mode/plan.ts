@@ -173,7 +173,7 @@ export function planFilePath(existing: readonly string[], slug: string, date = n
 /**
  * Steps = TOP-LEVEL list items only (no indentation), numbered or bulleted.
  * Nested items and non-list lines are plan prose, not steps. Ports
- * plan-mode's parseSteps caps verbatim (40 × 200).
+ * plan-mode's parseSteps caps verbatim (40 x 200).
  */
 export function parseSteps(markdown: string): PlanStep[] {
 	const steps: PlanStep[] = [];
@@ -374,7 +374,7 @@ export function reconcilePlan(state: PlanState, planFileText: string | null, now
  *  task (parked blocker or not) is not ready either, while in_progress/held
  *  stay actionable (the agent can act on judge feedback). Pinning this as a
  *  pure helper was tonight's lesson: the 2026-09-15 incident nudge-targeted
- *  parked tasks 4× because "unresolved" and "actionable" were one set. */
+ *  parked tasks 4x because "unresolved" and "actionable" were one set. */
 export function actionableSteps(open: readonly BoardStepTaskLike[]): BoardStepTaskLike[] {
 	const openIds = new Set(open.map((t) => t.id));
 	return open.filter((t) => {
