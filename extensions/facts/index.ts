@@ -27,6 +27,8 @@ import { dirname, join } from "node:path";
 import { evaluateTrigger } from "./src/trigger.ts";
 import { recallFacts, renderRecallReport } from "./src/recall.ts";
 import { accrueCounters, runCuratorOnce } from "./src/curator-run.ts";
+import { curatorThresholds } from "./src/curator-core.ts";
+import { watchFactsControl, writeFactsStatus } from "./src/status-projection.ts";
 import {
 	FACT_CATEGORIES,
 	factsFilePath,
@@ -68,7 +70,24 @@ function injectNow(pi: ExtensionAPI, env: NodeJS.ProcessEnv): void {
 	pi.sendMessage({ customType: "facts-context", content: block, display: false });
 }
 
+function writeStatusSafe(): void {
+	try {
+		const t = curatorThresholds(process.env);
+		writeFactsStatus(process.env, process.env.HOME ?? "", {
+			minLines: t.minLines,
+			minTokens: t.minTokens,
+			minSessions: t.minSessions,
+			floorDays: t.floorDays,
+		});
+	} catch {
+		/* projection is best-effort */
+	}
+}
+
 export default function factsExtension(pi: ExtensionAPI): void {
+	// P4 (#181): user-only un-tombstone door (plugin writes control files).
+	const stopWatcher = watchFactsControl(process.env, process.env.HOME ?? "");
+	pi.on("session_shutdown", () => stopWatcher());
 	// P1c (#176): PULL recall tool — keyword search over the durable tier.
 	// Swap threshold (plan 2026-09-21): move to FTS5/BM25 when facts.md
 	// exceeds ~100KB OR false-hit noise grows; grep-grade stays right until
@@ -134,11 +153,16 @@ export default function factsExtension(pi: ExtensionAPI): void {
 		} catch {
 			/* counters are best-effort */
 		}
-		void runCuratorOnce({ env: process.env }).catch(() => {});
+		void runCuratorOnce({ env: process.env })
+			.catch(() => {})
+			.finally(() => writeStatusSafe());
 	});
 	pi.on("session_start", () => {
 		injectNow(pi, process.env);
-		void runCuratorOnce({ env: process.env }).catch(() => {}); // debt self-heal
+		writeStatusSafe();
+		void runCuratorOnce({ env: process.env }) // debt self-heal
+			.catch(() => {})
+			.finally(() => writeStatusSafe());
 	});
 	// Re-inject after EVERY compaction — the session_start block lives in the
 	// pre-compaction branch and is summarized away at the first compaction.
@@ -187,6 +211,7 @@ function runFactsTrigger(text: string, env: NodeJS.ProcessEnv = process.env): vo
 			const tmp = `${file}.tmp-${process.pid}`;
 			writeFileSync(tmp, serializeFacts(next) + "\n");
 			renameSync(tmp, file);
+			writeStatusSafe(); // P4: keep the projection fresh after a correction
 		} else {
 			return; // nothing changed — do not log a no-op apply
 		}
