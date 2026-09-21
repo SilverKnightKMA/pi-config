@@ -608,18 +608,29 @@ export default function subagentTypes(pi: ExtensionAPI) {
 	// subagent-reply plugin at spawn time). Main agents never match the door
 	// shape (/mcp + caller token), so they never see this tool.
 	const registerReplyDoorTool = (doorUrl: string): void => {
-		// #142 (plan step 8): fetch tools/list from the scoped door and register a
-		// native proxy for EVERY tool this caller may see (door filters by
-		// canSpawn/depth — fail-closed by construction). Fetch error → fall back
-		// to the v1.4.103 single reply_to_parent tool so nothing regresses.
+		// #132 (plan step 15) race fix (E2E 2026-09-21): dang ky SYNC hai tool
+		// tinh truoc - setActiveTools chay ngay sau applyRole va se chup snapshot
+		// TRUOC khi fetch tools/list ve (child tung mat ca reply_to_parent).
+		// Child door luon canSpawn=false -> dung 2 tool; async fetch chi bo sung
+		// tool la (neu co) cho an toan.
+		registerDoorProxy(doorUrl, { name: REPLY_DOOR_TOOL });
+		registerDoorProxy(doorUrl, {
+			name: "ask_parent",
+			description: "Ask the parent agent a blocking question; the answer arrives as a [parent-answer] message.",
+			inputSchema: {
+				type: "object",
+				properties: { question: { type: "string" } },
+				required: ["question"],
+			},
+		});
 		void (async () => {
 			const list = await fetchDoorTools(doorUrl);
-			const tools: DoorToolSpec[] = list.ok ? list.tools.filter((t) => t.name === REPLY_DOOR_TOOL || /^[a-z][a-z0-9_]*$/.test(t.name)) : [];
-			if (!list.ok || !tools.some((t) => t.name === REPLY_DOOR_TOOL)) {
-				registerSingleDoorTool(doorUrl);
-			return;
+			if (!list.ok) return; // hai tool tinh da du floor - fetch loi khong mat kenh
+			const done = new Set([REPLY_DOOR_TOOL, "ask_parent"]);
+			for (const t of list.tools) {
+				if (done.has(t.name) || !/^[a-z][a-z0-9_]*$/.test(t.name)) continue;
+				registerDoorProxy(doorUrl, t);
 			}
-			for (const t of tools) registerDoorProxy(doorUrl, t);
 		})();
 	};
 
