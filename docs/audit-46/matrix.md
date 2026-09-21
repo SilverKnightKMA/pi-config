@@ -146,3 +146,13 @@ Scan scope: pi-config `extensions/*` (17 extensions + `_shared`) and paseo-plugi
 - **Windows is the pressure axis**: unix sockets (doorbell bridges, 5 plugins + engine `_shared`), `$HOME`-unset fallbacks (facts/lessons `?? ""`, titles.ts ×5, snip/sse-probe/visual-tools), POSIX signals (bash-long-run-guard recipes, process-kill paths), `execFile('paseo')` PATH lookup, '/'-separated template paths.
 - **macOS static view**: no Linux-only syscall in runtime code (no /proc, no inotify flag, no gosu); fs.watch non-recursive works on FSEvents → macOS expected portable (runtime confirm deferred — no Mac in test fleet).
 - **Bare-metal Linux (hcm10)**: only assumption is HOME=/root (different user) — every path anchors at resolved home; the `/home/coder` tails never fire because HOME is set.
+
+## Runtime results — hcm10 (step 3/6, Ubuntu 24.04 / HOME=/root / bun 1.4.2)
+
+| unit | hcm10 runtime | first error (if any) |
+|---|---|---|
+| pi-config (17 ext + _shared) | 1013/1014 tests, tsc 14/14, smoke 16/16 LOAD CLEAN | — |
+| zombie-watchdog | **FAIL** (test-side) | zombie-watchdog.test.ts:522 — readdirSync unsorted-order assumption: ext4 hash order returns files[1]=first record → Expected "shutdown" Received "completed" |
+| paseo-plugins (10 plugins) | 196/196 tests, tsc 10/10 | — (one transient bun-install ENOENT, non-fatal) |
+
+Detail: docs/audit-46/hcm10-results.md
