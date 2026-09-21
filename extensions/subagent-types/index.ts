@@ -13,6 +13,8 @@
  *     (read, grep, find, ls). The main agent must be granted "main" in its
  *     labels to get full tools; unlabelled agents (e.g. created directly via
  *     paseo_create_agent by a compromised caller) cannot escalate.
+ *   - #188: the gate only applies to MACHINE-MANAGED sessions (paseo record
+ *     or PASEO_* env carrier). A human CLI `pi` has neither → full tools.
  *   - Enforcement is technical, not prompt-trust:
  *       1. pi.setActiveTools(allowlist) — tools outside the allowlist are NOT
  *          sent to the model at all (agent-session.js setActiveToolsByName).
@@ -42,6 +44,7 @@ import {
 	shouldRemindIdleArchive,
 	ARCHIVE_REMIND_REARM_MS,
 } from "./idle-archive.ts";
+import { roleGateApplies } from "./gate-scope.ts";
 import { isPluginEnabled, paseoPresent, readSpawnerMode, resolveExtOwnsSpawn } from "./spawner-mode.ts";
 import safeBash from "./safe-bash.ts";
 import registerReadonlyTools from "./readonly-tools.ts";
@@ -931,6 +934,10 @@ ${r.command}`,
 		Boolean(myAgentId && myRole && myRole !== MAIN_ROLE && findDoorUrlForAgent(PASEO_AGENTS_DIR, myAgentId));
 	pi.on("tool_call", (event) => {
 		if (myRole === MAIN_ROLE) return;
+		// #188 standalone-clean layer 2: a session with NO paseo record and NO
+		// machine env carrier is a human CLI session — the gate is a CHILD
+		// containment mechanism and does not apply to it.
+		if (!roleGateApplies(myAgentId)) return;
 		const allowed = allowlistFor(myRole, roles, doorChildOf());
 		if (allowed.includes("*")) return;
 		const toolName =
