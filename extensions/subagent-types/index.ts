@@ -42,6 +42,7 @@ import {
 	shouldRemindIdleArchive,
 	ARCHIVE_REMIND_REARM_MS,
 } from "./idle-archive.ts";
+import { effectiveSpawner, isPluginEnabled, readSpawnerMode } from "./spawner-mode.ts";
 import safeBash from "./safe-bash.ts";
 import registerReadonlyTools from "./readonly-tools.ts";
 import { LoopGuard, loopGuardConfigFromEnv } from "./loop-guard.ts";
@@ -528,6 +529,22 @@ export default function subagentTypes(pi: ExtensionAPI) {
 		readSettingsJson(join(process.cwd(), ".pi", "settings.json")),
 		readSettingsJson(join(homedir(), ".pi", "agent", "settings.json")),
 	);
+	// #131 spawner mode: 1 CỬA — khi paseo-subagents plugin bật, extension
+	// KHÔNG đăng ký spawn tools (plugin sở hữu spawn qua door). auto (default)
+	// đọc config daemon; fail-open giữ extension nếu config lỗi.
+	const spawner = effectiveSpawner(
+		readSpawnerMode(
+			readSettingsJson(join(process.cwd(), ".pi", "settings.json")),
+		readSettingsJson(join(homedir(), ".pi", "agent", "settings.json")),
+		),
+		isPluginEnabled(readSettingsJson(join(homedir(), ".paseo", "config.json"))),
+	);
+	const extOwnsSpawn = spawner === "extension";
+	if (!extOwnsSpawn) {
+		console.log(
+			"[subagent-types] spawner=plugin (paseo-subagents bật) — extension KHÔNG đăng ký spawn_subagent/spawn_paseo_subagent/spawn_pool (1 cửa)",
+		);
+	}
 	let myRole: string | undefined;
 	let myAgentId: string | null = null;
 	let messageMainCalledThisRun = false;
@@ -1050,8 +1067,9 @@ async function createChildAgent(
 
 
 	// Fire-and-forget: returns the id; the report arrives via the channel.
-	pi.registerTool<typeof SpawnParams, SpawnDetails>({
-		name: "spawn_subagent",
+	extOwnsSpawn &&
+		pi.registerTool<typeof SpawnParams, SpawnDetails>({
+			name: "spawn_subagent",
 		label: "spawn_subagent",
 		description:
 			"Spawn a role-typed subagent as a new Paseo agent. The child gets exactly the tools its role allows (enforced, not requested). Returns the new agent's id; the child's result arrives via its own timeline, or block by asking the parent to read the child's activity.",
@@ -1160,8 +1178,9 @@ async function createChildAgent(
 		return m;
 	}
 
-	pi.registerTool<typeof SpawnParams, SpawnDetails>({
-		name: "spawn_paseo_subagent",
+	extOwnsSpawn &&
+		pi.registerTool<typeof SpawnParams, SpawnDetails>({
+			name: "spawn_paseo_subagent",
 		label: "spawn_paseo_subagent",
 		description:
 			"Blocking variant of spawn_subagent: spawn a role-typed child Paseo agent and WAIT until it finishes, returning its final report inline. Same roles, models and governance as spawn_subagent. Use it when your next step depends on the child's result; the parent turn stays busy while waiting.",
@@ -1747,8 +1766,9 @@ NEXT: revise the report text (sections per template, token on first line) and ca
 		expect: Type.Optional(Type.String({ description: "Deterministic gate: substring the child's report MUST contain, else the item lands gate_failed." })),
 	});
 
-	pi.registerTool({
-		name: "spawn_pool",
+	extOwnsSpawn &&
+		pi.registerTool({
+			name: "spawn_pool",
 		label: "spawn_pool",
 		description:
 			"Bounded parallel fan-out: spawn 2-12 role-typed children, at most 4 at a time. DETACHED by default (v1.4.44): the call returns immediately and ONE aggregated report (per-item status + gate-checked results) arrives as a message when the pool completes — the main turn stays free. detach:false restores the old blocking wait. Read-mostly roles only (scout/researcher shapes). Survives respawn: pool_status / pool_resume pick up unfinished items.",
