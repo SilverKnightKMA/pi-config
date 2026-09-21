@@ -159,3 +159,14 @@ Source: four-question spike against daemon source (/opt/paseo @getpaseo/server d
 - Valid path exposed: `before("agent.session_open")` MAY CHANGE ENV for reason create|resume|refresh|import (agent-manager.js:3628, buildLaunchContext) → PASEO_SUBAGENTS_DOOR env + pi extension door shim reads env (v1.4.108).
 - spec v12 (user approved 2026-09-21, verbatim "Approve spec v12 with all three pieces (Recommended)"): L1 door grant through a [door-grant] message at turn_ended for main without a door; L2 env-door through session_open; pa1 adopt-from-disk restores minted tokens from the record (one-way disk→RAM read, hatch PASEO_SUBAGENTS_ADOPT=0).
 - Task board #150 [AWAITING PLAN APPROVAL]; P1-d2 upstream draft (proposed agent.update hook) remains parked awaiting the user.
+
+## Landscape: long-term memory / facts tier (2026-09-21, #1)
+| Candidate | Mechanism | Verdict |
+|---|---|---|
+| @pify/memory 0.6.0 | 5 tools + BM25 FTS5 + inject cap 8 entries/30d failure+correction + recovery record (MIT, 5 days old, 0 stars) | **BORROW concepts** (taxonomy 6 category, inject-cap discipline, BM25 swap-point threshold) — not installed whole: 2 song-song memory systems + no re-inject after compaction | `learn/pify-pending-2026-09-07.md` |
+| pi-hermes-memory | correction-detector 2-pass regex trigger (~80 lines, English patterns) | **BORROW trigger layer** + add Vietnamese patterns (không/sai/dừng/đã bảo), drop index===0 anchor | `learn/memory-candidates-eval-2026-09-13.md` |
+| @fradser/pi-memory | plan→validate→apply split + pre/post receipt hash + staleness verdicts (CONTRADICTED/SUPERSEDED/SUBSUMED/DORMANT/ONE-SHOT) + ownsCurrentRun | **BORROW 4 concepts** (planner read-only JSON; engine gate; receipt hash; verdicts with grounding) — package NOT portable (publicDir .memory collides OM single-writer) | same brief |
+| pi-memory (jayzeng) | system-prompt inject + exit-summary LLM | DROP (transient-injection doctrine violation) |
+| pi-agent-memory | AGPL-3.0 + worker daemon :37777 | DROP (license) |
+
+User decision 2026-09-21 (verbatim chain in `learn/decision-2026-09-21-memory-part2.md`): **HYBRID** — build durable facts tier in-house on existing lessons-inject mechanism; model READ-ONLY (memory-guard extended to lessons.md + facts.md); 3 write paths (regex trigger / memory-curator worker proposes + engine gate / user by hand); curator usage-triggered (diff/token/session counters + 30d floor), NOT calendar; PUSH cap ~20 lines/2KB, PULL recall tool (grep backend, FTS5 swap-point); plugin panel component 7. Plan mode required (verbatim 'cái này phải dùng plan mode chứ'); plan brief `learn/plan-memory-part2-2026-09-21.md`; no build task on board (#173 cancelled per doctrine).
