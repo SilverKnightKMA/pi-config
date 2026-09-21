@@ -152,3 +152,10 @@ Kết quả port thực tế (plugin paseo-subagents + ext door-first):
 - GIỮ ở extension (pi-only, KHÔNG port): role allowlist tool-level + tool_call gate, research_report/readonly floor, safe-bash, loop-guard, door-tool shim (pi 0.85.1 http-MCP gap), spawner-mode gate 1 cửa (#131), F2 door-first allowlist (#132).
 - Extension spawn/message_main ĐÓNG BĂNG bugfix-only (marker #133 trong index.ts).
 - E2E ma trận đầy đủ: chính/con × pi/codex/claude × spawn/pool/ask/report (evidence learn/e2e-130-phase2-matrix-2026-09-21.md + chuỗi #140-#146).
+
+## Door lifecycle cho agent cũ + durability (2026-09-21, decision post-port)
+Nguồn: spike 4 câu trên daemon source (/opt/paseo @getpaseo/server dist + client 0.8.0) — chi tiết learn/decision-2026-09-21-door-lifecycle.md.
+- Gap xác nhận: mcpServers KHÔNG thể đổi cho agent đang sống qua bề mặt chính thức (updateAgent chỉ {name,labels}; session_open hook chỉ được đổi env; reload không chạy agent.create). Agent sinh trước plugin không bao giờ nhận door qua create-hook.
+- Lộ đường hợp lệ: `before("agent.session_open")` ĐƯỢC PHÉP ĐỔI ENV cho reason create|resume|refresh|import (agent-manager.js:3628, buildLaunchContext) → PASEO_SUBAGENTS_DOOR env + pi ext door-shim đọc env (v1.4.108).
+- spec v12 (user duyệt 2026-09-21, verbatim "Duyệt spec v12 đủ 3 mảnh (Recommended)"): L1 door-grant qua [door-grant] message khi turn_ended cho main không door; L2 env-door qua session_open; pa1 adopt-from-disk khôi phục token đã mint từ record (đọc 1 chiều đĩa→RAM, hatch PASEO_SUBAGENTS_ADOPT=0).
+- Task board #150 [CHỜ PLAN DUYỆT]; P1-đ2 upstream draft (đề xuất hook agent.update) còn parked chờ user.
