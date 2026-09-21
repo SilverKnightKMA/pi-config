@@ -125,6 +125,7 @@ describe("allowlistFor — the default-deny core", () => {
 			"message_main",
 			"message_subagent",
 			"ask_question",
+			"ask_parent",
 		]);
 	});
 
