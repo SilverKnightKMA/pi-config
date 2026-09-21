@@ -1086,6 +1086,8 @@ async function createChildAgent(
 	}
 
 
+	// #133 (plan step 16) ĐÓNG BĂNG: khối spawn dưới đây chỉ sửa lỗi —
+	// tính năng mới thuộc plugin paseo-subagents (1 cửa, spawner-mode #131).
 	// Fire-and-forget: returns the id; the report arrives via the channel.
 	extOwnsSpawn &&
 		pi.registerTool<typeof SpawnParams, SpawnDetails>({
@@ -1363,6 +1365,9 @@ async function createChildAgent(
 	// CHILD → MAIN: never interrupts. Busy main → persistent file queue,
 	// delivered at the main's next turn boundary by its own drain. Idle main
 	// → steer-back as a new turn.
+	// #133 ĐÓNG BĂNG (bugfix-only): message_main là kênh legacy — con mới
+	// dùng door (reply_to_parent/ask_parent, #132 F2); handler còn lại để
+	// backport an toàn cho child không door.
 	pi.registerTool({
 		name: "message_main",
 		label: "message_main",

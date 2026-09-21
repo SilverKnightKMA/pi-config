@@ -145,3 +145,10 @@ Câu hỏi: toàn bộ subagent stack của pi (spawn, kênh, pool/swarm, remind
 | pi main/children zero-residue | KHÔNG — cần shim mỏng (tổng quát hóa door-tool.ts: proxy mọi mcp__paseo__* từ record) vì pi 0.85.1 http-MCP gap |
 Tổng: ~90% port được, phần port chạy sạch hơn. Rủi ro phải verify: before(agent.create) cho main từ app UI (mới có bằng chứng CLI path).
 Quyết định user 2026-09-20 (verbatim): "cái này breaking changes đấy, chắc cần phải plan lại kỹ hơn, mình sẽ bật plan mode" — KHÔNG mở task build; vào plan mode (learn/decision-2026-09-20-plugin-port.md).
+
+## Cập nhật hậu-port 2026-09-21 (#133, plan step 16)
+Kết quả port thực tế (plugin paseo-subagents + ext door-first):
+- ĐÃ PORT thành công: scoped door (mcp-server.ts), spawn_subagent detach + role pinning (roles.ts + PROVIDER_CATALOGS modeMap), spawn_pool (batch ≤4, [pool-report] aggregate), ask_parent/answer_child ([child-question]/[parent-answer] wake con), idle-archive reminder plugin-side (label subagent.spawner tránh đôi lời), main-door inject mọi provider (key 'paseo-subagents').
+- GIỮ ở extension (pi-only, KHÔNG port): role allowlist tool-level + tool_call gate, research_report/readonly floor, safe-bash, loop-guard, door-tool shim (pi 0.85.1 http-MCP gap), spawner-mode gate 1 cửa (#131), F2 door-first allowlist (#132).
+- Extension spawn/message_main ĐÓNG BĂNG bugfix-only (marker #133 trong index.ts).
+- E2E ma trận đầy đủ: chính/con × pi/codex/claude × spawn/pool/ask/report (evidence learn/e2e-130-phase2-matrix-2026-09-21.md + chuỗi #140-#146).
