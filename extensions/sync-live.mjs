@@ -38,6 +38,8 @@ const liveSkills = path.join(homedir(), ".pi/agent/skills");
 const PACKED = [
 	"_shared",
 	"ask-user-question",
+	"bash-long-run-guard",
+	"facts",
 	"goal",
 	"lessons",
 	"md-log",
@@ -48,6 +50,7 @@ const PACKED = [
 	"snip",
 	"sse-probe",
 	"subagent-types",
+	"telemetry",
 	"visual-tools",
 	"web-fetch",
 	"zombie-watchdog",
