@@ -156,3 +156,15 @@ Scan scope: pi-config `extensions/*` (17 extensions + `_shared`) and paseo-plugi
 | paseo-plugins (10 plugins) | 196/196 tests, tsc 10/10 | — (one transient bun-install ENOENT, non-fatal) |
 
 Detail: docs/audit-46/hcm10-results.md
+
+## Runtime results — Windows Server 2019 (step 4/6, Administrator/192.168.10.160, bun 1.4.2 zip, autocrlf=true)
+
+| unit | windows runtime | first error (if any) |
+|---|---|---|
+| pi-config (17 ext + _shared) | 1000/1014 tests, tsc 14/14 | 14 fails = 5 path-separator (2 hit RUNTIME output), 5 bare-name spawn (bun/pi/mkdir ENOENT), 1 POSIX 0600 mode assertion (doorbell), 2 CRLF-converted fixtures, 1 argv content |
+| smoke-extensions gate | **FAIL** | smoke-extensions.mjs:54 Bun.spawnSync(["bun",...]) — ENOENT, bun not on PATH |
+| paseo-plugins (10) | 196/196 tests, tsc 9/10 | plan TSC-FAIL: node_modules is a git-tracked SYMLINK → Windows checkout = plain file → bun install ENOTDIR (repo's only symlink) |
+| CRLF case (step-4 specific) | **BREAKS** | autocrlf converted 328 worktree files; 2 subagent-types channel tests fail on \r in multi-line fixtures |
+| MAX_PATH case (step-4 specific) | **NO RISK** | longest repo path 124 chars < 260 |
+
+Detail: docs/audit-46/windows-results.md
