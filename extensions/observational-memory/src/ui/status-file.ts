@@ -7,11 +7,11 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Runtime } from "../runtime.js";
-import { buildStatusLines } from "../commands/status.js";
+import { buildStatusLines, costForDisplay } from "../commands/status.js";
 import { foldLedger } from "../ledger/fold.js";
 import { poolTokens } from "../ledger/pool.js";
-import { sumSessionCost, type Entry } from "../ledger/types.js";
-import { sumRunCosts } from "../spawn/runs.js";
+import { type Entry } from "../ledger/types.js";
+import { readCostGcStamp, readRunsRollup, runsCostTtlDays } from "../spawn/runs.js";
 
 /**
  * Minimal pi surface the snapshot needs for real numbers. Optional everywhere:
@@ -66,6 +66,16 @@ export interface OmStatusSummary {
 	poolMax: number;
 	sessionCostUsd: number;
 	sessionRuns: number;
+	/** #100: role split for the plugin cost card (same disk-first numbers as /om:status). */
+	observerCostUsd: number;
+	observerRuns: number;
+	consolidatorCostUsd: number;
+	consolidatorRuns: number;
+	/** #100: storage/GC surfacing — rollup totals, TTL config, last sweep day. */
+	rollupFiles: number;
+	rollupCostUsd: number;
+	runsCostTtlDays: number;
+	lastRunsGcDay: string;
 }
 
 const RING_LIMIT = 24;
@@ -145,10 +155,10 @@ function buildSummary(runtime: Runtime, contextTokens: number | null, allEntries
 	const running = runtime.observersInFlight.size;
 	// Durable truth first: .memory/<sessionId>/.runs/*.cost.json survives restarts;
 	// ledger om.cost entries only live in the process and roll back to 0 on respawn.
-	const disk = sumRunCosts(runtime.memoryRoot);
-	const ledger = sumSessionCost(allEntries);
-	const { costUsd, runs } = disk.total.runs > 0 ? disk.total : ledger;
+	// #100: role split mirrors costForDisplay (disk-first, ledger fallback per role)
+	const cost = costForDisplay(runtime, allEntries);
 	const folded = foldLedger(allEntries);
+	const rollup = readRunsRollup(runtime.memoryRoot);
 	const pool = poolTokens(folded.activeObservations);
 	const verdict =
 		running > 0 || runtime.consolidatorInFlight
@@ -165,7 +175,15 @@ function buildSummary(runtime: Runtime, contextTokens: number | null, allEntries
 		contextMax: cfg.compactAtContextTokens,
 		poolTokens: pool,
 		poolMax: cfg.consolidateAtPoolTokens,
-		sessionCostUsd: costUsd,
-		sessionRuns: runs,
+		sessionCostUsd: cost.total.costUsd,
+		sessionRuns: cost.total.runs,
+		observerCostUsd: cost.observer.costUsd,
+		observerRuns: cost.observer.runs,
+		consolidatorCostUsd: cost.consolidator.costUsd,
+		consolidatorRuns: cost.consolidator.runs,
+		rollupFiles: rollup?.files ?? 0,
+		rollupCostUsd: rollup?.total.costUsd ?? 0,
+		runsCostTtlDays: runsCostTtlDays(),
+		lastRunsGcDay: readCostGcStamp(runtime.memoryRoot),
 	};
 }

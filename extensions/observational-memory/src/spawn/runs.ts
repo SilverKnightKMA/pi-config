@@ -86,6 +86,11 @@ export interface RunsRollup {
 	rolledUpAt: string;
 }
 
+/** #100: public read-only view of the rollup for status lines + status summary. */
+export function readRunsRollup(root: string): RunsRollup | null {
+	return readRollup(root);
+}
+
 export function rollupPath(root: string): string {
 	return join(runsDir(root), "rollup.json");
 }
@@ -242,6 +247,22 @@ export function unlinkCommittedResult(root: string, runId: string, ledgerContent
 /** Sweep age (days) for orphaned/legacy result.json; 0 disables. Env: OM_RUNS_SWEEP_DAYS. */
 export const RESULT_SWEEP_DAYS = Number(process.env.OM_RUNS_SWEEP_DAYS ?? 7);
 
+/** #100: cost-GC TTL in days, read at call time so env flips land. Env: OM_RUNS_COST_TTL_DAYS. */
+export function runsCostTtlDays(): number {
+	const v = Number(process.env.OM_RUNS_COST_TTL_DAYS ?? 0);
+	return Number.isFinite(v) && v > 0 ? v : 0;
+}
+
+/** #100: last cost-GC sweep day (YYYY-MM-DD) from the stamp file; "" when never swept. */
+export function readCostGcStamp(root: string): string {
+	if (!root) return "";
+	try {
+		return readFileSync(join(runsDir(root), ".cost-gc-stamp"), "utf8").trim();
+	} catch {
+		return "";
+	}
+}
+
 /**
  * Safety net: unlink *.result.json older than RESULT_SWEEP_DAYS days. Covers runs orphaned by
  * a crash between ledger commit and unlink, plus everything written before GC existed.
@@ -275,21 +296,30 @@ export function sweepOldResults(root: string, maxAgeDays = RESULT_SWEEP_DAYS): n
  * #32 GC: fold cost files older than `ttlDays` into .runs/rollup.json, then delete
  * them. sumRunCosts() keeps returning the SAME totals (rollup + survivors). The
  * transcript remains the source of truth (om_worker_cost.py --verify is the pre-GC
- * gate); the rollup only preserves the om-status sums. Returns how many files were
- * folded — 0 when ttl <= 0 (off), the dir is missing, or nothing is old enough.
+ * gate); the rollup only preserves the om-status sums. #100: returns how many files
+ * were folded AND the bytes reclaimed — {files:0,bytes:0} when ttl <= 0 (off),
+ * the dir is missing, or nothing is old enough.
  */
-export function sweepRunsCost(root: string, ttlDays: number, now: number = Date.now()): number {
-	if (!root || ttlDays <= 0) return 0;
+export interface RunsGcResult {
+	/** Cost files folded into the rollup (valid parses only). */
+	files: number;
+	/** Bytes reclaimed by folding those files. */
+	bytes: number;
+}
+
+export function sweepRunsCost(root: string, ttlDays: number, now: number = Date.now()): RunsGcResult {
+	if (!root || ttlDays <= 0) return { files: 0, bytes: 0 };
 	let files: string[];
 	try {
 		files = readdirSync(runsDir(root)).filter((f) => f.endsWith(".cost.json"));
 	} catch {
-		return 0;
+		return { files: 0, bytes: 0 };
 	}
 	const cutoff = now - ttlDays * 24 * 60 * 60 * 1000;
 	const at = new Date(now).toISOString();
 	let rollup = readRollup(root) ?? emptyRollup();
 	let folded = 0;
+	let bytes = 0;
 	for (const f of files) {
 		const path = join(runsDir(root), f);
 		try {
@@ -301,11 +331,12 @@ export function sweepRunsCost(root: string, ttlDays: number, now: number = Date.
 			}
 			rollup = foldIntoRollup(rollup, cost, at);
 			folded += 1;
+			bytes += statSync(path).size;
 			rmSync(path, { force: true });
 		} catch {
 			// raced away — fine
 		}
 	}
 	if (folded > 0 || rollup.files > 0) atomicWrite(rollupPath(root), JSON.stringify(rollup, null, "\t"));
-	return folded;
+	return { files: folded, bytes };
 }

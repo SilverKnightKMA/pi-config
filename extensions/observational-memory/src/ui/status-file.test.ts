@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeTimelineSink } from "./timeline-message.ts";
@@ -154,6 +154,39 @@ describe("om status v2.5 — durable cost from .runs (restart-safe)", () => {
 		// role split from the tag in the file (untagged legacy files only add to total)
 		expect(file.lines.some((l) => l.includes("observer") && l.includes("$0.0030 (2 runs)"))).toBe(true);
 		expect(file.lines.some((l) => l.includes("consolidator") && l.includes("$0.0009 (1 runs)"))).toBe(true);
+	});
+
+	test("#100: summary carries role split + GC/rollup/TTL fields", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "omv2gc-"));
+		const rt = stubRuntime(dir);
+		mkdirSync(join(rt.memoryRoot, ".runs"), { recursive: true });
+		// one live cost file + a rollup from an earlier GC + a sweep stamp
+		writeWorkerCost(runCostPath(rt.memoryRoot, "obs-live"), { costUsd: 0.001, role: "observer" });
+		writeFileSync(
+			join(rt.memoryRoot, ".runs", "rollup.json"),
+			JSON.stringify({ v: 1, total: { costUsd: 0.05, runs: 1 }, observer: { costUsd: 0, runs: 0 }, consolidator: { costUsd: 0.05, runs: 1 }, files: 1, rolledUpAt: "2026-09-20T01:02:03Z" }),
+		);
+		writeFileSync(join(rt.memoryRoot, ".runs", ".cost-gc-stamp"), "2026-09-20");
+		process.env.OM_RUNS_COST_TTL_DAYS = "7";
+		try {
+			const pi: PiSnapshotSource = { sessionManager: { getBranch: () => [], getEntries: () => [] } };
+			await writeOmStatusSnapshot(rt, pi);
+			const file = JSON.parse(readFileSync(omStatusPath(rt)!, "utf8")) as OmStatusFile;
+			const s = file.summary!;
+			// disk totals = rollup + live file
+			expect(s.sessionRuns).toBe(2);
+			expect(s.observerCostUsd).toBeCloseTo(0.001, 9);
+			expect(s.observerRuns).toBe(1);
+			expect(s.consolidatorCostUsd).toBeCloseTo(0.05, 9);
+			expect(s.consolidatorRuns).toBe(1);
+			// storage/GC surfacing
+			expect(s.rollupFiles).toBe(1);
+			expect(s.rollupCostUsd).toBeCloseTo(0.05, 9);
+			expect(s.runsCostTtlDays).toBe(7);
+			expect(s.lastRunsGcDay).toBe("2026-09-20");
+		} finally {
+			delete process.env.OM_RUNS_COST_TTL_DAYS;
+		}
 	});
 
 	test("no cost files → fall back to the ledger as before", async () => {

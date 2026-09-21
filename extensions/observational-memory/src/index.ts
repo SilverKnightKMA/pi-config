@@ -18,7 +18,7 @@ import { registerStatusCommand } from "./commands/status.js";
 import { registerStatusTool } from "./commands/status-tool.js";
 import { registerRecallTool } from "./commands/recall-tool.js";
 import { registerMemoryGuard } from "./guard/memory-guard.js";
-import { sweepRunsCost } from "./spawn/runs.js";
+import { runsCostTtlDays, sweepRunsCost } from "./spawn/runs.js";
 import { registerCompactionHook } from "./hooks/compaction-hook.js";
 import { registerCompactionTrigger } from "./hooks/compaction-trigger.js";
 import { registerConsolidatorTrigger } from "./hooks/consolidator-trigger.js";
@@ -26,7 +26,7 @@ import { registerObserverTrigger } from "./hooks/observer-trigger.js";
 import { OM_ENABLED, type Entry } from "./ledger/index.js";
 import { ensureSessionMemory } from "./memory/session.js";
 import { Runtime } from "./runtime.js";
-import { writeOmStatusSnapshot, type PiSnapshotSource } from "./ui/status-file.js";
+import { appendOmStatusEvent, writeOmStatusSnapshot, type PiSnapshotSource } from "./ui/status-file.js";
 
 function readGateFromLedger(branch: Entry[]): boolean {
 	// pipeline stays opt-in: only an explicit `on` entry enables it
@@ -83,7 +83,7 @@ export default function observationalMemory(pi: ExtensionAPI): void {
 		// OM_RUNS_COST_TTL_DAYS to enable (e.g. 7). ≤1 sweep per process per day
 		// via a stamp file, mirroring the snip TTL sweep pattern.
 		try {
-			const ttl = Number(process.env.OM_RUNS_COST_TTL_DAYS ?? 0);
+			const ttl = runsCostTtlDays();
 			if (ttl > 0 && runtime.memoryRoot) {
 				const stamp = join(runtime.memoryRoot, ".runs", ".cost-gc-stamp");
 				const day = new Date().toISOString().slice(0, 10);
@@ -94,10 +94,18 @@ export default function observationalMemory(pi: ExtensionAPI): void {
 					/* first run */
 				}
 				if (last !== day) {
-					const folded = sweepRunsCost(runtime.memoryRoot, ttl);
+					const gc = sweepRunsCost(runtime.memoryRoot, ttl);
 					mkdirSync(join(runtime.memoryRoot, ".runs"), { recursive: true });
 					writeFileSync(stamp, day, "utf8");
-					if (folded > 0) ctx.log?.(`[om] rolled ${folded} old cost files into .runs/rollup.json (TTL ${ttl}d)`);
+					if (gc.files > 0) {
+						// #100: the fold is no longer silent — one aggregate event (not per-file)
+						ctx.log?.(`[om] rolled ${gc.files} old cost files into .runs/rollup.json (TTL ${ttl}d)`);
+						void appendOmStatusEvent(
+							runtime,
+							`gc: folded ${gc.files} cost file(s) (${(gc.bytes / 1024).toFixed(1)} KB) into rollup — sums preserved (TTL ${ttl}d)`,
+							ctx as unknown as PiSnapshotSource,
+						);
+					}
 				}
 			}
 		} catch {

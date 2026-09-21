@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { foldLedger, poolTokens, rawTokensSinceObservationCoverage, sumSessionCostByRole, type Entry } from "../ledger/index.js";
 import { listTopics, readJourney } from "../memory/paths.js";
-import { sumRunCosts } from "../spawn/runs.js";
+import { readCostGcStamp, readRunsRollup, runsCostTtlDays, RESULT_SWEEP_DAYS, sumRunCosts } from "../spawn/runs.js";
 import { countWords, journeyWordBudget } from "../../agent/consolidator/staging.js";
 import type { Runtime } from "../runtime.js";
 import { renderTimeline } from "../ui/timeline.js";
@@ -17,8 +17,10 @@ import { renderTimeline } from "../ui/timeline.js";
  * (workers write them every run); ledger om.cost entries are a process-lifetime
  * mirror that dies on restart, so they only serve as fallback (fresh install,
  * tests) and to keep role split alive for runs whose files predate role tagging.
+ * #100: exported so the om-status summary (status-file.ts) reuses the same
+ * disk-first, ledger-fallback role split instead of duplicating the logic.
  */
-function costForDisplay(runtime: Runtime, allEntries: Entry[]): {
+export function costForDisplay(runtime: Runtime, allEntries: Entry[]): {
 	total: { costUsd: number; runs: number };
 	observer: { costUsd: number; runs: number };
 	consolidator: { costUsd: number; runs: number };
@@ -47,6 +49,11 @@ export function buildStatusLines(
 	const topics = listTopics(runtime.memoryRoot);
 	const journey = readJourney(runtime.memoryRoot);
 	const cost = costForDisplay(runtime, allEntries);
+	// #100: storage/GC surfacing — rollup totals (folded files keep the sums) + TTL
+	// config + last sweep day, all read from disk so they survive respawns.
+	const rollup = readRunsRollup(runtime.memoryRoot);
+	const ttlDays = runsCostTtlDays();
+	const gcDay = readCostGcStamp(runtime.memoryRoot);
 
 	const running = runtime.observersInFlight.size;
 	const pct = (v: number, max: number) => `${Math.round((v / max) * 100)}%`;
@@ -89,6 +96,10 @@ export function buildStatusLines(
 		`    observer      $${cost.observer.costUsd.toFixed(4)} (${cost.observer.runs} runs)`,
 		`    consolidator  $${cost.consolidator.costUsd.toFixed(4)} (${cost.consolidator.runs} runs)`,
 		"",
+
+		"Storage & GC",
+		`  rollup: ${rollup && rollup.files > 0 ? `${rollup.files} cost file(s) folded · $${rollup.total.costUsd.toFixed(4)} preserved · last ${rollup.rolledUpAt ? rollup.rolledUpAt.slice(0, 10) : "—"}` : "none yet"}`,
+		`  cost GC: TTL ${ttlDays}d${ttlDays > 0 ? "" : " (off)"} · last sweep ${gcDay || "never"} · result sweep ${RESULT_SWEEP_DAYS}d`,
 		`  last error: ${runtime.lastWorkerError ?? "none"}`,
 	];
 }

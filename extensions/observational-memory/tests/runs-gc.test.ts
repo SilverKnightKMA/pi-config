@@ -6,7 +6,10 @@ import { describe, expect, it } from "bun:test";
 import {
 	emptyRollup,
 	foldIntoRollup,
+	readCostGcStamp,
+	readRunsRollup,
 	rollupPath,
+	runsCostTtlDays,
 	sumRunCosts,
 	sweepRunsCost,
 	writeWorkerCost,
@@ -44,10 +47,11 @@ describe("#32 .runs cost GC — rollup keeps sums identical", () => {
 			utimesSync(runCostPath(root, "cons-1"), new Date(now - 9 * DAY), new Date(now - 9 * DAY));
 
 			const before = sumRunCosts(root);
-			const folded = sweepRunsCost(root, 7, now);
+			const gc = sweepRunsCost(root, 7, now);
 			const after = sumRunCosts(root);
 
-			expect(folded).toBe(2);
+			expect(gc.files).toBe(2);
+			expect(gc.bytes).toBeGreaterThan(0); // #100: bytes reclaimed by the fold
 			expect(after.total.costUsd).toBeCloseTo(before.total.costUsd, 10);
 			expect(after.total.runs).toBe(before.total.runs);
 			expect(after.observer.costUsd).toBeCloseTo(before.observer.costUsd, 10);
@@ -67,10 +71,10 @@ describe("#32 .runs cost GC — rollup keeps sums identical", () => {
 			const now = Date.now();
 			writeWorkerCost(runCostPath(root, "obs-1"), { costUsd: 0.001, role: "observer" });
 			utimesSync(runCostPath(root, "obs-1"), new Date(now - 30 * DAY), new Date(now - 30 * DAY));
-			expect(sweepRunsCost(root, 0, now)).toBe(0);
-			expect(sweepRunsCost("", 7, now)).toBe(0);
+			expect(sweepRunsCost(root, 0, now)).toEqual({ files: 0, bytes: 0 });
+			expect(sweepRunsCost("", 7, now)).toEqual({ files: 0, bytes: 0 });
 			const missing = join(root, "nope");
-			expect(sweepRunsCost(missing, 7, now)).toBe(0);
+			expect(sweepRunsCost(missing, 7, now)).toEqual({ files: 0, bytes: 0 });
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
@@ -84,8 +88,9 @@ describe("#32 .runs cost GC — rollup keeps sums identical", () => {
 			mkdirSync(join(root, ".runs"), { recursive: true });
 			writeFileSync(bad, "{not json");
 			utimesSync(bad, new Date(now - 9 * DAY), new Date(now - 9 * DAY));
-			const folded = sweepRunsCost(root, 7, now);
-			expect(folded).toBe(0);
+			const gc = sweepRunsCost(root, 7, now);
+			expect(gc.files).toBe(0);
+			expect(gc.bytes).toBe(0);
 			expect(sumRunCosts(root).total.runs).toBe(0);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
@@ -103,6 +108,36 @@ describe("#32 .runs cost GC — rollup keeps sums identical", () => {
 			writeWorkerCost(runCostPath(root, "cons-2"), { costUsd: 0.2, role: "consolidator" });
 			const totals = sumRunCosts(root);
 			expect(totals.consolidator).toEqual({ costUsd: 0.7, runs: 2 });
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("#100 readers: readRunsRollup / readCostGcStamp / runsCostTtlDays", () => {
+		const root = tmpRoot();
+		try {
+			// no rollup yet
+			expect(readRunsRollup(root)).toBeNull();
+			expect(readCostGcStamp(root)).toBe("");
+			// fold one file, stamp the sweep
+			const now = Date.now();
+			writeWorkerCost(runCostPath(root, "obs-9"), { costUsd: 0.01, role: "observer" });
+			utimesSync(runCostPath(root, "obs-9"), new Date(now - 9 * DAY), new Date(now - 9 * DAY));
+			expect(sweepRunsCost(root, 7, now).files).toBe(1);
+			const rollup = readRunsRollup(root);
+			expect(rollup?.files).toBe(1);
+			expect(rollup?.observer.runs).toBe(1);
+			mkdirSync(join(root, ".runs"), { recursive: true });
+			writeFileSync(join(root, ".runs", ".cost-gc-stamp"), "2026-09-21");
+			expect(readCostGcStamp(root)).toBe("2026-09-21");
+			// ttl reader follows env at call time
+			process.env.OM_RUNS_COST_TTL_DAYS = "14";
+			try {
+				expect(runsCostTtlDays()).toBe(14);
+			} finally {
+				delete process.env.OM_RUNS_COST_TTL_DAYS;
+			}
+			expect(runsCostTtlDays()).toBe(0);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
