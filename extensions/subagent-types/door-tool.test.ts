@@ -189,3 +189,58 @@ describe("doorSchemaToTypeBox", () => {
 		expect((doorSchemaToTypeBox({ nope: true }, false) as unknown as { properties: object }).properties).toEqual({});
 	});
 });
+
+// ---- spec v12 L2 (#160): main door từ env TRƯỚC record ----
+
+import { doorUrlFromEnv, findMainDoorUrl, mainDoorUrlFromRecord, MAIN_DOOR_ENV } from "./door-tool.ts";
+
+describe("doorUrlFromEnv (L2 #160)", () => {
+	test("env có URL đúng shape → trả nguyên URL", () => {
+		const url = "http://127.0.0.1:43721/mcp?caller=abc123";
+		expect(doorUrlFromEnv({ [MAIN_DOOR_ENV]: url })).toBe(url);
+	});
+	test("thiếu env → null", () => {
+		expect(doorUrlFromEnv({})).toBeNull();
+	});
+	test("sai shape (catalog daemon /mcp/agents, URL hỏng) → null", () => {
+		expect(doorUrlFromEnv({ [MAIN_DOOR_ENV]: "http://127.0.0.1:1/mcp/agents" })).toBeNull();
+		expect(doorUrlFromEnv({ [MAIN_DOOR_ENV]: "http://127.0.0.1:1/mcp" })).toBeNull(); // thiếu caller
+		expect(doorUrlFromEnv({ [MAIN_DOOR_ENV]: "not-a-url" })).toBeNull();
+	});
+});
+
+describe("mainDoorUrlFromRecord (L2 #160)", () => {
+	test("record có key paseo-subagents → URL", () => {
+		const raw = { config: { mcpServers: { "paseo-subagents": { url: "http://127.0.0.1:9/mcp?caller=t1" } } } };
+		expect(mainDoorUrlFromRecord(raw)).toBe("http://127.0.0.1:9/mcp?caller=t1");
+	});
+	test("record chỉ có key 'paseo' (child) → null (main door riêng key)", () => {
+		const raw = { config: { mcpServers: { paseo: { url: "http://127.0.0.1:9/mcp?caller=t2" } } } };
+		expect(mainDoorUrlFromRecord(raw)).toBeNull();
+	});
+	test("không config → null", () => {
+		expect(mainDoorUrlFromRecord({})).toBeNull();
+		expect(mainDoorUrlFromRecord(null)).toBeNull();
+	});
+});
+
+describe("findMainDoorUrl — env TRƯỚC record (#160)", () => {
+	test("env thắng record dù record có door", () => {
+		// fixture: record main có door key paseo-subagents
+		expect(findMainDoorUrl("/nonexistent-agents-dir", "any-id", { [MAIN_DOOR_ENV]: "http://127.0.0.1:5/mcp?caller=envwins" })).toBe(
+			"http://127.0.0.1:5/mcp?caller=envwins",
+		);
+	});
+	test("không env → đọc record (main sau port có door trong record)", () => {
+		// dùng chính agents dir thật của máy này không deterministic — tạo fixture
+		const tmp = require("node:fs").mkdtempSync(require("node:os").tmpdir() + "/maindoor-");
+		require("node:fs").mkdirSync(tmp + "/ws", { recursive: true });
+		require("node:fs").writeFileSync(
+			tmp + "/ws/main-1.json",
+			JSON.stringify({ id: "main-1", config: { mcpServers: { "paseo-subagents": { url: "http://127.0.0.1:7/mcp?caller=rec1" } } } }),
+		);
+		expect(findMainDoorUrl(tmp, "main-1", {})).toBe("http://127.0.0.1:7/mcp?caller=rec1");
+		expect(findMainDoorUrl(tmp, "ghost", {})).toBeNull();
+		require("node:fs").rmSync(tmp, { recursive: true, force: true });
+	});
+});

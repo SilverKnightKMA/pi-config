@@ -35,7 +35,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { Type } from "@sinclair/typebox";
-import { REPLY_DOOR_TOOL, findDoorUrlForAgent, fetchDoorTools, callDoorTool, doorSchemaToTypeBox, type DoorToolSpec } from "./door-tool.ts";
+import { REPLY_DOOR_TOOL, findDoorUrlForAgent, fetchDoorTools, callDoorTool, doorSchemaToTypeBox, findMainDoorUrl, type DoorToolSpec } from "./door-tool.ts";
 import {
 	readArchiveRemindMinutes,
 	toIdleChildren,
@@ -577,6 +577,15 @@ export default function subagentTypes(pi: ExtensionAPI) {
 				if (doorUrl) registerReplyDoorTool(doorUrl);
 			}
 
+			// spec v12 L2 (#160): MAIN không-door trong record (sinh trước plugin)
+			// nhận env PASEO_SUBAGENTS_DOOR từ session_open — đăng ký door proxies
+			// native cho main (spawn_subagent/spawn_pool/answer_child… theo caps
+			// token). Env TRƯỚC record; record fallback cho main door-hóa thường.
+			if (myRole === MAIN_ROLE && myAgentId) {
+				const mainDoor = findMainDoorUrl(PASEO_AGENTS_DIR, myAgentId);
+				if (mainDoor) registerMainDoorTools(mainDoor);
+			}
+
 			const allowed = allowlistFor(myRole, roles, Boolean(myRole !== MAIN_ROLE && myAgentId && findDoorUrlForAgent(PASEO_AGENTS_DIR, myAgentId)));
 			if (allowed[0] === "*") {
 				ctx.ui.notify(`subagent-types: main agent (full tools)${roles.size ? ` — ${roles.size} roles loadable` : ""}`, "info");
@@ -637,6 +646,27 @@ export default function subagentTypes(pi: ExtensionAPI) {
 	/** v1.4.103 behavior — one hardcoded reply_to_parent (fallback path). */
 	const registerSingleDoorTool = (doorUrl: string): void => {
 		registerDoorProxy(doorUrl, { name: REPLY_DOOR_TOOL });
+	};
+
+	/** spec v12 L2 (#160): door CHÍNH của main — tools/list từ door đã lọc theo
+	 *  caps token (spawn_subagent/spawn_pool/answer_child…); KHÔNG hardcode
+	 *  floor child (reply_to_parent/ask_parent không thuộc main). Fetch fail →
+	 *  log thẳng, main vẫn sống (không cửa native, dùng được URL trực tiếp). */
+	const registerMainDoorTools = (doorUrl: string): void => {
+		void (async () => {
+			const list = await fetchDoorTools(doorUrl);
+			if (!list.ok) {
+				console.error(`[subagent-types] main door tools/list failed: ${list.error} — URL=${doorUrl}`);
+				return;
+			}
+			let added = 0;
+			for (const t of list.tools) {
+				if (!/^[a-z][a-z0-9_]*$/.test(t.name)) continue;
+				registerDoorProxy(doorUrl, t);
+				added++;
+			}
+			console.log(`[subagent-types] main door proxies: ${added} tool từ ${doorUrl.slice(0, 48)}… (spec v12 L2)`);
+		})();
 	};
 
 	const registerDoorProxy = (doorUrl: string, spec: DoorToolSpec): void => {

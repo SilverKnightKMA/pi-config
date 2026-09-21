@@ -22,6 +22,75 @@ import { Type, type TSchema } from "@sinclair/typebox";
 
 export const REPLY_DOOR_TOOL = "reply_to_parent";
 
+/** Env L2 (spec v12 · #160): plugin paseo-subagents gán PASEO_SUBAGENTS_DOOR
+ *  cho main không-door (sinh trước plugin) qua before(agent.session_open).
+ *  Đọc TRƯỚC record — env luôn mới hơn đĩa cho agent đang sống. */
+export const MAIN_DOOR_ENV = "PASEO_SUBAGENTS_DOOR";
+export const MAIN_MCP_KEY = "paseo-subagents";
+
+/** Door URL từ env; null khi thiếu hoặc sai shape (/mcp + caller token). */
+export function doorUrlFromEnv(env: Record<string, string | undefined> = process.env): string | null {
+	const url = env[MAIN_DOOR_ENV];
+	if (typeof url !== "string" || url.length === 0) return null;
+	try {
+		const u = new URL(url);
+		if (u.pathname !== "/mcp" || !u.searchParams.has("caller")) return null;
+		return url;
+	} catch {
+		return null;
+	}
+}
+
+/** Door URL chính (spawn door) từ record key 'paseo-subagents' — main được
+ *  plugin door-hóa lúc create (post-port). Same shape check as child door. */
+export function mainDoorUrlFromRecord(raw: unknown): string | null {
+	if (typeof raw !== "object" || raw === null) return null;
+	const cfg = (raw as Record<string, unknown>).config;
+	if (typeof cfg !== "object" || cfg === null) return null;
+	const servers = (cfg as Record<string, unknown>).mcpServers;
+	if (typeof servers !== "object" || servers === null) return null;
+	const main = (servers as Record<string, unknown>)[MAIN_MCP_KEY];
+	if (typeof main !== "object" || main === null) return null;
+	const url = (main as Record<string, unknown>).url;
+	if (typeof url !== "string" || url.length === 0) return null;
+	try {
+		const u = new URL(url);
+		if (u.pathname !== "/mcp" || !u.searchParams.has("caller")) return null;
+		return url;
+	} catch {
+		return null;
+	}
+}
+
+/** Door chính của MAIN: env TRƯỚC record (spec v12 L2 · #160). */
+export function findMainDoorUrl(agentsDir: string, agentId: string, env: Record<string, string | undefined> = process.env): string | null {
+	const fromEnv = doorUrlFromEnv(env);
+	if (fromEnv) return fromEnv;
+	if (!agentId) return null;
+	let workspaces: Dirent[];
+	try {
+		workspaces = readdirSync(agentsDir, { withFileTypes: true });
+	} catch {
+		return null;
+	}
+	for (const entry of workspaces) {
+		if (!entry.isDirectory()) continue;
+		const recordPath = join(agentsDir, entry.name, `${agentId}.json`);
+		let raw: string;
+		try {
+			raw = readFileSync(recordPath, "utf8");
+		} catch {
+			continue;
+		}
+		try {
+			return mainDoorUrlFromRecord(JSON.parse(raw));
+		} catch {
+			return null;
+		}
+	}
+	return null;
+}
+
 /** Extract the scoped door URL from a parsed agent record; null when the
  * record is absent, has no paseo MCP server, or the URL is not the scoped
  * door shape (main agents keep the broad catalog → null → no tool). */
