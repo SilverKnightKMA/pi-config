@@ -20,9 +20,11 @@
  *   FACTS_FILE=<path>     file override (tests)
  */
 
-import { readFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync, renameSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
+import { dirname, join } from "node:path";
+import { evaluateTrigger } from "./src/trigger.ts";
 import { recallFacts, renderRecallReport } from "./src/recall.ts";
 import {
 	FACT_CATEGORIES,
@@ -31,7 +33,9 @@ import {
 	parseFactsFile,
 	renderFactsBlock,
 	selectFactsForInject,
+	serializeFacts,
 	todayIso,
+	updateFactInPlace,
 } from "./src/store.ts";
 
 /** Read + select + render. Returns null when there is nothing to inject
@@ -126,4 +130,64 @@ export default function factsExtension(pi: ExtensionAPI): void {
 	pi.on("session_compact", () => {
 		injectNow(pi, process.env);
 	});
+
+	// P2 (#179): regex correction trigger — deterministic, engine-side, $0
+	// model calls. Dry-run doctrine: log-only until FACTS_TRIGGER_APPLY=1;
+	// FACTS_TRIGGER=0 disables the whole tier. Fail-silent on every error.
+	pi.on("message_end", (event: any) => {
+		try {
+			if (process.env.FACTS_TRIGGER === "0") return;
+			const msg = event?.message;
+			if (!msg || msg.role !== "user" || msg.customType) return; // plain user chat only
+			const text = typeof msg.content === "string" ? msg.content : "";
+			if (!text || text.length > 5000) return;
+			runFactsTrigger(text);
+		} catch {
+			/* fail-silent — the curator tier catches corrections this trigger misses */
+		}
+	});
+}
+
+/** Detect + ground + (maybe) apply. Always logs to facts-trigger.log. */
+function runFactsTrigger(text: string, env: NodeJS.ProcessEnv = process.env): void {
+	const file = factsFilePath(env);
+	let facts = [] as ReturnType<typeof parseFactsFile>;
+	try {
+		facts = parseFactsFile(readFileSync(file, "utf8"));
+	} catch {
+		return; // no store yet — nothing to correct
+	}
+	const outcome = evaluateTrigger(text, facts);
+	if (outcome.status === "no-fire") return;
+
+	const apply = env.FACTS_TRIGGER_APPLY === "1" && outcome.status === "fired-target";
+	if (apply) {
+		const { facts: next, changed } = updateFactInPlace(facts, outcome.target!.id, {
+			text: outcome.newText!,
+			date: todayIso(),
+		});
+		if (changed) {
+			// atomic write: temp file + rename (curator-receipt doctrine)
+			const tmp = `${file}.tmp-${process.pid}`;
+			writeFileSync(tmp, serializeFacts(next) + "\n");
+			renameSync(tmp, file);
+		} else {
+			return; // nothing changed — do not log a no-op apply
+		}
+	}
+
+	const line = [
+		new Date().toISOString(),
+		apply ? "APPLIED" : "LOGGED",
+		outcome.status,
+		outcome.target ? `#${outcome.target.id}` : "-",
+		outcome.detection?.route ?? "-",
+		JSON.stringify(outcome.detection?.sentence ?? "").slice(1, -1).slice(0, 160),
+	].join(" | ");
+	try {
+		const dir = dirname(file);
+		appendFileSync(join(dir, "facts-trigger.log"), line + "\n");
+	} catch {
+		/* log write failure is non-fatal */
+	}
 }

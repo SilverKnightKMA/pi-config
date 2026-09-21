@@ -1,7 +1,7 @@
 /** facts extension wire-up tests — P1b (#175): PUSH injection at session_start
  *  + session_compact, hidden context message, budgets, escape hatches. */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import factsExtension, { buildFactsInjectionBlock } from "./index.ts";
@@ -201,5 +201,92 @@ describe("facts_recall tool wiring (P1c)", () => {
 		factsExtension(pi);
 		const out = (await tools[0].execute("t1", { query: "x" })).content[0].text;
 		expect(out).toContain("no facts file yet");
+	});
+});
+
+describe("facts correction trigger wiring (P2)", () => {
+	function fakePiFull() {
+		const handlers: Record<string, (...args: unknown[]) => unknown> = {};
+		const tools: unknown[] = [];
+		const sent: SentMessage[] = [];
+		const pi = {
+			on(name: string, fn: (...args: unknown[]) => unknown) {
+				handlers[name] = fn;
+			},
+			sendMessage(msg: SentMessage) {
+				sent.push(msg);
+			},
+			registerTool(t: unknown) {
+				tools.push(t);
+			},
+		} as never;
+		return { pi, handlers, sent, tools };
+	}
+	const userMsg = (content: string) => ({ message: { role: "user", content } });
+
+	beforeEach(() => {
+		delete process.env.FACTS_TRIGGER;
+		delete process.env.FACTS_TRIGGER_APPLY;
+	});
+
+	test("dry-run default: LOGGED line in facts-trigger.log, store untouched", () => {
+		writeFileSync(process.env.FACTS_FILE!, "[convention][2026-09-01][P1] test runner: bun (#aaa001)");
+		const { pi, handlers } = fakePiFull();
+		factsExtension(pi);
+		handlers["message_end"](userMsg("thôi từ giờ test bằng npm thay cho bun nhé"), {});
+		const log = readFileSync(join(tmp, "facts-trigger.log"), "utf8");
+		expect(log).toContain("LOGGED");
+		expect(log).toContain("fired-target");
+		expect(log).toContain("#aaa001");
+		expect(readFileSync(process.env.FACTS_FILE!, "utf8")).toContain("test runner: bun");
+	});
+
+	test("apply mode rewrites the fact line in place, same id", () => {
+		process.env.FACTS_TRIGGER_APPLY = "1";
+		writeFileSync(process.env.FACTS_FILE!, "[convention][2026-09-01][P1] test runner: bun (#aaa001)");
+		const { pi, handlers } = fakePiFull();
+		factsExtension(pi);
+		handlers["message_end"](userMsg("thôi từ giờ test bằng npm thay cho bun nhé"), {});
+		const after = readFileSync(process.env.FACTS_FILE!, "utf8");
+		expect(after).toContain("(#aaa001)");
+		expect(after).not.toContain("test runner: bun");
+		expect(after).toContain("thôi từ giờ test bằng npm thay cho bun");
+		const log = readFileSync(join(tmp, "facts-trigger.log"), "utf8");
+		expect(log).toContain("APPLIED");
+	});
+
+	test("no correction in message → no log, no change", () => {
+		writeFileSync(process.env.FACTS_FILE!, "[convention][2026-09-01][P1] test runner: bun (#aaa001)");
+		const { pi, handlers } = fakePiFull();
+		factsExtension(pi);
+		handlers["message_end"](userMsg("tiếp tục phần P3 nhé"), {});
+		expect(() => readFileSync(join(tmp, "facts-trigger.log"))).toThrow();
+	});
+
+	test("FACTS_TRIGGER=0 → whole tier off", () => {
+		process.env.FACTS_TRIGGER = "0";
+		writeFileSync(process.env.FACTS_FILE!, "[convention][2026-09-01][P1] test runner: bun (#aaa001)");
+		const { pi, handlers } = fakePiFull();
+		factsExtension(pi);
+		handlers["message_end"](userMsg("thôi từ giờ test bằng npm thay cho bun nhé"), {});
+		expect(() => readFileSync(join(tmp, "facts-trigger.log"))).toThrow();
+	});
+
+	test("machine messages (customType) never trigger", () => {
+		writeFileSync(process.env.FACTS_FILE!, "[convention][2026-09-01][P1] test runner: bun (#aaa001)");
+		const { pi, handlers } = fakePiFull();
+		factsExtension(pi);
+		handlers["message_end"]({ message: { role: "user", content: "stop using bun for tests", customType: "facts-context" } }, {});
+		expect(() => readFileSync(join(tmp, "facts-trigger.log"))).toThrow();
+	});
+
+	test("fired-no-target logs nothing to apply, logs the miss", () => {
+		writeFileSync(process.env.FACTS_FILE!, "[convention][2026-09-01][P1] test runner: bun (#aaa001)");
+		const { pi, handlers } = fakePiFull();
+		factsExtension(pi);
+		handlers["message_end"](userMsg("actually we use rust now instead of go"), {});
+		const log = readFileSync(join(tmp, "facts-trigger.log"), "utf8");
+		expect(log).toContain("fired-no-target");
+		expect(log).toContain("LOGGED");
 	});
 });

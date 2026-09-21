@@ -109,6 +109,17 @@ clamp 1–50); `FACTS_MAX_CHARS` (default 2048, clamp 256–4096); `FACTS_FILE`
 overrides the path (tests/isolation). Review 2027-01-15: expected to stay —
 revisit the caps after real usage data.
 
+## FACTS_TRIGGER / FACTS_TRIGGER_APPLY (v1.4.116, default dry-run)
+
+`extensions/facts` P2 regex correction trigger (concept credit pi-hermes-memory
+0.9.8, registry row) scans plain user messages for correction markers (VI+EN),
+grounds them against live facts, and logs to `~/.pi/agent/facts-trigger.log`.
+Dry-run doctrine (plan 2026-09-21): LOGGED only for the first 2 weeks — set
+`FACTS_TRIGGER_APPLY=1` to let it rewrite the matched fact line in place
+(atomic tmp+rename). `FACTS_TRIGGER=0` disables the whole tier. Review
+2026-10-05: flip the default to apply after the dry-run window if the log
+looks clean.
+
 ## PI_TELEMETRY / PI_TELEMETRY_DIR / PI_TELEMETRY_STALE_MS / PI_TELEMETRY_TOUCH_MS (v1.4.97, default on)
 
 `extensions/telemetry` (O4, #105 — borrow from pi-telemetry 0.1.3) writes one
