@@ -26,6 +26,7 @@ import { Type } from "@sinclair/typebox";
 import { dirname, join } from "node:path";
 import { evaluateTrigger } from "./src/trigger.ts";
 import { recallFacts, renderRecallReport } from "./src/recall.ts";
+import { accrueCounters, runCuratorOnce } from "./src/curator-run.ts";
 import {
 	FACT_CATEGORIES,
 	factsFilePath,
@@ -121,8 +122,23 @@ export default function factsExtension(pi: ExtensionAPI): void {
 		},
 	});
 
+	// P3 (#180): usage-triggered memory-curator. Counters accrue at every
+	// session_shutdown; the run fires when a threshold is crossed (≥N changed
+	// lines / ≥2M tokens / ≥15 sessions / 30-day floor — plan 2026-09-21).
+	// Best-effort at shutdown (process may exit first); the session_start debt
+	// path re-checks and heals the backlog on the next session. FACTS_CURATOR=0 off.
+	pi.on("session_shutdown", (_event: any, ctx: any) => {
+		try {
+			const tokens = ctx?.getContextUsage?.()?.tokens ?? 0;
+			accrueCounters(process.env, process.env.HOME ?? "", typeof tokens === "number" ? tokens : 0);
+		} catch {
+			/* counters are best-effort */
+		}
+		void runCuratorOnce({ env: process.env }).catch(() => {});
+	});
 	pi.on("session_start", () => {
 		injectNow(pi, process.env);
+		void runCuratorOnce({ env: process.env }).catch(() => {}); // debt self-heal
 	});
 	// Re-inject after EVERY compaction — the session_start block lives in the
 	// pre-compaction branch and is summarized away at the first compaction.

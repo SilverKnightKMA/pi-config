@@ -39,11 +39,13 @@ beforeEach(() => {
 	delete process.env.FACTS_INJECT;
 	delete process.env.FACTS_MAX_LINES;
 	delete process.env.FACTS_MAX_CHARS;
+	process.env.FACTS_RUNS_DIR = join(tmp, "facts-runs"); // never touch the real state dir
 });
 
 afterEach(() => {
 	if (savedFile === undefined) delete process.env.FACTS_FILE;
 	else process.env.FACTS_FILE = savedFile;
+	delete process.env.FACTS_RUNS_DIR;
 	rmSync(tmp, { recursive: true, force: true });
 });
 

@@ -120,6 +120,18 @@ Dry-run doctrine (plan 2026-09-21): LOGGED only for the first 2 weeks — set
 2026-10-05: flip the default to apply after the dry-run window if the log
 looks clean.
 
+## FACTS_CURATOR (+ _MIN_LINES / _MIN_TOKENS / _MIN_SESSIONS / _FLOOR_DAYS / _QUOTA_PCT / _MAX_PROPOSALS / _MODEL / _BACKOFF_MS) (v1.4.117, default on)
+
+`extensions/facts` P3 memory-curator (concept credit @fradser/pi-memory 0.2.8,
+registry row): usage-triggered one-shot planner worker — runs when ≥10
+fact/lesson lines changed since the last run, OR ≥2M tokens processed, OR ≥15
+sessions closed, OR a 30-day floor. Planner is read-only (bounded ≤100KB
+evidence pack, no raw transcripts); the engine validates the JSON plan
+(schema + evidence + ≤20% tombstone quota, fail-closed) and applies it
+atomically with a receipt in `~/.pi/agent/facts-runs/`. `FACTS_CURATOR=0`
+disables; per-threshold knobs as suffixed above; `FACTS_CURATOR_MODEL`
+overrides the planner model (default: pi default model).
+
 ## PI_TELEMETRY / PI_TELEMETRY_DIR / PI_TELEMETRY_STALE_MS / PI_TELEMETRY_TOUCH_MS (v1.4.97, default on)
 
 `extensions/telemetry` (O4, #105 — borrow from pi-telemetry 0.1.3) writes one
