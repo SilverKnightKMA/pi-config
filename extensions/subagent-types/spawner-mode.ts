@@ -10,6 +10,9 @@
  * auto (default) = plugin when ~/.paseo/config.json enables paseo-subagents.
  */
 
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
 export type SpawnerMode = "extension" | "plugin" | "auto";
 export type EffectiveSpawner = "extension" | "plugin";
 
@@ -44,4 +47,27 @@ export function effectiveSpawner(mode: SpawnerMode, pluginEnabled: boolean): Eff
 	if (mode === "extension") return "extension";
 	if (mode === "plugin") return "plugin";
 	return pluginEnabled ? "plugin" : "extension";
+}
+
+/** #187 standalone-clean (#44 regression after the one-door port): is there ANY
+ * sign of a paseo daemon on this machine — ~/.paseo/config.json exists or any
+ * PASEO_* env var is set? When false, BOTH createChildAgent paths (CLI carrier
+ * spawnViaCli + MCP createAgent) cannot reach a daemon, so registering spawn
+ * tools would surface them as registered-but-dead. Children spawned BY paseo
+ * always carry PASEO_* env, so they never hit the gate. */
+export function paseoPresent(home: string, env: Record<string, string | undefined> = process.env): boolean {
+	if (existsSync(join(home, ".paseo", "config.json"))) return true;
+	return Object.keys(env).some((k) => k.startsWith("PASEO_"));
+}
+
+/** #187: one decision point for whether the extension registers its spawn
+ * tools. extOwnsSpawn now ALSO requires a paseo daemon hint — absent daemon
+ * means the tools are hidden (standalone pi stays clean) instead of dead. */
+export function resolveExtOwnsSpawn(
+	mode: SpawnerMode,
+	pluginEnabled: boolean,
+	paseoHere: boolean,
+): { spawner: EffectiveSpawner; extOwnsSpawn: boolean } {
+	const spawner = effectiveSpawner(mode, pluginEnabled);
+	return { spawner, extOwnsSpawn: spawner === "extension" && paseoHere };
 }

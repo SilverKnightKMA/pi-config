@@ -42,7 +42,7 @@ import {
 	shouldRemindIdleArchive,
 	ARCHIVE_REMIND_REARM_MS,
 } from "./idle-archive.ts";
-import { effectiveSpawner, isPluginEnabled, readSpawnerMode } from "./spawner-mode.ts";
+import { isPluginEnabled, paseoPresent, readSpawnerMode, resolveExtOwnsSpawn } from "./spawner-mode.ts";
 import safeBash from "./safe-bash.ts";
 import registerReadonlyTools from "./readonly-tools.ts";
 import { LoopGuard, loopGuardConfigFromEnv } from "./loop-guard.ts";
@@ -538,17 +538,25 @@ export default function subagentTypes(pi: ExtensionAPI) {
 	// the extension does NOT register spawn tools (the plugin owns spawning through
 	// the door). auto (default) reads daemon config; fail-open keeps the extension
 	// active if the config is invalid.
-	const spawner = effectiveSpawner(
+	// #187 standalone-clean (#44 regression after the one-door port): both
+	// createChildAgent paths (spawnViaCli + MCP createAgent) need the paseo
+	// daemon, so spawn tools are hidden entirely when no daemon hint exists -
+	// registered-but-dead tools are worse than absent.
+	const { spawner, extOwnsSpawn } = resolveExtOwnsSpawn(
 		readSpawnerMode(
 			readSettingsJson(join(process.cwd(), ".pi", "settings.json")),
-		readSettingsJson(join(homedir(), ".pi", "agent", "settings.json")),
+			readSettingsJson(join(homedir(), ".pi", "agent", "settings.json")),
 		),
 		isPluginEnabled(readSettingsJson(join(homedir(), ".paseo", "config.json"))),
+		paseoPresent(homedir()),
 	);
-	const extOwnsSpawn = spawner === "extension";
-	if (!extOwnsSpawn) {
+	if (spawner === "plugin" && !extOwnsSpawn) {
 		console.log(
-			"[subagent-types] spawner=plugin (paseo-subagents enabled) — extension does NOT register spawn_subagent/spawn_paseo_subagent/spawn_pool (one door)",
+			"[subagent-types] spawner=plugin (paseo-subagents enabled) - extension does NOT register spawn_subagent/spawn_paseo_subagent/spawn_pool (one door)",
+		);
+	} else if (spawner === "extension" && !extOwnsSpawn) {
+		console.log(
+			"[subagent-types] no paseo daemon found (~/.paseo/config.json absent, no PASEO_* env) - spawn tools NOT registered (standalone-clean #187); start paseo to enable subagents",
 		);
 	}
 	let myRole: string | undefined;
