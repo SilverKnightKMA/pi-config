@@ -2,7 +2,7 @@
 // process and assert activate() runs clean. This is the regression guard for
 // the "extension change shipped without load-testing crashes pi" class
 // (session 01a093d5: pi crash at extension load -> daemon retry -> spawn storm;
-// user: "code extension pi, thay đổi mà không test kỹ dẫn đến việc crash pi").
+// user: "changing pi extension code without thorough testing causes pi to crash").
 //
 // Usage:
 //   bun scripts/smoke-extensions.mjs                     # repo extensions/

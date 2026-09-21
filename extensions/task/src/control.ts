@@ -110,7 +110,7 @@ export function applyControlAction(state: TaskState, payload: TaskControlFile, n
 	if (!task) return { state, note: `no task #${payload.id}`, applied: false };
 	// v1.4.88 cancel (user-only): the panel/chat-user force-cancel. The model
 	// path NEVER reaches here (tool-layer guard refuses decisionOf pairs), so a
-	// [CHỜ USER QUYẾT] stage can only be dropped by a genuine user action.
+	// [AWAITING-USER-DECISION] stage can only be dropped by a genuine user action.
 	// Cancelling A here also genuinely cancels its pending pairs (user origin).
 	if (payload.action === "cancel") {
 		if (task.status === "completed") {

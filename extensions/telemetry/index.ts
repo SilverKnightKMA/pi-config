@@ -1,7 +1,7 @@
 /**
  * Telemetry heartbeat extension (O4, #105) — one atomic JSON per pi process.
  *
- * Borrow (MƯỢN) from pi-telemetry 0.1.3: lifecycle events write
+ * Borrow (BORROW) from pi-telemetry 0.1.3: lifecycle events write
  * ~/.pi/agent/telemetry/instances/<pid>.json (atomic tmp+rename). Consumers
  * read files; staleness (PI_TELEMETRY_STALE_MS, default 120s) = dead. No
  * daemon. Long turns keep updatedAt fresh via a 30s touch timer

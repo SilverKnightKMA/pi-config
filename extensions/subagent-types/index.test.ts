@@ -128,7 +128,7 @@ describe("allowlistFor — the default-deny core", () => {
 			"ask_parent",
 			"message_main",
 		]);
-		// #132/F2: door child KHÔNG nhận message_main (kênh legacy file-queue)
+		// #132/F2: door children do NOT receive message_main (the legacy file-queue channel)
 		expect(allowlistFor("mermaid-maker", roles, true)).not.toContain("message_main");
 		expect(allowlistFor("mermaid-maker", roles, true)).toContain("reply_to_parent");
 	});
@@ -364,9 +364,9 @@ describe("MODEL_GUIDANCE", () => {
 	});
 });
 
-// #132/F2: door children đã có plugin deliver — auto-ping tắt tránh ping đôi
+// #132/F2: door children already have plugin delivery — disable auto-ping to avoid duplicate pings
 describe("shouldAutoPing — doorChild (#132/F2)", () => {
-	test("doorChild=true tắt auto-ping kể cả khi chưa gọi message_main", () => {
+	test("doorChild=true disables auto-ping even when message_main has not been called", () => {
 		expect(shouldAutoPing("scout", false, true, false, true)).toBe(false);
 		expect(shouldAutoPing("scout", false, true, false, false)).toBe(true);
 	});

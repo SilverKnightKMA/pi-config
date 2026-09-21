@@ -28,7 +28,7 @@ export default function activate(pi: ExtensionAPI): void {
 			block: true,
 			reason:
 				`WHAT: this bash call is blocked by bash-long-run-guard. ${v.reason}. ` +
-				`WHY: the aborted call leaves a broken turn that the user has to nudge ("tiếp tục") — the user's top recurring complaint. ` +
+				`WHY: the aborted call leaves a broken turn that the user has to nudge ("continue") — the user's top recurring complaint. ` +
 				`NEXT: run the background pattern instead and read the log:\n${v.recipe}\n` +
 				`(escape hatch: BASH_LONG_RUN_GUARD=0)`,
 		};

@@ -190,49 +190,49 @@ describe("doorSchemaToTypeBox", () => {
 	});
 });
 
-// ---- spec v12 L2 (#160): main door từ env TRƯỚC record ----
+// ---- spec v12 L2 (#160): main door from env BEFORE record ----
 
 import { doorUrlFromEnv, findMainDoorUrl, mainDoorUrlFromRecord, MAIN_DOOR_ENV } from "./door-tool.ts";
 
 describe("doorUrlFromEnv (L2 #160)", () => {
-	test("env có URL đúng shape → trả nguyên URL", () => {
+	test("env has a correctly shaped URL → returns it unchanged", () => {
 		const url = "http://127.0.0.1:43721/mcp?caller=abc123";
 		expect(doorUrlFromEnv({ [MAIN_DOOR_ENV]: url })).toBe(url);
 	});
-	test("thiếu env → null", () => {
+	test("missing env → null", () => {
 		expect(doorUrlFromEnv({})).toBeNull();
 	});
-	test("sai shape (catalog daemon /mcp/agents, URL hỏng) → null", () => {
+	test("invalid shape (daemon catalog /mcp/agents, malformed URL) → null", () => {
 		expect(doorUrlFromEnv({ [MAIN_DOOR_ENV]: "http://127.0.0.1:1/mcp/agents" })).toBeNull();
-		expect(doorUrlFromEnv({ [MAIN_DOOR_ENV]: "http://127.0.0.1:1/mcp" })).toBeNull(); // thiếu caller
+		expect(doorUrlFromEnv({ [MAIN_DOOR_ENV]: "http://127.0.0.1:1/mcp" })).toBeNull(); // missing caller
 		expect(doorUrlFromEnv({ [MAIN_DOOR_ENV]: "not-a-url" })).toBeNull();
 	});
 });
 
 describe("mainDoorUrlFromRecord (L2 #160)", () => {
-	test("record có key paseo-subagents → URL", () => {
+	test("record has paseo-subagents key → URL", () => {
 		const raw = { config: { mcpServers: { "paseo-subagents": { url: "http://127.0.0.1:9/mcp?caller=t1" } } } };
 		expect(mainDoorUrlFromRecord(raw)).toBe("http://127.0.0.1:9/mcp?caller=t1");
 	});
-	test("record chỉ có key 'paseo' (child) → null (main door riêng key)", () => {
+	test("record has only the 'paseo' key (child) → null (main door has a separate key)", () => {
 		const raw = { config: { mcpServers: { paseo: { url: "http://127.0.0.1:9/mcp?caller=t2" } } } };
 		expect(mainDoorUrlFromRecord(raw)).toBeNull();
 	});
-	test("không config → null", () => {
+	test("no config → null", () => {
 		expect(mainDoorUrlFromRecord({})).toBeNull();
 		expect(mainDoorUrlFromRecord(null)).toBeNull();
 	});
 });
 
-describe("findMainDoorUrl — env TRƯỚC record (#160)", () => {
-	test("env thắng record dù record có door", () => {
-		// fixture: record main có door key paseo-subagents
+describe("findMainDoorUrl — env BEFORE record (#160)", () => {
+	test("env wins even when the record has a door", () => {
+		// fixture: main record has the paseo-subagents door key
 		expect(findMainDoorUrl("/nonexistent-agents-dir", "any-id", { [MAIN_DOOR_ENV]: "http://127.0.0.1:5/mcp?caller=envwins" })).toBe(
 			"http://127.0.0.1:5/mcp?caller=envwins",
 		);
 	});
-	test("không env → đọc record (main sau port có door trong record)", () => {
-		// dùng chính agents dir thật của máy này không deterministic — tạo fixture
+	test("no env → reads record (main created after port has a door in its record)", () => {
+		// using this machine's real agents directory is nondeterministic — create a fixture
 		const tmp = require("node:fs").mkdtempSync(require("node:os").tmpdir() + "/maindoor-");
 		require("node:fs").mkdirSync(tmp + "/ws", { recursive: true });
 		require("node:fs").writeFileSync(

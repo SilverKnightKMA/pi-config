@@ -122,9 +122,9 @@ export function judgeSessionPath(sessionsRoot: string, at: Date = new Date()): s
 	return `${sessionsRoot}/--judge--/${ts}_${randomUUID()}.jsonl`;
 }
 
-/** Marker h?ng nh?t cho m?i l?n spawn judge: 1 d?ng JSON. Import filter d?c
- * registry (path chính xác); fingerprint 6-record ch? c?n fallback cho judge
- * sinh tru?c v1.4.101. */
+/** Unified marker for every judge spawn: one JSON line. The import filter reads
+ * the registry (exact path); the six-record fingerprint remains only as a
+ * fallback for judges created before v1.4.101. */
 export function appendJudgeRegistry(agentHome: string, entry: { ts: string; cwd: string; path: string }): void {
 	try {
 		appendFileSync(`${agentHome}/judge-sessions.jsonl`, JSON.stringify(entry) + "\n");
@@ -153,7 +153,7 @@ function runJudge(packet: string, cwd: string): Promise<string | null> {
 		try {
 			mkdirSync(dirname(sessionPath), { recursive: true });
 		} catch {
-			/* pi có th? t? t?o; spawn failure du?c x? lý du?i */
+			/* pi may create it itself; spawn failure is handled below */
 		}
 		appendJudgeRegistry(agentHome, { ts: new Date().toISOString(), cwd, path: sessionPath });
 		const argv = [
@@ -487,7 +487,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 			"Tasks are OPTIONAL — never create one just to be allowed to work: chat, explanations, " +
 			"quick reads and 1-2 step jobs need no task; a junk task is fake evidence. " +
 			"DECISION PAIR: set awaitsDecision:true on research/eval/proposal tasks whose output ends in a " +
-			"user decision — the engine atomically creates a paired '[CHỜ USER QUYẾT]' task blocked by this " +
+			"user decision — the engine atomically creates a paired '[AWAITING-USER-DECISION]' task blocked by this " +
 			"one (lane judgment, completes on the USER's reply; it is a user stage, not agent work, so it " +
 			"never joins a goal or fires wakes). Benefit: the decision is tracked on the board from the " +
 			"start, so a verdict can never be lost inside a completed task. Implementing the approved " +
@@ -500,7 +500,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 				Type.Boolean({
 						description:
 						"true = this task's output ends in a user decision; auto-create the paired " +
-						"[CHỜ USER QUYẾT] stage (blocked by this task, completes on the user's reply)",
+						"[AWAITING-USER-DECISION] stage (blocked by this task, completes on the user's reply)",
 				}),
 			),
 			verify: Type.Optional(
@@ -569,7 +569,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 			);
 			if (result.error) throw new Error(result.error);
 			// v1.4.87 #101 A→B decision pair: a research/eval task that ends in a user
-			// decision gets a tracked [CHỜ USER QUYẾT] stage created ATOMICALLY with it, so
+			// decision gets a tracked [AWAITING-USER-DECISION] stage created ATOMICALLY with it, so
 			// the verdict can never be lost inside a completed task (miss-class failure,
 			// case #24: task completed, the approval it awaited silently evaporated).
 			// B is deliberately NOT stamped with goalId: a user stage is not agent work —
@@ -580,13 +580,13 @@ export default function taskExtension(pi: ExtensionAPI) {
 				const a = result.task!;
 				const bDesc =
 					`decisionOf:#${a.id}\n` +
-					`Task quyết sinh tự động từ #${a.id} (awaitsDecision). Khi #${a.id} hoàn tất: đọc artifact ` +
-					`của nó, trình user TÓM TẮT các lựa chọn kèm khuyến nghị. HOÀN TẤT BẰNG CHÍNH câu trả lời ` +
-					`của user (trích nguyên văn làm evidence) — agent không tự quyết thay. Nếu user duyệt một ` +
-					`hướng → tạo task implement MỚI sau khi đóng task này.`;
+					`Decision task automatically created from #${a.id} (awaitsDecision). When #${a.id} completes: read its ` +
+					`artifact and give the user a SUMMARY of the options with a recommendation. COMPLETE THIS TASK WITH ` +
+					`THE USER'S OWN ANSWER (quote it verbatim as evidence) — the agent must not decide for the user. If the ` +
+					`user approves an option → create a NEW implementation task after closing this one.`;
 				decisionPair = createTask(
 					result.state,
-					`[CHỜ USER QUYẾT] ${a.subject} (#${a.id})`,
+					`[AWAITING-USER-DECISION] ${a.subject} (#${a.id})`,
 					bDesc,
 					[a.id],
 					Date.now(),
@@ -605,7 +605,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 				? `\nVerify: lane=${verifySpec.lane}${verifySpec.probes.length > 0 ? `, ${verifySpec.probes.length} probe` : ""}${verifySpec.strict ? ", STRICT" : ""} — layer-1 audit runs when you declare completed (probes must be green in the run log).`
 				: "";
 			const pairNote = decisionPair
-				? `\nDecision pair: #${decisionPair.task!.id} [CHỜ USER QUYẾT] created blocked by #${result.task!.id} — completes on the USER's reply; when they approve an outcome, create the implement task then.`
+				? `\nDecision pair: #${decisionPair.task!.id} [AWAITING-USER-DECISION] created blocked by #${result.task!.id} — completes on the USER's reply; when they approve an outcome, create the implement task then.`
 				: "";
 			return {
 				content: [
@@ -720,7 +720,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 				state.tasks.find((t) => t.id === params.id)?.decisionOf !== undefined
 			) {
 				throw new Error(
-					`[task] #${params.id} is a [CHỜ USER QUYẾT] stage — its existence is user-owned; the model cannot cancel it. Valid paths: the user answers the decision (then complete B quoting their reply), or the user clicks "cancel (user)" on the task panel (control file), or asks in chat — then PARK B (model-reachable) and tell the user to cancel/reopen it on the panel.`,
+					`[task] #${params.id} is an [AWAITING-USER-DECISION] stage — its existence is user-owned; the model cannot cancel it. Valid paths: the user answers the decision (then complete B quoting their reply), or the user clicks "cancel (user)" on the task panel (control file), or asks in chat — then PARK B (model-reachable) and tell the user to cancel/reopen it on the panel.`,
 				);
 			}
 			// PARK is one-way for the model (v1.4.28): the model may put a task INTO park
@@ -946,7 +946,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 				if (isPair && t.status === "pending") {
 						const casc = updateTask(cascadeState, t.id, {
 							status: "parked",
-							appealReason: `A #${params.id} bị hủy — không còn nguồn quyết định. User: "cancel (user)" để dọn, hoặc reopen nếu A bị hủy nhầm.`,
+							appealReason: `A #${params.id} was cancelled — the decision no longer has a source. User: "cancel (user)" to clear it, or reopen it if A was cancelled by mistake.`,
 						}, Date.now());
 						if (!casc.error) cascadeState = casc.state;
 					}

@@ -220,8 +220,8 @@ export function allowlistFor(role: string | undefined, roles: Map<string, RoleDe
 	// Channel tools are always available to defined roles (a subagent that
 	// cannot ask its main, or a main that cannot steer its children, defeats
 	// the point of the channel).
-	// doorChild (#132/F2): con có scoped door KHÔNG nhận message_main — kênh
-	// legacy file-queue thay bằng reply_to_parent/ask_parent qua door (1 cửa).
+	// doorChild (#132/F2): a child with a scoped door does NOT receive message_main —
+	// replace the legacy file-queue channel with reply_to_parent/ask_parent through one door.
 	const out = [...new Set([...def.tools.map(mapToolName), REPLY_DOOR_TOOL, "message_subagent", "ask_question", "ask_parent"])] as string[];
 	if (!doorChild) out.push("message_main");
 	// The blocking wrapper travels with spawn_subagent (same internal role
@@ -273,8 +273,8 @@ function readSettingsJson(path: string): Record<string, unknown> | null {
 export function shouldAutoPing(role: string | undefined, calledMessageMain: boolean, resolvedIdentity: boolean, poolChild = false, doorChild = false): boolean {
 	// poolChild: children spawned by spawn_pool stay silent — the pool driver
 	// owns waking main (ONE aggregate message, not one ping per child).
-	// doorChild (#132/F2): con có scoped door đã được plugin deliver
-	// [child-report] đánh thức parent — auto-ping sẽ thành ping đôi.
+	// doorChild (#132/F2): plugin delivery already wakes the parent with
+	// [child-report] for a child with a scoped door — auto-ping would duplicate it.
 	return !poolChild && !doorChild && resolvedIdentity && !!role && role !== MAIN_ROLE && !calledMessageMain;
 }
 
@@ -534,9 +534,10 @@ export default function subagentTypes(pi: ExtensionAPI) {
 		readSettingsJson(join(process.cwd(), ".pi", "settings.json")),
 		readSettingsJson(join(homedir(), ".pi", "agent", "settings.json")),
 	);
-	// #131 spawner mode: 1 CỬA — khi paseo-subagents plugin bật, extension
-	// KHÔNG đăng ký spawn tools (plugin sở hữu spawn qua door). auto (default)
-	// đọc config daemon; fail-open giữ extension nếu config lỗi.
+	// #131 spawner mode: ONE DOOR — when the paseo-subagents plugin is enabled,
+	// the extension does NOT register spawn tools (the plugin owns spawning through
+	// the door). auto (default) reads daemon config; fail-open keeps the extension
+	// active if the config is invalid.
 	const spawner = effectiveSpawner(
 		readSpawnerMode(
 			readSettingsJson(join(process.cwd(), ".pi", "settings.json")),
@@ -547,7 +548,7 @@ export default function subagentTypes(pi: ExtensionAPI) {
 	const extOwnsSpawn = spawner === "extension";
 	if (!extOwnsSpawn) {
 		console.log(
-			"[subagent-types] spawner=plugin (paseo-subagents bật) — extension KHÔNG đăng ký spawn_subagent/spawn_paseo_subagent/spawn_pool (1 cửa)",
+			"[subagent-types] spawner=plugin (paseo-subagents enabled) — extension does NOT register spawn_subagent/spawn_paseo_subagent/spawn_pool (one door)",
 		);
 	}
 	let myRole: string | undefined;
@@ -577,10 +578,11 @@ export default function subagentTypes(pi: ExtensionAPI) {
 				if (doorUrl) registerReplyDoorTool(doorUrl);
 			}
 
-			// spec v12 L2 (#160): MAIN không-door trong record (sinh trước plugin)
-			// nhận env PASEO_SUBAGENTS_DOOR từ session_open — đăng ký door proxies
-			// native cho main (spawn_subagent/spawn_pool/answer_child… theo caps
-			// token). Env TRƯỚC record; record fallback cho main door-hóa thường.
+			// spec v12 L2 (#160): MAIN has no door in its record when created before
+			// the plugin. It receives PASEO_SUBAGENTS_DOOR from session_open — register
+			// native door proxies for main (spawn_subagent/spawn_pool/answer_child… based
+			// on token capabilities). Env BEFORE record; record is the fallback for a
+			// main agent that normally receives a door.
 			if (myRole === MAIN_ROLE && myAgentId) {
 				const mainDoor = findMainDoorUrl(PASEO_AGENTS_DIR, myAgentId);
 				if (mainDoor) registerMainDoorTools(mainDoor);
@@ -648,10 +650,11 @@ export default function subagentTypes(pi: ExtensionAPI) {
 		registerDoorProxy(doorUrl, { name: REPLY_DOOR_TOOL });
 	};
 
-	/** spec v12 L2 (#160): door CHÍNH của main — tools/list từ door đã lọc theo
-	 *  caps token (spawn_subagent/spawn_pool/answer_child…); KHÔNG hardcode
-	 *  floor child (reply_to_parent/ask_parent không thuộc main). Fetch fail →
-	 *  log thẳng, main vẫn sống (không cửa native, dùng được URL trực tiếp). */
+	/** spec v12 L2 (#160): main's PRIMARY door — tools/list from the door is
+	 *  already filtered by token capabilities (spawn_subagent/spawn_pool/answer_child…);
+	 *  do NOT hardcode the child floor (reply_to_parent/ask_parent do not belong
+	 *  to main). On fetch failure, log directly; main stays alive (without native
+	 *  door tools, the URL can still be used directly). */
 	const registerMainDoorTools = (doorUrl: string): void => {
 		void (async () => {
 			const list = await fetchDoorTools(doorUrl);
@@ -665,7 +668,7 @@ export default function subagentTypes(pi: ExtensionAPI) {
 				registerDoorProxy(doorUrl, t);
 				added++;
 			}
-			console.log(`[subagent-types] main door proxies: ${added} tool từ ${doorUrl.slice(0, 48)}… (spec v12 L2)`);
+			console.log(`[subagent-types] main door proxies: ${added} tools from ${doorUrl.slice(0, 48)}… (spec v12 L2)`);
 		})();
 	};
 
@@ -750,7 +753,7 @@ async function kickOutbound(): Promise<void> {
 			archiveRemindArmed = false;
 			lastArchiveRemindAt = Date.now();
 			pi.sendUserMessage(
-				`[housekeeping] ${children.length} subagents đã idle ≥${archiveRemindMinutes} phút, không con nào đang chạy/parked. Archive để giữ danh sách gọn (soft-delete — gửi tin cho con sẽ tự unarchive, đã verify):
+				`[housekeeping] ${children.length} subagents have been idle for ≥${archiveRemindMinutes} minutes, and none are running/parked. Archive them to keep the list tidy (soft delete — messaging a child automatically unarchives it, verified):
 ${r.command}`,
 				{ deliverAs: "steer" },
 			);
@@ -809,7 +812,7 @@ ${r.command}`,
 		if (!mainId || !myAgentId) return;
 		const endpoint = findMcpEndpoint(myAgentId);
 		if (!endpoint) return;
-		const ep: McpEndpoint = endpoint; // narrowed copy — closures keep the guard's guarantee (MƯỢN #111 from @tintinweb/pi-subagents): batch
+		const ep: McpEndpoint = endpoint; // narrowed copy — closures keep the guard's guarantee (BORROW #111 from @tintinweb/pi-subagents): batch
 		// sibling settles into ONE combined [auto-report] so an ad-hoc fan-out
 		// (N spawn_subagent finishing near each other) wakes main once instead
 		// of shredding it into N turns. Window = AUTO_REPORT_JOIN_MS (default
@@ -914,8 +917,8 @@ ${r.command}`,
 
 	// Defense in depth: block anything outside the allowlist even if it slips
 	// through before setActiveTools applies (first turn race).
-	// doorChild (#132/F2): con có scoped door — allowlist bỏ message_main
-	// (kênh thay: reply_to_parent/ask_parent qua door).
+	// doorChild (#132/F2): for a child with a scoped door, omit message_main from
+	// the allowlist (replacement channel: reply_to_parent/ask_parent through the door).
 	const doorChildOf = (): boolean =>
 		Boolean(myAgentId && myRole && myRole !== MAIN_ROLE && findDoorUrlForAgent(PASEO_AGENTS_DIR, myAgentId));
 	pi.on("tool_call", (event) => {
@@ -1116,8 +1119,8 @@ async function createChildAgent(
 	}
 
 
-	// #133 (plan step 16) ĐÓNG BĂNG: khối spawn dưới đây chỉ sửa lỗi —
-	// tính năng mới thuộc plugin paseo-subagents (1 cửa, spawner-mode #131).
+	// #133 (plan step 16) FROZEN: the spawn block below is bugfix-only —
+	// new features belong in the paseo-subagents plugin (one door, spawner-mode #131).
 	// Fire-and-forget: returns the id; the report arrives via the channel.
 	extOwnsSpawn &&
 		pi.registerTool<typeof SpawnParams, SpawnDetails>({
@@ -1395,9 +1398,9 @@ async function createChildAgent(
 	// CHILD → MAIN: never interrupts. Busy main → persistent file queue,
 	// delivered at the main's next turn boundary by its own drain. Idle main
 	// → steer-back as a new turn.
-	// #133 ĐÓNG BĂNG (bugfix-only): message_main là kênh legacy — con mới
-	// dùng door (reply_to_parent/ask_parent, #132 F2); handler còn lại để
-	// backport an toàn cho child không door.
+	// #133 FROZEN (bugfix-only): message_main is the legacy channel — new children
+	// use the door (reply_to_parent/ask_parent, #132 F2); keep this handler for
+	// safe backports to children without a door.
 	pi.registerTool({
 		name: "message_main",
 		label: "message_main",
@@ -1408,12 +1411,12 @@ async function createChildAgent(
 		}),
 		async execute(_id, params) {
 			messageMainCalledThisRun = true;
-			// #132/F2: con có scoped door — proxy thẳng qua door (không ghi
-			// file-queue; plugin deliver [child-report] đánh thức parent).
+			// #132/F2: for a child with a scoped door, proxy directly through the door
+			// (do not write to the file queue; plugin-delivered [child-report] wakes the parent).
 			const doorUrl = myAgentId ? findDoorUrlForAgent(PASEO_AGENTS_DIR, myAgentId) : null;
 			if (doorUrl) {
 				const r = await callDoorTool(doorUrl, "reply_to_parent", { prompt: params.message });
-				return { content: [{ type: "text" as const, text: r.ok ? "(đã gửi qua door reply_to_parent) " + r.text : `door delivery failed: ${r.error ?? "unknown"}` }], details: {} };
+				return { content: [{ type: "text" as const, text: r.ok ? "(sent through the reply_to_parent door) " + r.text : `door delivery failed: ${r.error ?? "unknown"}` }], details: {} };
 			}
 			const parent = myAgentId ? (resolveSelf(sessionIdRef.value).labels["subagent.parent"] ?? null) : null;
 			const mainId = parent ?? (myAgentId ? (resolveSelf(sessionIdRef.value).labels["paseo.parent-agent-id"] ?? null) : null);

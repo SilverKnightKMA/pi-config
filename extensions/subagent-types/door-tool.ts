@@ -22,13 +22,14 @@ import { Type, type TSchema } from "@sinclair/typebox";
 
 export const REPLY_DOOR_TOOL = "reply_to_parent";
 
-/** Env L2 (spec v12 · #160): plugin paseo-subagents gán PASEO_SUBAGENTS_DOOR
- *  cho main không-door (sinh trước plugin) qua before(agent.session_open).
- *  Đọc TRƯỚC record — env luôn mới hơn đĩa cho agent đang sống. */
+/** Env L2 (spec v12 · #160): the paseo-subagents plugin assigns
+ *  PASEO_SUBAGENTS_DOOR to a main agent without a door (created before the
+ *  plugin) through before(agent.session_open). Read BEFORE the record — env
+ *  is always fresher than disk for a live agent. */
 export const MAIN_DOOR_ENV = "PASEO_SUBAGENTS_DOOR";
 export const MAIN_MCP_KEY = "paseo-subagents";
 
-/** Door URL từ env; null khi thiếu hoặc sai shape (/mcp + caller token). */
+/** Door URL from env; null when missing or incorrectly shaped (/mcp + caller token). */
 export function doorUrlFromEnv(env: Record<string, string | undefined> = process.env): string | null {
 	const url = env[MAIN_DOOR_ENV];
 	if (typeof url !== "string" || url.length === 0) return null;
@@ -41,8 +42,8 @@ export function doorUrlFromEnv(env: Record<string, string | undefined> = process
 	}
 }
 
-/** Door URL chính (spawn door) từ record key 'paseo-subagents' — main được
- *  plugin door-hóa lúc create (post-port). Same shape check as child door. */
+/** Primary door URL (spawn door) from the 'paseo-subagents' record key — the
+ *  plugin adds a door to main at creation (post-port). Same shape check as the child door. */
 export function mainDoorUrlFromRecord(raw: unknown): string | null {
 	if (typeof raw !== "object" || raw === null) return null;
 	const cfg = (raw as Record<string, unknown>).config;
@@ -62,7 +63,7 @@ export function mainDoorUrlFromRecord(raw: unknown): string | null {
 	}
 }
 
-/** Door chính của MAIN: env TRƯỚC record (spec v12 L2 · #160). */
+/** MAIN's primary door: env BEFORE record (spec v12 L2 · #160). */
 export function findMainDoorUrl(agentsDir: string, agentId: string, env: Record<string, string | undefined> = process.env): string | null {
 	const fromEnv = doorUrlFromEnv(env);
 	if (fromEnv) return fromEnv;

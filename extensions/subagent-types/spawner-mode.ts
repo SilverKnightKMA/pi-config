@@ -1,12 +1,13 @@
 /**
- * spawner-mode (#131 / plan step 14) — ai sở hữu tool spawn: extension hay
- * paseo-subagents plugin? Nguyên tắc 1 CỬA: khi plugin bật, extension KHÔNG
- * đăng ký spawn_subagent / spawn_paseo_subagent / spawn_pool (không trùng tool
- * trong context — user: "Giảm đc 1 tool subagent là giảm đc context rồi").
+ * spawner-mode (#131 / plan step 14) — which component owns the spawn tool:
+ * the extension or the paseo-subagents plugin? ONE DOOR rule: when the plugin
+ * is enabled, the extension does NOT register spawn_subagent /
+ * spawn_paseo_subagent / spawn_pool (no duplicate tools in context — user:
+ * "Removing one subagent tool already reduces the context size").
  *
  * settings key: subagentTypes.spawner = "extension" | "plugin" | "auto"
- * (workspace wins over user-wide, cùng merge order với mainBlockedTools).
- * auto (default) = plugin nếu ~/.paseo/config.json bật paseo-subagents.
+ * (workspace wins over user-wide, using the same merge order as mainBlockedTools).
+ * auto (default) = plugin when ~/.paseo/config.json enables paseo-subagents.
  */
 
 export type SpawnerMode = "extension" | "plugin" | "auto";
@@ -28,8 +29,8 @@ export function readSpawnerMode(
 	return "auto";
 }
 
-/** Đọc config daemon (~/.paseo/config.json) — fail-open: cấu hình lỗi coi như
- * plugin TẮT (giữ extension như trạng thái trước #131, không mất khả năng spawn). */
+/** Read daemon config (~/.paseo/config.json) — fail-open: invalid config treats
+ * the plugin as DISABLED (keeps the extension in its pre-#131 state so spawning remains available). */
 export function isPluginEnabled(configJson: unknown): boolean {
 	if (typeof configJson !== "object" || configJson === null) return false;
 	const plugins = (configJson as Record<string, unknown>).plugins;

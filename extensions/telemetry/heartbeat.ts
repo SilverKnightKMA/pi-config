@@ -1,7 +1,7 @@
 /**
  * Telemetry heartbeat core (O4, #105) — pure logic, no pi imports.
  *
- * Borrow (MƯỢN) from pi-telemetry 0.1.3 (see learn/landscape-web-access-2026-09-15.md
+ * Borrow (BORROW) from pi-telemetry 0.1.3 (see learn/landscape-web-access-2026-09-15.md
  * and the observability brief): each pi PROCESS writes one small atomic JSON
  * file at ~/.pi/agent/telemetry/instances/<pid>.json at lifecycle events; any
  * consumer (script, panel, another agent) reads the directory — no daemon, no

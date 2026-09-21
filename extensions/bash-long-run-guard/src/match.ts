@@ -1,8 +1,8 @@
 /**
  * bash-long-run-guard — pure matcher (v1.4.71, 2026-09-15).
  *
- * Recurring incident class (user complaints 2026-09-05 + 2026-09-15: "sao lỗi
- * liên tục vậy?" / "lại lỗi lại à?" / "lặp lại nhiều quá"): the Paseo↔pi tool
+ * Recurring incident class (user complaints 2026-09-05 + 2026-09-15: "why
+ * does this keep failing?" / "another error?" / "this repeats too often"): the Paseo↔pi tool
  * channel intermittently aborts in-flight SILENT bash calls a few seconds in —
  * tool result becomes `Command aborted` even though the underlying work
  * completed. Daemon restarts do NOT fix it (channel-level, not daemon-level).

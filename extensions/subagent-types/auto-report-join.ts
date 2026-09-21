@@ -1,5 +1,5 @@
 /**
- * Auto-report join window (#112, MƯỢN #111 — group-join from
+ * Auto-report join window (#112, BORROW #111 — group-join from
  * @tintinweb/pi-subagents 0.19.0 dist/group-join.js, MIT; rewritten for our
  * parent/child architecture).
  *

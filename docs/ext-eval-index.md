@@ -93,7 +93,7 @@ Never scanned yet (open if needed):
 - **@pify/swarm 0.9.0→0.9.2** — DROP (mailbox constants + consent persist; loop-guard untouched)
 - **@pify/workflow 0.11.6→0.11.9** — DROP (removeIfUnchanged dead-code fix confirms #26's known bug; spawnSync 1MiB cap lesson noted)
 - **@pify/memory 0.6.0→0.9.2** — RE-EVAL INPUT for the pending #1 decision (diffed 621 lines): the
-  session_start-only injection gap (our "lỗ hổng 1") is FIXED upstream — new `session_compact` hook
+  session_start-only injection gap (our "gap 1") is FIXED upstream — new `session_compact` hook
   re-injects deterministically ("only put the user's own bytes back in front of it", no model call);
   dedupe now checks `buildContextEntries()` not raw branch; NEW opt-in LLM observer (off by default,
   consent-scoped `PIFY_MEMORY_OBSERVE`) storing notes in the session branch ledger with coverage
@@ -112,50 +112,50 @@ Never scanned yet (open if needed):
 
 | Date | Topic | Brief | Verdict |
 |---|---|---|---|
-| 2026-09-16 | **watchdog/supervisor delta** (vs 09-13 brief) | `learn/landscape-watchdog-2026-09-16.md` (18.9KB) | user chốt theo từng ứng viên trong brief |
-| 2026-09-16 | **subagent channel/messaging** | `learn/landscape-channel-2026-09-16.md` (14.8KB) | user chốt theo từng ứng viên |
-| 2026-09-16 | **observability** (session analytics/cost/journaling) | `learn/landscape-observability-2026-09-16.md` (17.9KB) | user chốt theo từng ứng viên |
-| 2026-09-16 | **OM compaction** (topic-nén/retention) | `learn/landscape-om-compaction-2026-09-16.md` (17.9KB) | user chốt theo từng ứng viên |
-| 2026-09-16 | **interactive/approval-gate** (npm vòng pi-*, lấp gap brief 09-13) | `learn/landscape-interactive-2026-09-16.md` (13.0KB) | **PORT 0 · MƯỢN 5 mảnh** (3-trạng-thái ask/allow/deny + shadow telemetry của pi-verdict; private-data path list của pi-approval-guardian; git-aware destructive check của @spences10; tách approve-scope/authorize-impl + clean-session handoff của @janvitos/pi-plan-build) **· CANDIDATE 1** (@whfzgyx/pi-approval ordered-flow semantics) · BO ~20 (permission-gate subfamily trùng safe_bash hoặc model-in-loop; @ayulab/pi-checkpoint GPL-3.0⚠) — user chốt |
-| 2026-09-15 | web-access delta | `learn/landscape-web-access-2026-09-15.md` | 0 PORT wholesale; 9 MƯỢN / 7 BO / 2 CANDIDATE (đã chốt trước đó) |
+| 2026-09-16 | **watchdog/supervisor delta** (vs 09-13 brief) | `learn/landscape-watchdog-2026-09-16.md` (18.9KB) | user decided per candidate in the brief |
+| 2026-09-16 | **subagent channel/messaging** | `learn/landscape-channel-2026-09-16.md` (14.8KB) | user decided per candidate |
+| 2026-09-16 | **observability** (session analytics/cost/journaling) | `learn/landscape-observability-2026-09-16.md` (17.9KB) | user decided per candidate |
+| 2026-09-16 | **OM compaction** (topic compression/retention) | `learn/landscape-om-compaction-2026-09-16.md` (17.9KB) | user decided per candidate |
+| 2026-09-16 | **interactive/approval-gate** (pi-* npm ecosystem, fills the 09-13 brief gap) | `learn/landscape-interactive-2026-09-16.md` (13.0KB) | **PORT 0 · BORROW 5 pieces** (three-state ask/allow/deny + pi-verdict shadow telemetry; pi-approval-guardian private-data path list; @spences10 git-aware destructive check; @janvitos/pi-plan-build approve-scope/authorize-impl split + clean-session handoff) **· CANDIDATE 1** (@whfzgyx/pi-approval ordered-flow semantics) · DROP ~20 (permission-gate subfamily duplicates safe_bash or uses model-in-loop; @ayulab/pi-checkpoint GPL-3.0⚠) — user decided |
+| 2026-09-15 | web-access delta | `learn/landscape-web-access-2026-09-15.md` | 0 wholesale PORT; 9 BORROW / 7 DROP / 2 CANDIDATE (decided previously) |
 
-| 2026-09-16 | **pi-crew** (EVAL mode-2: @melihmucuk/pi-crew 1.0.34 + npm pi-crew 0.11.0 phát hiện là project khác của baphuongna) | `learn/pi-crew-eval-2026-09-16.md` (14.5KB) | Đề xuất **DROP cả 2 + BORROW 2 mảnh**: (1) reminder-once khi child xong task không nộp report (bổ trợ research_report), (2) structured task schema {goal,context,instructions} cho spawn_pool/subagent task text. Trùng ~90% subagent-types; in-process + RAM state vs disk-is-truth/daemon-owns-children. **Chờ user chốt** |
-| 2026-09-17 | **@tintinweb/pi-subagents** (EVAL mode-2: tarball npm 0.19.0, MIT — focus 2 cơ chế group-join + consume-dedupe theo duyệt chat #95 channel 3/5) | `learn/tintinweb-pi-subagents-eval-2026-09-17.md` (10.9KB) | User chốt 2026-09-17 (#111): **MƯỢN group-join** (timer-from-first-completion + straggler re-batch + implicit parent grouping, viết lại ~60 dòng vào subagent-types, port task #112) **· DROP consume-dedupe** (trùng shouldAutoPing/calledMessageMain consume-mark; hardening re-check-at-send-time ghi sổ khi-đau) · 6 mảnh nhỏ giữ "gộp khi đau" |
+| 2026-09-16 | **pi-crew** (EVAL mode-2: @melihmucuk/pi-crew 1.0.34 + npm pi-crew 0.11.0 discovered to be a different project by baphuongna) | `learn/pi-crew-eval-2026-09-16.md` (14.5KB) | Proposal: **DROP both + BORROW 2 pieces**: (1) one-time reminder when a child finishes a task without submitting a report (supplements research_report), (2) structured task schema {goal,context,instructions} for spawn_pool/subagent task text. ~90% overlap with subagent-types; in-process + RAM state vs disk-is-truth/daemon-owns-children. **Awaiting user decision** |
+| 2026-09-17 | **@tintinweb/pi-subagents** (EVAL mode-2: npm tarball 0.19.0, MIT — focuses on two mechanisms, group-join + consume-dedupe, per chat review #95 channel 3/5) | `learn/tintinweb-pi-subagents-eval-2026-09-17.md` (10.9KB) | User decision 2026-09-17 (#111): **BORROW group-join** (timer from first completion + straggler re-batch + implicit parent grouping, rewrite ~60 lines into subagent-types, port task #112) **· DROP consume-dedupe** (duplicates shouldAutoPing/calledMessageMain consume-mark; record re-check-at-send-time hardening when it hurts) · keep six small pieces under "combine when it hurts" |
 
 ## Landscape: subagent lifecycle / auto-archive / agent GC (2026-09-20, #129)
-| Ứng viên | Cơ chế | Verdict |
+| Candidate | Mechanism | Verdict |
 |---|---|---|
-| pi-cleanup | `/cleanup` dry-run xóa cruft ~/.pi (session >14 ngày, run-N >7 ngày) | DROP cho #129 (lớp đĩa pi, không phải Paseo records); SET ASIDE riêng cho hygiene ~/.pi |
-| @ogulcancelik/pi-codex-subagents | retentionDays=7 xóa run codex lúc load | DROP (lớp đĩa codex) |
-| pi-tmux-subagents | auto-stop con tmux đã xong | DROP — daemon Paseo đã có tương đương: flag autoArchive = archive-on-terminal (verify registerAutoArchiveOnTerminalState); archive-ngay giết resume-by-name |
-| pi-session-cleanup | TUI batch-select xóa session | DROP (TUI-only) |
-| oh-my-opencode (opencode) | taskCleanupDelayMs 10m / taskTtlMs 30m / staleTimeoutMs 3m | BORROW defaults (bộ số anchor cho ngưỡng nhắc) |
-| Claude Code | không có — pain đang mở issue #27639/#58154 | (bằng chứng ngược: chưa ai giải upstream) |
-Quyết định user 2026-09-20: build in-house trong subagent-types — reminder 15 phút (≥3 con, loại parked/waiting, re-arm khi spawn mới hoặc 60 phút), không auto-archive. Archive soft-delete đã verify wake-tự-unarchive (9ebf7be6 → ARCHIVED-WOKE). Ship v1.4.106.
+| pi-cleanup | `/cleanup` dry-run removes ~/.pi cruft (sessions >14 days, run-N >7 days) | DROP for #129 (pi disk layer, not Paseo records); SET ASIDE separately for ~/.pi hygiene |
+| @ogulcancelik/pi-codex-subagents | retentionDays=7 deletes Codex runs on load | DROP (Codex disk layer) |
+| pi-tmux-subagents | auto-stops completed tmux children | DROP — the Paseo daemon already has an equivalent: autoArchive flag = archive-on-terminal (verify registerAutoArchiveOnTerminalState); immediate archive breaks resume-by-name |
+| pi-session-cleanup | TUI batch-selects sessions for deletion | DROP (TUI-only) |
+| oh-my-opencode (opencode) | taskCleanupDelayMs 10m / taskTtlMs 30m / staleTimeoutMs 3m | BORROW defaults (anchor values for reminder thresholds) |
+| Claude Code | none — this pain has open issues #27639/#58154 | (negative evidence: nobody has solved it upstream) |
+User decision 2026-09-20: build in-house in subagent-types — 15-minute reminder (≥3 children, excluding parked/waiting, re-arm on a new spawn or after 60 minutes), no auto-archive. Archive soft-delete was verified to wake-and-auto-unarchive (9ebf7be6 → ARCHIVED-WOKE). Shipped v1.4.106.
 
-## Landscape: port subagent-types -> Paseo plugin 100% (2026-09-20, EVAL nội bộ /skill:pi-ext-eval)
-Câu hỏi: toàn bộ subagent stack của pi (spawn, kênh, pool/swarm, reminder) port thành Paseo plugin để mọi harness dùng không?
-| Khối | Verdict |
+## Landscape: port subagent-types -> Paseo plugin 100% (2026-09-20, internal EVAL /skill:pi-ext-eval)
+Question: should the entire pi subagent stack (spawn, channel, pool/swarm, reminder) be ported into a Paseo plugin for every harness to use?
+| Component | Verdict |
 |---|---|
-| spawn + blocking wait | PORT (agents.create có env+labels+parent native — sạch hơn CLI carrier; waitForFinish/subscribe có sẵn) |
-| reply door + mode floor + idle-archive | PORT (door+floor đã là plugin từ v1.0.67/v1.4.102; reminder chạy 24/7 tốt hơn turn_end) |
-| pool/swarm, kênh truyền | PORT (send() envelope thay file-queue = hướng F2; plugin giữ pool state) |
-| ask_question park-reply | PORT ĐIỀU KIỆN (blocking MCP tool = F4/CANDIDATE deferred; per-harness MCP timeout) |
-| role allowlist tool-level + gates pi (research_report/readonly floor/safe-bash/loop-guard) | KHÔNG PORT (pi session API — giữ ở extension, chỉ áp dụng khi child là pi) |
-| pi main/children zero-residue | KHÔNG — cần shim mỏng (tổng quát hóa door-tool.ts: proxy mọi mcp__paseo__* từ record) vì pi 0.85.1 http-MCP gap |
-Tổng: ~90% port được, phần port chạy sạch hơn. Rủi ro phải verify: before(agent.create) cho main từ app UI (mới có bằng chứng CLI path).
-Quyết định user 2026-09-20 (verbatim): "cái này breaking changes đấy, chắc cần phải plan lại kỹ hơn, mình sẽ bật plan mode" — KHÔNG mở task build; vào plan mode (learn/decision-2026-09-20-plugin-port.md).
+| spawn + blocking wait | PORT (agents.create has native env+labels+parent — cleaner than a CLI carrier; waitForFinish/subscribe already exist) |
+| reply door + mode floor + idle-archive | PORT (door+floor have been plugins since v1.0.67/v1.4.102; a 24/7 reminder is better than turn_end) |
+| pool/swarm, communication channel | PORT (send() envelope replaces file queue = F2 direction; plugin holds pool state) |
+| ask_question park-reply | CONDITIONAL PORT (blocking MCP tool = deferred F4/CANDIDATE; per-harness MCP timeout) |
+| tool-level role allowlist + pi gates (research_report/readonly floor/safe-bash/loop-guard) | DO NOT PORT (pi session API — keep in the extension, applies only when the child is pi) |
+| zero residue for pi main/children | NO — needs a thin shim (generalize door-tool.ts to proxy every mcp__paseo__* from the record) because of the pi 0.85.1 http-MCP gap |
+Total: ~90% can be ported, and the ported part runs more cleanly. Risk to verify: before(agent.create) for main from the app UI (only the CLI path is evidenced so far).
+User decision 2026-09-20 (verbatim): "this has breaking changes; we probably need to plan it more carefully, so I'll turn on plan mode" — do NOT open a build task; enter plan mode (learn/decision-2026-09-20-plugin-port.md).
 
-## Cập nhật hậu-port 2026-09-21 (#133, plan step 16)
-Kết quả port thực tế (plugin paseo-subagents + ext door-first):
-- ĐÃ PORT thành công: scoped door (mcp-server.ts), spawn_subagent detach + role pinning (roles.ts + PROVIDER_CATALOGS modeMap), spawn_pool (batch ≤4, [pool-report] aggregate), ask_parent/answer_child ([child-question]/[parent-answer] wake con), idle-archive reminder plugin-side (label subagent.spawner tránh đôi lời), main-door inject mọi provider (key 'paseo-subagents').
-- GIỮ ở extension (pi-only, KHÔNG port): role allowlist tool-level + tool_call gate, research_report/readonly floor, safe-bash, loop-guard, door-tool shim (pi 0.85.1 http-MCP gap), spawner-mode gate 1 cửa (#131), F2 door-first allowlist (#132).
-- Extension spawn/message_main ĐÓNG BĂNG bugfix-only (marker #133 trong index.ts).
-- E2E ma trận đầy đủ: chính/con × pi/codex/claude × spawn/pool/ask/report (evidence learn/e2e-130-phase2-matrix-2026-09-21.md + chuỗi #140-#146).
+## Post-port update 2026-09-21 (#133, plan step 16)
+Actual port result (paseo-subagents plugin + door-first extension):
+- Successfully PORTED: scoped door (mcp-server.ts), spawn_subagent detach + role pinning (roles.ts + PROVIDER_CATALOGS modeMap), spawn_pool (batch ≤4, [pool-report] aggregate), ask_parent/answer_child ([child-question]/[parent-answer] wakes the child), plugin-side idle-archive reminder (subagent.spawner label prevents duplicate prompts), main-door injection for every provider (key 'paseo-subagents').
+- KEPT in the extension (pi-only, NOT ported): tool-level role allowlist + tool_call gate, research_report/readonly floor, safe-bash, loop-guard, door-tool shim (pi 0.85.1 http-MCP gap), single-entry spawner-mode gate (#131), F2 door-first allowlist (#132).
+- Extension spawn/message_main is FROZEN to bug fixes only (marker #133 in index.ts).
+- Full E2E matrix: main/child × pi/codex/claude × spawn/pool/ask/report (evidence learn/e2e-130-phase2-matrix-2026-09-21.md + chain #140-#146).
 
-## Door lifecycle cho agent cũ + durability (2026-09-21, decision post-port)
-Nguồn: spike 4 câu trên daemon source (/opt/paseo @getpaseo/server dist + client 0.8.0) — chi tiết learn/decision-2026-09-21-door-lifecycle.md.
-- Gap xác nhận: mcpServers KHÔNG thể đổi cho agent đang sống qua bề mặt chính thức (updateAgent chỉ {name,labels}; session_open hook chỉ được đổi env; reload không chạy agent.create). Agent sinh trước plugin không bao giờ nhận door qua create-hook.
-- Lộ đường hợp lệ: `before("agent.session_open")` ĐƯỢC PHÉP ĐỔI ENV cho reason create|resume|refresh|import (agent-manager.js:3628, buildLaunchContext) → PASEO_SUBAGENTS_DOOR env + pi ext door-shim đọc env (v1.4.108).
-- spec v12 (user duyệt 2026-09-21, verbatim "Duyệt spec v12 đủ 3 mảnh (Recommended)"): L1 door-grant qua [door-grant] message khi turn_ended cho main không door; L2 env-door qua session_open; pa1 adopt-from-disk khôi phục token đã mint từ record (đọc 1 chiều đĩa→RAM, hatch PASEO_SUBAGENTS_ADOPT=0).
-- Task board #150 [CHỜ PLAN DUYỆT]; P1-đ2 upstream draft (đề xuất hook agent.update) còn parked chờ user.
+## Door lifecycle for old agents + durability (2026-09-21, post-port decision)
+Source: four-question spike against daemon source (/opt/paseo @getpaseo/server dist + client 0.8.0) — details in learn/decision-2026-09-21-door-lifecycle.md.
+- Confirmed gap: mcpServers CANNOT be changed for a live agent through the official surface (updateAgent accepts only {name,labels}; session_open hook may change only env; reload does not run agent.create). Agents created before the plugin never receive the door through the create hook.
+- Valid path exposed: `before("agent.session_open")` MAY CHANGE ENV for reason create|resume|refresh|import (agent-manager.js:3628, buildLaunchContext) → PASEO_SUBAGENTS_DOOR env + pi extension door shim reads env (v1.4.108).
+- spec v12 (user approved 2026-09-21, verbatim "Approve spec v12 with all three pieces (Recommended)"): L1 door grant through a [door-grant] message at turn_ended for main without a door; L2 env-door through session_open; pa1 adopt-from-disk restores minted tokens from the record (one-way disk→RAM read, hatch PASEO_SUBAGENTS_ADOPT=0).
+- Task board #150 [AWAITING PLAN APPROVAL]; P1-d2 upstream draft (proposed agent.update hook) remains parked awaiting the user.

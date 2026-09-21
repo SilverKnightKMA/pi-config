@@ -9,7 +9,7 @@ doc is updated — doc-drift is a bug either way.
 Sources:
 - **Author** — Eero Alvar (`amosblomqvist` / YouTube `@EeroAlvar`), synthesized from
   `research/eero-alvar-videos/` (16 transcripts, 2026-08-30 + 2026-09-15).
-- **Doctrine** — "Quyết định vô chủ" (ownerless decisions), Paseo Foundation, 91-page PDF,
+- **Doctrine** — "Ownerless Decisions", Paseo Foundation, 91-page PDF,
   uploaded 2026-09-05. Digest in workspace memory.
 - **House rules** — the user's recorded decisions, 2026-09-04 → present (each with what shipped).
 
@@ -94,7 +94,7 @@ Each of these was explicitly decided by the user; overrides need a new decision,
 - **Sweeps distinguish open vs already-resolved.** Listing a fixed item as pending is a bug;
    retract cleanly.
 - **Ship ritual.** Full suite green (EXIT:0) → tag → docker pin PR → host install → verify live.
-   `'tiếp tục'` from the user is the phase-ship signal, not a request to rush.
+   `'continue'` from the user is the phase-ship signal, not a request to rush.
 - **Silent long commands run backgrounded up front** (nohup + /tmp log); never wait for the abort.
 - **English in the three repos** (pi-config / paseo-plugins / docker); Vietnamese stays in chat.
 

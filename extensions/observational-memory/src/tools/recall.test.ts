@@ -21,7 +21,7 @@ function droppedEntry(data: ObservationsDroppedEntryData): Entry {
 }
 
 const O1 = obs("2026-09-16T21:04:13", "user prefers bun over node for test runs");
-const O2 = obs("2026-09-16T21:04:13.07", "settled on A+vòng đời hard ban");
+const O2 = obs("2026-09-16T21:04:13.07", "settled on A+hard-ban lifecycle");
 
 describe("isValidObservationId", () => {
 	test("accepts precise timestamps with and without .NN", () => {

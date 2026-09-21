@@ -1,61 +1,62 @@
-# Incident report — "extension đổi không test kỹ → pi crash" (2026-09-15)
+# Incident report — "extension changed without thorough testing → pi crash" (2026-09-15)
 
-**Lớp lỗi:** user-named, lặp lại nhiều lần. *"bạn code extension pi, thay đổi mà
-không test kỹ dẫn đến việc crash pi, session id 01a093d5"*. Lần gần nhất: sau khi
-restart daemon vẫn gặp lỗi (17:34 UTC).
+**Failure class:** named by the user and repeated many times. *"you code a pi extension,
+make changes without thorough testing, and cause pi to crash, session id 01a093d5"*.
+Most recently, the error persisted after restarting the daemon (17:34 UTC).
 
-## Cơ chế crash (xác nhận trong source pi)
+## Crash mechanism (confirmed in pi source)
 
-pi load mọi extension tại session start. Extension fail to load → diagnostic
-`Failed to load extension "<path>"` → **`process.exit(1)`** ngay trong
-`dist/main.js`. Daemon thấy agent chết → retry → **spawn storm** (3+ process
-trong vài giây, session 01a093d5 đã chụp hiện tượng này 2026-09-13 khi một lần
-bisect làm gãy TS syntax). Restart daemon không chữa được vì lỗi nằm ở code
-extension, không phải daemon.
+pi loads every extension at session start. An extension fails to load → diagnostic
+`Failed to load extension "<path>"` → **`process.exit(1)`** directly in
+`dist/main.js`. The daemon sees the agent die → retries → **spawn storm** (3+ processes
+within a few seconds; session 01a093d5 captured this on 2026-09-13 when a bisect
+broke TS syntax). Restarting the daemon does not fix it because the error is in the
+extension code, not the daemon.
 
-## Lỗ hổng test cũ
+## Previous test gap
 
-642 test phủ pure module (`src/*.ts`) nhưng **không dòng test nào từng import +
-`activate()` file `index.ts`** — đúng lớp code pi thực thi lúc load. CI xanh khi
-extension hỏng load hoàn toàn.
+642 tests covered pure modules (`src/*.ts`), but **not one test ever imported +
+`activate()`d an `index.ts` file** — the exact layer of code pi executes on load.
+CI stayed green even when an extension could not load at all.
 
-## 4 bug thật bị bắt (đều từ v1.4.0, 2026-09-05 — âm thầm hỏng 10 ngày)
+## Four real bugs caught (all from v1.4.0, 2026-09-05 — silently broken for 10 days)
 
-Commit v1.4.0 "absorb live-only extensions" đưa code vào pack mà không kèm/không
-khai báo dependency:
+Commit v1.4.0 "absorb live-only extensions" added code to the pack without including
+or declaring its dependencies:
 
-| # | Extension | Lỗi | Fix (zero-dep) |
+| # | Extension | Error | Fix (zero-dep) |
 |---|---|---|---|
-| 1 | web-fetch | `import "typebox"` — không khai báo, không install | schema JSON literal |
-| 2 | web-fetch | `@mariozechner/pi-tui` — package tên cũ đã chết | đổi tên |
-| 3 | web-fetch | `new Text` value-import — không resolve từ cây installed | type-only + FallbackText tự chứa |
-| 4 | visual-tools | `@sinclair/typebox` — khai báo nhưng không bao giờ install trên host | schema JSON literal, bỏ dependency |
+| 1 | web-fetch | `import "typebox"` — undeclared and not installed | literal JSON schema |
+| 2 | web-fetch | `@mariozechner/pi-tui` — obsolete package name | rename |
+| 3 | web-fetch | `new Text` value import — cannot resolve from the installed tree | type-only + self-contained FallbackText |
+| 4 | visual-tools | `@sinclair/typebox` — declared but never installed on the host | literal JSON schema, remove dependency |
 
-## Bẫy che mắt (phát hiện khi verify)
+## Misleading traps (found during verification)
 
-1. **Repo tree che**: node_modules cục bộ (gitignored) + root node_modules resolve
-   hộ → smoke trên repo xanh dù host đỏ.
-2. **Bun global cache che**: khi không có node_modules, bun tự resolve bare
-   import từ `~/.bun/install/cache` — clone v1.4.71 (code hỏng) vẫn load được
-   trên máy dev cache ấm. Trên host có node_modules cục bộ thiếu package →
-   fallback tắt → fail thật. **Local pass chỉ đáng tin khi nó FAIL.**
+1. **Repo tree masks the problem**: local node_modules (gitignored) + root node_modules
+   resolve dependencies on its behalf → the repo smoke test passes while the host fails.
+2. **Bun global cache masks the problem**: without node_modules, bun resolves bare
+   imports from `~/.bun/install/cache` — a v1.4.71 clone (with broken code) still loads
+   on a development machine with a warm cache. On a host with local node_modules that
+   lacks the package → fallback is disabled → it actually fails. **A local pass is only
+   trustworthy when it FAILS.**
 
-## Hàng rào phòng tránh (3 lớp)
+## Preventive guardrails (three layers)
 
-| Lớp | Cơ chế | Chạy khi nào |
+| Layer | Mechanism | When it runs |
 |---|---|---|
-| `extensions/extension-smoke.test.ts` | child process import + `activate()` mọi extension với stub | mỗi `bun test` |
-| `scripts/smoke-extensions.mjs <dir>` | load smoke một cây bất kỳ (repo / host) | thủ tục: chạy với `~/.pi/agent/extensions` **trước mỗi lần restart daemon** sau khi sửa extension |
-| CI job `installed-tree-smoke` | clone-fresh PR HEAD, không install, smoke trên cache lạnh — mô phỏng đúng cây host | mỗi PR vào main (cả dependabot + auto-merge) |
+| `extensions/extension-smoke.test.ts` | child-process import + `activate()` every extension with a stub | every `bun test` |
+| `scripts/smoke-extensions.mjs <dir>` | smoke-load any tree (repo / host) | procedure: run against `~/.pi/agent/extensions` **before every daemon restart** after editing an extension |
+| CI job `installed-tree-smoke` | fresh clone of PR HEAD, no install, smoke test with a cold cache — accurately models the host tree | every PR to main (including dependabot + auto-merge) |
 
-Kỹ thuật: `smoke-one.mjs` chạy activate với chainable recording stub rồi
-`process.exit(0)` chủ động — activate() có khởi động timer/watcher cũng không
-đóng băng probe.
+Implementation: `smoke-one.mjs` runs activate with a chainable recording stub, then
+explicitly calls `process.exit(0)` — timers/watchers started by activate() cannot
+freeze the probe.
 
-## Bằng chứng
+## Evidence
 
-- v1.4.72: gate + fix bug 1-2 · v1.4.73: fix bug 3-4 (zero-dep cả hai extension)
+- v1.4.72: gate + fix bugs 1-2 · v1.4.73: fix bugs 3-4 (both extensions zero-dep)
 - PR #201, #202 (agent-code-server-docker) merged; host installed
-- Host verify: `ALL 13 EXTENSIONS LOAD CLEAN` trên `~/.pi/agent/extensions`
-- CI run 34975003936: `test` + `installed-tree-smoke` đều success
+- Host verification: `ALL 13 EXTENSIONS LOAD CLEAN` on `~/.pi/agent/extensions`
+- CI run 34975003936: both `test` + `installed-tree-smoke` succeeded
 - Suite: 642/642 EXIT:0

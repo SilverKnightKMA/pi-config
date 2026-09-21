@@ -1204,7 +1204,7 @@ test("v1.4.76 wiring: write/edit enter runLog and satisfy layer-1 probes", async
 	assert.doesNotMatch(out.content[0]!.text, /NOT passed layer-1|held/i);
 });
 
-test("v1.4.87 decision pair: awaitsDecision creates a [CHỜ USER QUYẾT] stage blocked by A", async () => {
+test("v1.4.87 decision pair: awaitsDecision creates an [AWAITING-USER-DECISION] stage blocked by A", async () => {
 	const f = fakePi();
 	taskExtension(f.pi as never);
 	const out = (await f.tool("task_create").execute(
@@ -1215,11 +1215,11 @@ test("v1.4.87 decision pair: awaitsDecision creates a [CHỜ USER QUYẾT] stage
 		f.ctx,
 	)) as { content: { text: string }[]; details?: { tasks?: { id: number; subject: string; status: string; blockedBy: number[]; description: string; verify?: { lane: string } }[] } };
 	assert.match(out.content[0]!.text, /Created #1: eval ext X/);
-	assert.match(out.content[0]!.text, /Decision pair: #2 \[CHỜ USER QUYẾT\] created blocked by #1/);
+	assert.match(out.content[0]!.text, /Decision pair: #2 \[AWAITING-USER-DECISION\] created blocked by #1/);
 	const tasks = out.details!.tasks!;
 	assert.equal(tasks.length, 2);
 	const b = tasks.find((t) => t.id === 2)!;
-	assert.equal(b.subject, "[CHỜ USER QUYẾT] eval ext X (#1)");
+	assert.equal(b.subject, "[AWAITING-USER-DECISION] eval ext X (#1)");
 	assert.equal(b.status, "pending");
 	// full fields (blockedBy/description/verify) live in the ledger state, not the slim details projection
 	const ledger = f.entries.at(-1)!.data as { tasks: { id: number; blockedBy: number[]; description: string; verify?: { lane: string } }[] };
@@ -1256,7 +1256,7 @@ test("v1.4.88 hardening: model cannot cancel B directly — P2 closed (user-owne
 	await f.tool("task_create").execute("c1", { subject: "eval ext Z", awaitsDecision: true }, undefined, undefined, f.ctx);
 	await assert.rejects(
 		f.tool("task_update").execute("c2", { id: 2, status: "cancelled" }, undefined, undefined, f.ctx),
-		/CHỜ USER QUYẾT.*user-owned.*cancel \(user\)/s,
+		/AWAITING-USER-DECISION.*user-owned.*cancel \(user\)/s,
 	);
 });
 

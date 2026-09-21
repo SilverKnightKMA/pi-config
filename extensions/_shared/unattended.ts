@@ -21,7 +21,7 @@
  * (/goal pause) or closes the plan (/plan off); INTERACTIVE_BAN=0 disables
  * the ban outright (test/break-glass env, like PLAN_TASK_BRIDGE=0). Decisions
  * that arise mid-run go through the decision-pair (task awaitsDecision:true
- * parks a [CHỜ USER QUYẾT] stage for the user) — never a workaround.
+ * parks an [AWAITING-USER-DECISION] stage for the user) — never a workaround.
  *
  * Pure filesystem reads only — deterministic, model-free, no pi imports.
  */
@@ -120,6 +120,6 @@ export function interactiveBanText(tool: string, kind: "goal" | "plan"): string 
 		"",
 		`WHAT: this session is running a goal/plan continuation (${which}); the user is not at the keyboard and this call would hang the session indefinitely.`,
 		"WHY: goal/plan runs are wake-driven, self-terminating cycles (done / deferred / budget exhausted); between activation and dissolution the session must stay non-interactive (2026-09-16 research: worst observed stall 50.3 min).",
-		"NEXT: record the decision instead — task_create the decision task with awaitsDecision:true so the paired [CHỜ USER QUYẾT] stage parks it for the user to answer on return; continue with work that does not depend on the answer. If the human is present and a live question is truly required, the USER pauses the goal (/goal pause) or closes the plan (/plan off) — never work around the ban yourself.",
+		"NEXT: record the decision instead — task_create the decision task with awaitsDecision:true so the paired [AWAITING-USER-DECISION] stage parks it for the user to answer on return; continue with work that does not depend on the answer. If the human is present and a live question is truly required, the USER pauses the goal (/goal pause) or closes the plan (/plan off) — never work around the ban yourself.",
 	].join("\n");
 }

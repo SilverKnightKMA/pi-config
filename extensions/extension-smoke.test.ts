@@ -3,8 +3,8 @@ import { join } from "node:path";
 
 /**
  * Extension load smoke (v1.4.72) — the regression gate for the class the user
- * named on 2026-09-15: "code extension pi, thay đổi mà không test kỹ dẫn đến
- * việc crash pi" (session 01a093d5). Upstream pi `process.exit(1)`s when an
+ * named on 2026-09-15: "changing pi extension code without thorough testing
+ * causes pi to crash" (session 01a093d5). Upstream pi `process.exit(1)`s when an
  * extension fails to load; the daemon then retries and spawns a pi storm.
  *
  * Unit tests cover pure modules; nothing else in this suite ever executes
