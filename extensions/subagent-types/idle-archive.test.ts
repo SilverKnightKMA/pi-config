@@ -90,12 +90,12 @@ describe("toIdleChildren", () => {
 });
 
 describe("readArchiveRemindMinutes", () => {
-	test("default 15; workspace wins; 0 disables; clamped to [0,1440]", () => {
-		expect(readArchiveRemindMinutes(null, null)).toBe(15);
+	test("#234 default 0 (engine CLI reminder retired); workspace wins; >0 re-enables; clamped to [0,1440]", () => {
+		expect(readArchiveRemindMinutes(null, null)).toBe(0);
 		expect(readArchiveRemindMinutes({ subagentTypes: { archiveRemindMinutes: 30 } }, { subagentTypes: { archiveRemindMinutes: 0 } })).toBe(30);
 		expect(readArchiveRemindMinutes(null, { subagentTypes: { archiveRemindMinutes: 0 } })).toBe(0);
 		expect(readArchiveRemindMinutes({ subagentTypes: { archiveRemindMinutes: 99999 } }, null)).toBe(1440);
-		expect(readArchiveRemindMinutes({ subagentTypes: {} }, null)).toBe(15);
-		expect(readArchiveRemindMinutes({ subagentTypes: { archiveRemindMinutes: "20" } }, null)).toBe(15); // non-number ignored
+		expect(readArchiveRemindMinutes({ subagentTypes: {} }, null)).toBe(0);
+		expect(readArchiveRemindMinutes({ subagentTypes: { archiveRemindMinutes: "20" } }, null)).toBe(0); // non-number ignored (#234 default off)
 	});
 });

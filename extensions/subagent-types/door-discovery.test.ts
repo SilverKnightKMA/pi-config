@@ -84,20 +84,26 @@ describe("doorFetch — stale port self-heal (F10)", () => {
 });
 
 describe("callDoorTool / callReplyDoor pick up the retry path", () => {
-  test("callDoorTool returns ok when only the discovered port answers", async () => {
+  test("callDoorTool retries via the discovered port when PASEO_SUBAGENTS_DOOR_STATE pins a hermetic state file (#219 self-heal)", async () => {
     writeFileSync(stateFile, JSON.stringify({ port: 41453 }));
-    const fetchImpl: DoorFetch = (url) => {
-      if (url.includes(":37325/")) return Promise.reject(new TypeError("fetch failed"));
-      return Promise.resolve(
-        jsonRes({ result: { content: [{ text: `spawned via ${new URL(url).port}` }] } }),
-      );
-    };
-    const res = await callDoorTool("http://127.0.0.1:37325/mcp?caller=tok", "spawn_subagent", { task: "x" }, fetchImpl);
-    // The public API does not take a state file — it falls back to the REAL
-    // door-state.json. When that file is absent (test env) the retry is a no-op
-    // and the call fails honestly; assert the failure shape instead.
-    if (res.ok) throw new Error("expected failure");
-    expect(res.error).toContain("unreachable");
+    const prev = process.env.PASEO_SUBAGENTS_DOOR_STATE;
+    process.env.PASEO_SUBAGENTS_DOOR_STATE = stateFile;
+    try {
+      const fetchImpl: DoorFetch = (url) => {
+        if (url.includes(":37325/")) return Promise.reject(new TypeError("fetch failed"));
+        return Promise.resolve(
+          jsonRes({ result: { content: [{ text: `spawned via ${new URL(url).port}` }] } }),
+        );
+      };
+      const res = await callDoorTool("http://127.0.0.1:37325/mcp?caller=tok", "spawn_subagent", { task: "x" }, fetchImpl);
+      // Stale port 37325 fails at the network level; the self-heal reads the
+      // pinned state file, rebuilds with port 41453, and the retry succeeds.
+      expect(res.ok).toBe(true);
+      if (res.ok) expect(res.text).toContain("spawned via 41453");
+    } finally {
+      if (prev === undefined) delete process.env.PASEO_SUBAGENTS_DOOR_STATE;
+      else process.env.PASEO_SUBAGENTS_DOOR_STATE = prev;
+    }
   });
 
   test("callReplyDoor fails honestly (not throws) when both ports are dead", async () => {

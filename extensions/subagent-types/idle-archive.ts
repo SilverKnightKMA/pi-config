@@ -38,7 +38,13 @@ export const MIN_IDLE_CHILDREN = 3;
  * passed (re-arm handled by the caller). */
 export const ARCHIVE_REMIND_REARM_MS = 60 * 60_000;
 
-const DEFAULT_REMIND_MINUTES = 15;
+// #234 (2026-09-22): engine-side CLI reminder RETIRED — default 0 (off).
+// The plugin paseo-subagents v1.0.93 housekeeping is now the single reminder
+// source: tool guidance (archive_subagent, runnable by EVERY provider — codex
+// and claude parents have no paseo CLI), once per child with a persisted
+// reminded.json, plus a 7d force-archive backstop. Keeping this knob for
+// rollback only (subagentTypes.archiveRemindMinutes > 0 re-enables).
+const DEFAULT_REMIND_MINUTES = 0;
 
 /** settings key: subagentTypes.archiveRemindMinutes — workspace wins over
  * user-wide (same merge order as mainBlockedTools). 0 disables. */

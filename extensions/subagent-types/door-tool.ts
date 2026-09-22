@@ -29,9 +29,15 @@ export const REPLY_DOOR_TOOL = "reply_to_parent";
  *  network-level failure we rebuild the URL with that port and retry ONCE —
  *  the caller token is opaque and stays valid (adopted from records or the
  *  plugin's grants.json), so only the port ever needs re-discovery. */
-const DOOR_STATE_FILE = join(homedir(), ".paseo", "plugin-data", "paseo-subagents", "door-state.json");
+// Resolved at CALL time so tests (and harnesses) can pin a hermetic state file
+// via PASEO_SUBAGENTS_DOOR_STATE — a module-level const froze too early and made
+// the retry test depend on the REAL daemon state existing or not (#234 note:
+// it started failing the day the live door-state.json pointed at a LIVE door).
+function doorStateFile(): string {
+	return process.env.PASEO_SUBAGENTS_DOOR_STATE ?? join(homedir(), ".paseo", "plugin-data", "paseo-subagents", "door-state.json");
+}
 
-export function readDoorDiscovery(stateFile: string = DOOR_STATE_FILE): number | null {
+export function readDoorDiscovery(stateFile: string = doorStateFile()): number | null {
 	try {
 		const raw = JSON.parse(readFileSync(stateFile, "utf-8")) as { port?: unknown };
 		if (typeof raw.port !== "number" || !Number.isInteger(raw.port) || raw.port < 1 || raw.port > 65535) return null;
@@ -59,7 +65,7 @@ export async function doorFetch(
 	url: string,
 	init: Parameters<DoorFetch>[1],
 	fetchImpl: DoorFetch,
-	stateFile: string = DOOR_STATE_FILE,
+	stateFile: string = doorStateFile(),
 ): Promise<Awaited<ReturnType<DoorFetch>>> {
 	try {
 		return await fetchImpl(url, init);
