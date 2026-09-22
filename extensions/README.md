@@ -28,7 +28,6 @@ Anti-recurrence rules (consequences of the old `cp {*.ts,tests}` command):
 | Live | Why no dev copy | Upstream origin |
 |---|---|---|
 | `~/.pi/agent/extensions/visual-tools/` | own `node_modules` (@mermaid-js/mermaid-cli + chrome) — wasteful to duplicate; edit the live copy directly | amosblomqvist/learn (extensions/visual-tools) |
-| `~/.pi/agent/extensions/web-fetch/` | own `node_modules` (readability/linkedom/turndown) | amosblomqvist/pi-config (extensions/web-fetch) |
 | `~/.pi/agent/extensions/md-log.ts` | single file, no dependencies — edit directly | amosblomqvist/learn (extensions/md-log.ts) |
 
 Tier-2 convention: edit the live copy directly, note the origin in the header comment (already there), never auto-create a dev copy.
@@ -45,7 +44,7 @@ Tier-2 convention: edit the live copy directly, note the origin in the header co
 ```jsonc
 {
   "subagentTypes": {
-    "mainBlockedTools": ["safe_bash", "web_search", "web_fetch", "render_mermaid", "render_svg", "write_svg", "write_mermaid"]
+    "mainBlockedTools": ["safe_bash", "web_search", "fetch_content", "render_mermaid", "render_svg", "write_svg", "write_mermaid"]
   }
 }
 ```

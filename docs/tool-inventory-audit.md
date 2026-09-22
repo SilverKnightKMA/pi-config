@@ -60,7 +60,7 @@ analyze-sessions, code-review, committee-lanes, paseo, paseo-advisor, paseo-hand
 |---|---|---|
 | 1. Xóa `~/.agents/skills/paseo-committee` | **Còn mở suốt 7 ngày** — dir vẫn tồn tại đến hôm nay | ✅ Đã xóa trong #213 (committee-lanes là bản thay thế chính thức) |
 | 2. Default detach, blocking chỉ khi cần inline report | Đã thỏa: guideline sống trong tool description `spawn_subagent` (index.ts:1174 "Prefer spawn_subagent…") | No-action |
-| 3. Reconsider web-fetch ext khi pi-web-access có authFetch | **Điều kiện đã chín**: `fetch_content` giờ có `auth` param (authFetch profiles), đồng thời là superset (modes readable/raw/answer, image URLs, YouTube transcripts, GitHub repos, local video + get_search_content) so với web_fetch (readable + Jina fallback) | 🟡 Quyết định của user — decision task đã mở |
+| 3. Reconsider web-fetch ext khi pi-web-access có authFetch | **Điều kiện đã chín**: `fetch_content` giờ có `auth` param (authFetch profiles), đồng thời là superset (modes readable/raw/answer, image URLs, YouTube transcripts, GitHub repos, local video + get_search_content) so với web_fetch (readable + Jina fallback) | ✅ Đã quyết 2026-09-22 (#214): nghỉ hưu — ext gỡ trong v1.4.127, role tools chuyển fetch_content |
 
 Attribution drift: bảng mục 1 là ảnh chụp 2026-09-15 (~13 ext). Hiện 17 ext + `facts` / `bash-long-run-guard` / `telemetry` / `sse-probe`… — không phát hiện trùng chức năng MỚI nào từ đợt port sau đó (audit #46 quét nguồn gốc từng unit, 0 cảnh cáo trùng). Bảng giữ nguyên giá trị lịch sử; không làm lại audit trong review này.
 

@@ -41,9 +41,9 @@ When a child has thrashed for ≥3 turns (repeats/oscillation/no tool calls):
 
 | Role | Tools | Report path |
 |---|---|---|
-| researcher | web_search, web_fetch, safe_bash (RO allowlist), read, research_report | `research_report` — never bash file writes |
+| researcher | web_search, fetch_content, safe_bash (RO allowlist), read, research_report | `research_report` — never bash file writes |
 | scout | read, grep, find, ls | `message_main` digest, token on first line |
-| worker | read, write, edit, safe_bash, web_search, web_fetch, spawn_subagent | `message_main` digest + artifact path |
+| worker | read, write, edit, safe_bash, web_search, fetch_content, spawn_subagent | `message_main` digest + artifact path |
 | mermaid-maker | write_mermaid, edit_mermaid, render_mermaid, read | `message_main` digest + artifact path |
 | svg-maker | write_svg, edit_svg, render_svg, read | `message_main` digest + artifact path |
 

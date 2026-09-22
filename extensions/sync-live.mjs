@@ -15,7 +15,7 @@
  * Role since v1.4.0: HOT-LANE between two tags only. The main delivery flow
  * is the managed pack (tag → auto-PR bumping the pin in the docker repo →
  * managed-tools:update). Extensions and skills now ship in the pack; this
- * script syncs EVERY managed entry, while visual-tools/web-fetch sync code
+ * script syncs EVERY managed entry, while visual-tools sync code
  * but KEEP live node_modules (installed once; rsync --delete
  * --exclude=node_modules leaves them alone).
  */
@@ -29,7 +29,7 @@ const liveRoot = path.join(homedir(), ".pi/agent/extensions");
 const devSkills = path.join(devRoot, "..", "skills");
 const liveSkills = path.join(homedir(), ".pi/agent/skills");
 
-// Every extension dir in the v1.4.0+ pack (md-log is a dir; visual-tools/web-fetch
+// Every extension dir in the v1.4.0+ pack (md-log is a dir; visual-tools
 // node_modules are excluded, so rsync --delete is safe for them).
 // _shared: cross-extension modules (continuation-driver.ts). NO index.ts →
 // pi loader ignores it (loader picks up *.ts at top level and */index.ts only —
@@ -52,7 +52,6 @@ const PACKED = [
 	"subagent-types",
 	"telemetry",
 	"visual-tools",
-	"web-fetch",
 	"zombie-watchdog",
 ];
 // Skills ship as directories carrying SKILL.md — auto-listed so a new skill
