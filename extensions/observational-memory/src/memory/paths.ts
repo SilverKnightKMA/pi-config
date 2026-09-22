@@ -139,7 +139,10 @@ export function listTopics(root: string): Topic[] {
 			continue;
 		}
 		const { front } = parseFrontMatter(content);
-		topics.push({ ...front, path: relative(cwd, join(root, filename)), filename });
+		// `path` feeds rendered INDEX.md/map content only (fs access goes through
+		// `filename` joined onto root) — the on-disk format contract is forward
+		// slashes on every platform (Windows `relative()` yields backslashes).
+		topics.push({ ...front, path: relative(cwd, join(root, filename)).split(/[\\/]/).join("/"), filename });
 	}
 	topics.sort((a, b) => (a.filename < b.filename ? -1 : a.filename > b.filename ? 1 : 0));
 	return topics;

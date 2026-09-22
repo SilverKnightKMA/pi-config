@@ -6,7 +6,7 @@
  */
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { pokeBridges } from "../../../_shared/doorbell.ts";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { Runtime } from "../runtime.js";
 import { buildStatusLines, costForDisplay } from "../commands/status.js";
 import { foldLedger } from "../ledger/fold.js";
@@ -139,7 +139,7 @@ async function writeSnapshot(runtime: Runtime, path: string, events: OmStatusEve
 		schema: 1,
 		generatedAt: new Date().toISOString(),
 		enabled: runtime.enabled,
-		sessionId: runtime.memoryRoot ? runtime.memoryRoot.split("/").pop() ?? "" : "",
+		sessionId: runtime.memoryRoot ? basename(runtime.memoryRoot) : "",
 		workspace: dirname(dirname(runtime.memoryRoot)),
 		lines: buildStatusLines(runtime, branch, contextTokens, allEntries),
 		summary: buildSummary(runtime, contextTokens, allEntries),
