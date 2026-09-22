@@ -442,7 +442,7 @@ test("wiring: completion sweep fires exactly once per finished list", async () =
 describe("status-file projection", () => {
 	test("taskStatusPath lands under ~/.pi/agent/task-status/<sessionId>.json", () => {
 		const p = taskStatusPath("abc123");
-		assert.ok(p.endsWith([".pi", "agent", "task-status", "abc123.json"].join("/")), `bad path: ${p}`);
+		assert.ok(p.endsWith(join(".pi", "agent", "task-status", "abc123.json")), `bad path: ${p}`);
 	});
 
 	test("buildTaskStatus: counts, ready set, reverse links, evidence passthrough", () => {

@@ -1,4 +1,5 @@
 /** facts-core store tests — P1a (plan 2026-09-21, step #174). Pure, red-green. */
+import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import {
 	buildFactLine,
@@ -247,8 +248,8 @@ describe("P1b: inject config + path + ttl-expired skip", () => {
 	});
 
 	test("factsFilePath env override wins, default under ~/.pi/agent", () => {
-		expect(factsFilePath({ FACTS_FILE: "/tmp/x.md" }, "/h")).toBe("/tmp/x.md");
-		expect(factsFilePath({}, "/h")).toBe("/h/.pi/agent/facts.md");
+		expect(factsFilePath({ FACTS_FILE: "/tmp/x.md" }, "/h")).toBe(join("/tmp", "x.md"));
+		expect(factsFilePath({}, "/h")).toBe(join("/h", ".pi", "agent", "facts.md"));
 	});
 
 	test("selectFactsForInject skips facts whose ttl has arrived (before tombstone)", () => {

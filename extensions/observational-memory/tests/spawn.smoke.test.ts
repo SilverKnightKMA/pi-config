@@ -25,7 +25,7 @@ describe("launch argv + env", () => {
 		// `-p` is the bare print-mode flag and must be the last element.
 		expect(argv[argv.length - 1]).toBe("-p");
 		expect(argv.join(" ").length).toBeLessThan(2_000);
-		expect(AGENT_EXTENSION_PATH.endsWith("/agent/index.ts")).toBe(true);
+		expect(AGENT_EXTENSION_PATH.endsWith(join("agent", "index.ts"))).toBe(true);
 	});
 
 	it("omits --thinking when no level is configured", () => {
@@ -49,7 +49,8 @@ describe("launch argv + env", () => {
 	});
 
 	it("resolves run paths under the session memory root's .runs", () => {
-		expect(runsDir("/proj/.memory/sess-1")).toBe("/proj/.memory/sess-1/.runs");
+		const base = "/proj/.memory/sess-1";
+		expect(runsDir(base)).toBe(join(base, ".runs"));
 	});
 });
 
@@ -114,15 +115,17 @@ describe("registerObserverTool", () => {
 });
 
 describe("E2BIG regression (2026-09-12 live incident)", () => {
+	// `cat` does not exist on Windows — drain stdin with bun itself.
+	const drainStdin = [process.execPath, "-e", "await Bun.stdin.text();"];
 	it("spawnWorker pipes a >128KB prompt through stdin where argv would E2BIG", async () => {
 		// 300KB would blow MAX_ARG_STRLEN (131,072 B) as an argv element; a pipe takes it.
 		const big = "x".repeat(300_000);
-		const exit = await spawnWorker({ argv: ["cat"], cwd: tmpdir(), env: process.env, stdinData: big });
+		const exit = await spawnWorker({ argv: drainStdin, cwd: tmpdir(), env: process.env, stdinData: big });
 		expect(exit.code).toBe(0);
 	});
 
 	it("spawnWorker without stdinData keeps stdin ignored (judge-runner hang lesson)", async () => {
-		const exit = await spawnWorker({ argv: ["cat"], cwd: tmpdir(), env: process.env });
+		const exit = await spawnWorker({ argv: drainStdin, cwd: tmpdir(), env: process.env });
 		expect(exit.code).toBe(0);
 	});
 });

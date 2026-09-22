@@ -517,7 +517,7 @@ describe("#107 A: termination funnel + crash recovery ledger", () => {
 			handlers.get("turn_start")!();
 			handlers.get("message_start")!();
 			handlers.get("session_shutdown")!();
-			const files2 = readdirSync(join(dir, "runs")).filter((f) => f.endsWith(".json"));
+			const files2 = readdirSync(join(dir, "runs")).filter((f) => f.endsWith(".json")).sort();
 			const rec2 = JSON.parse(readFileSync(join(dir, "runs", files2[1]), "utf8"));
 			expect(rec2.reason).toBe("shutdown");
 		} finally {

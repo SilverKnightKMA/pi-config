@@ -55,7 +55,8 @@ describe("doorbell-server #39 Phase 2 — session socket", () => {
 		await new Promise((r) => setTimeout(r, 100));
 		const path = join(root, "sess-1.sock");
 		expect(existsSync(path)).toBe(true);
-		expect(statSync(path).mode & 0o777).toBe(0o600);
+		// NTFS carries no POSIX mode bits (statSync().mode is always 0666 there).
+		if (process.platform !== "win32") expect(statSync(path).mode & 0o777).toBe(0o600);
 		await new Promise<void>((resolve, reject) => {
 			const sock = createConnection({ path });
 			sock.on("connect", () => {
