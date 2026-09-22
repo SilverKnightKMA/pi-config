@@ -146,7 +146,7 @@ describe("name registry", () => {
 
 	test("corrupt registry file → empty, not fatal", () => {
 		registerSubagent("x", { agentId: "x-1", role: "worker", createdAt: "t0" }, base);
-		Bun.write(join(base, "subagent-channel", "registry.json"), "{corrupt", { createPath: false });
+		writeFileSync(join(base, "subagent-channel", "registry.json"), "{corrupt");
 		expect(loadRegistry(base)).toEqual({});
 	});
 });
