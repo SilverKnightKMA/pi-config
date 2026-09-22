@@ -1312,3 +1312,24 @@ describe("reportFollowUpMissing — REPORT FOLLOW-UP rule (2026-09-22)", () => {
 		assert.equal(reportFollowUpMissing(mk([{ id: 3, subject: "Ship v1.4.125 tag" }]), { id: 3, subject: "Ship v1.4.125 tag" }), false);
 	});
 });
+
+test("v1.4.125 wiring: completing an orphan REPORT task surfaces the FOLLOW-UP NUDGE", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	await f.tool("task_create").execute("c1", { subject: "Evaluate orphan report" }, undefined, undefined, f.ctx);
+	const out = (await f.tool("task_update").execute("u1", { id: 1, status: "completed", evidence: "report written" }, undefined, undefined, f.ctx)) as {
+		content: { text: string }[];
+	};
+	assert.match(out.content[0]!.text, /FOLLOW-UP NEEDED: #1 delivers a REPORT/);
+});
+
+test("v1.4.125 wiring: report task WITH successor blockedBy → no nudge", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	await f.tool("task_create").execute("c1", { subject: "Audit with successor" }, undefined, undefined, f.ctx);
+	await f.tool("task_create").execute("c2", { subject: "Implement findings", blockedBy: [1] }, undefined, undefined, f.ctx);
+	const out = (await f.tool("task_update").execute("u1", { id: 1, status: "completed", evidence: "report written" }, undefined, undefined, f.ctx)) as {
+		content: { text: string }[];
+	};
+	assert.doesNotMatch(out.content[0]!.text, /FOLLOW-UP NEEDED/);
+});
