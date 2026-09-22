@@ -17,10 +17,60 @@
  * endpoint is /mcp/agents and carries no caller).
  */
 import { readdirSync, readFileSync, type Dirent } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { Type, type TSchema } from "@sinclair/typebox";
 
 export const REPLY_DOOR_TOOL = "reply_to_parent";
+
+/** F10 (#219): the paseo-subagents door port rotates on every plugin restart,
+ *  while session env vars and child records freeze the port they were born
+ *  with. The plugin persists its CURRENT port in door-state.json; on a
+ *  network-level failure we rebuild the URL with that port and retry ONCE —
+ *  the caller token is opaque and stays valid (adopted from records or the
+ *  plugin's grants.json), so only the port ever needs re-discovery. */
+const DOOR_STATE_FILE = join(homedir(), ".paseo", "plugin-data", "paseo-subagents", "door-state.json");
+
+export function readDoorDiscovery(stateFile: string = DOOR_STATE_FILE): number | null {
+	try {
+		const raw = JSON.parse(readFileSync(stateFile, "utf-8")) as { port?: unknown };
+		if (typeof raw.port !== "number" || !Number.isInteger(raw.port) || raw.port < 1 || raw.port > 65535) return null;
+		return raw.port;
+	} catch {
+		return null;
+	}
+}
+
+/** Rebuild a door URL around a new port, keeping path + caller token. */
+export function withPort(url: string, port: number): string {
+	try {
+		const u = new URL(url);
+		u.port = String(port);
+		return u.toString();
+	} catch {
+		return url;
+	}
+}
+
+/** doorFetch — fetch a door URL; when the network call itself fails (stale
+ *  port after a plugin restart), re-discover the live port and retry once.
+ *  Exported (with an injectable state file) for unit tests. */
+export async function doorFetch(
+	url: string,
+	init: Parameters<DoorFetch>[1],
+	fetchImpl: DoorFetch,
+	stateFile: string = DOOR_STATE_FILE,
+): Promise<Awaited<ReturnType<DoorFetch>>> {
+	try {
+		return await fetchImpl(url, init);
+	} catch (err) {
+		const port = readDoorDiscovery(stateFile);
+		if (port === null) throw err;
+		const retryUrl = withPort(url, port);
+		if (retryUrl === url) throw err;
+		return await fetchImpl(retryUrl, init);
+	}
+}
 
 /** Env L2 (spec v12 · #160): the paseo-subagents plugin assigns
  *  PASEO_SUBAGENTS_DOOR to a main agent without a door (created before the
@@ -172,12 +222,12 @@ export async function callReplyDoor(
 		params: { name: REPLY_DOOR_TOOL, arguments: { prompt } },
 	});
 	try {
-		const res = await fetchImpl(url, {
+		const res = await doorFetch(url, {
 			method: "POST",
 			headers: { "content-type": "application/json", accept: "application/json" },
 			body,
 			signal: AbortSignal.timeout(30_000),
-		});
+		}, fetchImpl);
 		if (res.status === 401) {
 			return {
 				ok: false,
@@ -264,12 +314,12 @@ export async function fetchDoorTools(
 ): Promise<DoorToolsResult> {
 	const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" });
 	try {
-		const res = await fetchImpl(url, {
+		const res = await doorFetch(url, {
 			method: "POST",
 			headers: { "content-type": "application/json", accept: "application/json" },
 			body,
 			signal: AbortSignal.timeout(10_000),
-		});
+		}, fetchImpl);
 		if (res.status === 401) {
 			return { ok: false, error: "door rejected this session's caller token (401) — token stale after daemon/plugin restart" };
 		}
@@ -301,12 +351,12 @@ export async function callDoorTool(
 		params: { name, arguments: args },
 	});
 	try {
-		const res = await fetchImpl(url, {
+		const res = await doorFetch(url, {
 			method: "POST",
 			headers: { "content-type": "application/json", accept: "application/json" },
 			body,
 			signal: AbortSignal.timeout(60_000),
-		});
+		}, fetchImpl);
 		if (res.status === 401) {
 			return { ok: false, error: `door rejected this session's caller token (401) for tool '${name}' — token stale after restart` };
 		}

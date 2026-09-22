@@ -1,18 +1,18 @@
 {
- "name": "learn-workspace",
- "private": true,
- "workspaces": [
-  "extensions/*"
- ],
- "devDependencies": {
-  "@earendil-works/pi-coding-agent": "^0.85.1",
-  "@earendil-works/pi-tui": "^0.85.1",
-  "@sinclair/typebox": "^0.34.0",
-  "@types/bun": "^1.4.2",
-  "bun-types": "latest",
-  "pi-mcp-adapter": "2.34.0",
-  "pi-web-access": "0.29.0",
-  "typescript": "^7.0.2"
- },
- "version": "1.4.130"
+  "name": "learn-workspace",
+  "private": true,
+  "workspaces": [
+    "extensions/*"
+  ],
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.85.1",
+    "@earendil-works/pi-tui": "^0.85.1",
+    "@sinclair/typebox": "^0.34.0",
+    "@types/bun": "^1.4.2",
+    "bun-types": "latest",
+    "pi-mcp-adapter": "2.34.0",
+    "pi-web-access": "0.29.0",
+    "typescript": "^7.0.2"
+  },
+  "version": "1.4.131"
 }
