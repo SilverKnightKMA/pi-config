@@ -7,6 +7,7 @@
  * 2. Wiring tests against a fake pi API (lesson from the sse-probe v1.4.12
  *    regression: pure-function tests miss event/tool-shape contracts).
  */
+import { reportFollowUpMissing } from "./index.ts";
 import { describe, test } from "bun:test";
 import assert from "node:assert/strict";
 import {
@@ -1284,4 +1285,30 @@ test("v1.4.88 control: user cancel action genuinely cancels, with genuine pair c
 	const statuses = Object.fromEntries(r.state.tasks.map((t) => [t.id, t.status]));
 	assert.equal(statuses[1], "cancelled");
 	assert.equal(statuses[2], "cancelled", "user-origin cancel may genuinely drop the pair");
+});
+
+describe("reportFollowUpMissing — REPORT FOLLOW-UP rule (2026-09-22)", () => {
+	const mk = (tasks: Array<{ id: number; subject: string; description?: string; blockedBy?: number[] }>) => ({ tasks });
+
+	test("report-type task with no references → nudge", () => {
+		assert.equal(reportFollowUpMissing(mk([{ id: 1, subject: "Evaluate Redis vs KeyDB" }]), { id: 1, subject: "Evaluate Redis vs KeyDB" }), true);
+		assert.equal(reportFollowUpMissing(mk([{ id: 2, subject: "Nghiên cứu NAS chassis" }]), { id: 2, subject: "Nghiên cứu NAS chassis" }), true);
+	});
+
+	test("successor via blockedBy or '#id' mention → no nudge", () => {
+		const board = [
+			{ id: 1, subject: "Audit #46-style env scan" },
+			{ id: 2, subject: "Fix symlink", description: "from audit #46 F1", blockedBy: [1] },
+		];
+		assert.equal(reportFollowUpMissing(mk(board), board[0]), false);
+		const board2 = [
+			{ id: 1, subject: "Research doorbell latency" },
+			{ id: 9, subject: "Implement doorbell", description: "follow-up #1" },
+		];
+		assert.equal(reportFollowUpMissing(mk(board2), board2[0]), false);
+	});
+
+	test("non-report task → never nudged", () => {
+		assert.equal(reportFollowUpMissing(mk([{ id: 3, subject: "Ship v1.4.125 tag" }]), { id: 3, subject: "Ship v1.4.125 tag" }), false);
+	});
 });

@@ -92,6 +92,27 @@ function resolveJudgeModel(cwd: string): string {
 	return readSettingsKey(cwd, "taskJudgeModel") ?? DEFAULT_JUDGE_MODEL;
 }
 
+// ---------------------------------------------------------------------------
+// REPORT FOLLOW-UP rule (user 2026-09-22): a task whose deliverable is a
+// REPORT — findings/verdict, not a shipped product — does not close its chain
+// by itself. It needs a successor: implementation consuming the report, a
+// decision stage digesting it, or an explicit no-follow-up note.
+// ---------------------------------------------------------------------------
+
+const REPORT_TASK_RE =
+	/(research|evaluat|audit|review|scan|survey|landscape|investigat|analy[sz]e|spike|proof.of.concept|nghi[êe]n.c[ứu]u|đ[áa]nh.gi[áa]|kh[ảa]o.s[áa]t|r[àa].so[áa]t|wisdom)/i;
+
+/** True when the task looks report-type AND no other task on the board
+ * references it (blockedBy, decisionOf pair, or an explicit "#id" mention).
+ * Soft signal only — feeds a completion NUDGE, never a block. */
+export function reportFollowUpMissing(state: { tasks: Array<{ id: number; subject: string; description?: string; blockedBy?: number[] }> }, task: { id: number; subject: string; description?: string }): boolean {
+	if (!REPORT_TASK_RE.test(`${task.subject} ${task.description ?? ""}`)) return false;
+	const ref = new RegExp(`#${task.id}\\b`);
+	return !state.tasks.some(
+		(t) => t.id !== task.id && (t.blockedBy?.includes(task.id) || ref.test(`${t.subject} ${t.description ?? ""}`)),
+	);
+}
+
 /** Same entry-point trick the OM workers use: run pi through the real entry
  *  file when resolvable, else plain `pi` on PATH. */
 function resolvePiBinary(): { command: string; baseArgs: string[] } {
@@ -497,7 +518,8 @@ export default function taskExtension(pi: ExtensionAPI) {
 			"one (lane judgment, completes on the USER's reply; it is a user stage, not agent work, so it " +
 			"never joins a goal or fires wakes). Benefit: the decision is tracked on the board from the " +
 			"start, so a verdict can never be lost inside a completed task. Implementing the approved " +
-			"outcome = a NEW task created after the user answers.",
+			"outcome = a NEW task created after the user answers. " +
+			"REPORT FOLLOW-UP (2026-09-22): any task whose deliverable is a REPORT (research/eval/audit/scan/review — findings, not a shipped product) must leave a successor on the board: (a) implementation task(s) consuming the report (blockedBy the report task), or (b) an awaitsDecision pair so the user digests the verdict, or (c) an explicit note in the report task's evidence why no follow-up is needed (e.g. superseded/disabled by user). Completing a report task with no successor = work parked, not done — the completion response will NUDGE you.",
 		parameters: Type.Object({
 			subject: Type.String({ description: "Short imperative subject" }),
 			description: Type.Optional(Type.String()),
@@ -639,7 +661,9 @@ export default function taskExtension(pi: ExtensionAPI) {
 			"when done — completion REQUIRES evidence and passes the verify gates (layer-1 probe audit + " +
 			"layer-2 LLM judge for judgment-lane/strict/spec-fault tasks; a different model family judges " +
 			"by done-check intent, may demote after 2 high-conf fails, ask for more evidence, or park at 3 rounds). " +
-			"Never mark completed merely because you wrote code. appeal=\"reason\" parks a task you dispute for the " +
+			"Never mark completed merely because you wrote code. Completing a REPORT-type task (research/eval/audit) " +
+			"with no successor on the board triggers a FOLLOW-UP NUDGE — create the implementation/decision " +
+			"successor (or record why none is needed) before closing the chain. appeal=\"reason\" parks a task you dispute for the " +
 			"user; status=parked/cancelled prune/pause a task.",
 		parameters: Type.Object({
 			id: Type.Number(),
@@ -970,6 +994,13 @@ export default function taskExtension(pi: ExtensionAPI) {
 				params.status === "completed" && result.task!.verify?.strict
 					? "\n(STRICT task — layer-2 judge ruled per the audit above)"
 					: "";
+			// REPORT FOLLOW-UP (2026-09-22): report-type task completing with no
+			// successor anywhere on the board → visible nudge. Soft by design: the
+			// detector is keyword-based, the judge never sees it, nothing blocks.
+			const followUpNote =
+				params.status === "completed" && result.task!.status === "completed" && reportFollowUpMissing(cascadeState, result.task!)
+					? `\n📋 FOLLOW-UP NEEDED: #${result.task!.id} delivers a REPORT, not a product — the chain is not closed. Create the successor NOW: (a) implementation task(s) consuming the report (blockedBy #${result.task!.id}), or (b) an awaitsDecision-style decision stage if the verdict is the user's call, or (c) if you just did (c), record the no-follow-up note in evidence.`
+					: "";
 			// #59 (user 2026-09-14): a HELD completion must expose itself — which gate
 			// holds it, which judge round, and the valid NEXT. Standard #43 envelope:
 			// without this line the model only sees "→ pending" and blindly re-declares a few times.
@@ -1001,7 +1032,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 					: "";
 			return {
 				content: [
-					{ type: "text", text: `#${result.task!.id} → ${result.task!.status}${statusNote}${heldNote}${warn}${auditNote}${parkedNote}${strictNote}${ready}${changesNote}` },
+					{ type: "text", text: `#${result.task!.id} → ${result.task!.status}${statusNote}${heldNote}${warn}${auditNote}${parkedNote}${strictNote}${followUpNote}${ready}${changesNote}` },
 				],
 					details: {
 					id: result.task!.id,
