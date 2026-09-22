@@ -1,3 +1,4 @@
+import { mkdirSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
 import {
 	REPLY_DOOR_TOOL,
@@ -36,7 +37,7 @@ describe("doorUrlFromRecord", () => {
 describe("findDoorUrlForAgent", () => {
 	test("finds <agentId>.json across workspace subdirs", () => {
 		const dir = `/tmp/door-test-agents-${Date.now()}`;
-		Bun.spawnSync(["mkdir", "-p", `${dir}/ws-a`, `${dir}/ws-b`]);
+		mkdirSync(`${dir}/ws-a`, { recursive: true }); mkdirSync(`${dir}/ws-b`, { recursive: true });
 		Bun.write(`${dir}/ws-a/other.json`, JSON.stringify(rec("http://127.0.0.1:1/mcp/agents")));
 		Bun.write(`${dir}/ws-b/agent-1.json`, JSON.stringify(rec(doorUrl)));
 		expect(findDoorUrlForAgent(dir, "agent-1")).toBe(doorUrl);
@@ -45,7 +46,7 @@ describe("findDoorUrlForAgent", () => {
 		expect(findDoorUrlForAgent("/tmp/door-test-agents-does-not-exist", "agent-1")).toBeNull();
 		expect(findDoorUrlForAgent("/tmp", "")).toBeNull();
 		const dir = `/tmp/door-test-agents-main-${Date.now()}`;
-		Bun.spawnSync(["mkdir", "-p", `${dir}/ws`]);
+		mkdirSync(`${dir}/ws`, { recursive: true });
 		Bun.write(`${dir}/ws/main-agent.json`, JSON.stringify(rec("http://127.0.0.1:6767/mcp/agents")));
 		expect(findDoorUrlForAgent(dir, "main-agent")).toBeNull();
 	});

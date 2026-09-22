@@ -248,7 +248,7 @@ describe("P1b: inject config + path + ttl-expired skip", () => {
 	});
 
 	test("factsFilePath env override wins, default under ~/.pi/agent", () => {
-		expect(factsFilePath({ FACTS_FILE: "/tmp/x.md" }, "/h")).toBe(join("/tmp", "x.md"));
+		expect(factsFilePath({ FACTS_FILE: "/tmp/x.md" }, "/h")).toBe("/tmp/x.md");
 		expect(factsFilePath({}, "/h")).toBe(join("/h", ".pi", "agent", "facts.md"));
 	});
 

@@ -18,7 +18,7 @@ import { join } from "node:path";
 describe("extension load smoke (crash-class regression, #01a093d5)", () => {
 	test("every extensions/*/index.ts imports and activate()s clean in a child process", async () => {
 		const script = join(import.meta.dir, "..", "scripts", "smoke-extensions.mjs");
-		const proc = Bun.spawnSync(["bun", script, join(import.meta.dir)], {
+		const proc = Bun.spawnSync([process.execPath, script, join(import.meta.dir)], {
 			cwd: join(import.meta.dir, ".."),
 			timeout: 120_000,
 			stdout: "pipe",

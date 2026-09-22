@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pushToQueue, drainQueue, queueFile, renderForPrompt, markKick, flushKicks, pendingKickIds, getActivityDigest, type ChannelMessage } from "./paseo-channel.ts";
@@ -95,8 +95,10 @@ describe("file queue — push/drain roundtrip", () => {
 	test("torn tail line (crash mid-write) is dropped, valid lines survive", () => {
 		pushToQueue("agent-a", msg(1), base);
 		const f = queueFile("agent-a", base);
-		// simulate a half-written JSON line
-		Bun.write(f, readFileSync(f, "utf-8") + '{"id":"torn","from":"ch', { createPath: false });
+		// simulate a half-written JSON line (writeFileSync: synchronous — an
+		// un-awaited Bun.write truncates the file concurrently with drainQueue's
+		// read, which Windows' slower NTFS timing exposes as a race)
+		writeFileSync(f, readFileSync(f, "utf-8") + '{"id":"torn","from":"ch');
 		const got = drainQueue("agent-a", base);
 		expect(got.map((m) => m.id)).toEqual(["m1"]);
 	});
