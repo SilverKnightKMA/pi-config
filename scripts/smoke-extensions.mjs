@@ -51,7 +51,7 @@ if (entries.length === 0) {
 let bad = 0;
 for (const file of entries) {
 	const name = file.slice(target.length + 1).replace(/\/index\.ts$/, "");
-	const proc = Bun.spawnSync(["bun", join(here, "smoke-one.mjs"), file], {
+	const proc = Bun.spawnSync([process.execPath, join(here, "smoke-one.mjs"), file], {
 		cwd: dirname(file), // extension-local node_modules resolve first
 		timeout: 20_000,
 		stdout: "pipe",
