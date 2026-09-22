@@ -7,11 +7,6 @@ import {
 	mapToolName,
 	floorTools,
 	resolveSelf,
-	providerStringFor,
-	parseModelTags,
-	thinkingValid,
-	MODEL_GUIDANCE,
-	resolveModel,
 	MAIN_ROLE,
 	shouldAutoPing,
 } from "./index";
@@ -265,46 +260,6 @@ describe("resolveSelf — sessionId → agent record → role", () => {
 	rmSync(tmp, { recursive: true, force: true });
 });
 
-describe("resolveModel — fallback mapping", () => {
-	const available = ["cli-openai/zaicp/glm-5.3", "cli-openai/zaicp/glm-5.3-flash"];
-
-	test("settings subagentModelFallback replaces the default table (audit #46 F5)", () => {
-		const prevCwd = process.cwd();
-		const tmp = mkdtempSync(join(tmpdir(), "fb-settings-"));
-		try {
-			mkdirSync(join(tmp, ".pi"), { recursive: true });
-			writeFileSync(
-				join(tmp, ".pi", "settings.json"),
-				JSON.stringify({ subagentModelFallback: [{ match: "^glm-", fallback: "other/model-a" }, { match: "bad(", fallback: "skipped" }] }),
-			);
-			process.chdir(tmp);
-			// custom row wins (invalid-regex row skipped, not fatal)
-			expect(resolveModel("glm-old", ["other/model-a"])).toBe("other/model-a");
-			// default table no longer applies while override is present
-			expect(resolveModel("anthropic/claude-sonnet-5", available)).toBeUndefined();
-		} finally {
-			process.chdir(prevCwd);
-			rmSync(tmp, { recursive: true, force: true });
-		}
-	});
-
-	test("haiku pin → flash model", () => {
-		expect(resolveModel("anthropic/claude-haiku-4-5", available)).toBe("cli-openai/zaicp/glm-5.3-flash");
-	});
-
-	test("sonnet pin → full model", () => {
-		expect(resolveModel("anthropic/claude-sonnet-5", available)).toBe("cli-openai/zaicp/glm-5.3");
-	});
-
-	test("already-available model passes through", () => {
-		expect(resolveModel("cli-openai/zaicp/glm-5.3", available)).toBe("cli-openai/zaicp/glm-5.3");
-	});
-
-	test("unmappable pin → undefined (caller default)", () => {
-		expect(resolveModel("mystery/model", available)).toBeUndefined();
-	});
-});
-
 describe("resolveSelf — human vs machine origin", () => {
 	const tmp = join(import.meta.dir, ".tmp-origin");
 	function setup(record: Record<string, unknown>) {
@@ -338,50 +293,6 @@ describe("resolveSelf — human vs machine origin", () => {
 	});
 
 	rmSync(tmp, { recursive: true, force: true });
-});
-
-describe("providerStringFor", () => {
-	test("bare model id gets pi/ prefix", () => {
-		expect(providerStringFor("cli-openai/zaicp/glm-5.3")).toBe("pi/cli-openai/zaicp/glm-5.3");
-	});
-	test("already-prefixed passes through", () => {
-		expect(providerStringFor("pi/cli-openai/zaicp/glm-5.3")).toBe("pi/cli-openai/zaicp/glm-5.3");
-	});
-});
-
-describe("parseModelTags", () => {
-	test("vision + reasoning from tags", () => {
-		expect(parseModelTags("[GLM-5.3-Flash][ZAI][T][V][XL]")).toEqual({ vision: true, reasoning: true });
-	});
-	test("text-only model", () => {
-		expect(parseModelTags("[GLM-5.2][ZAI][T]")).toEqual({ vision: false, reasoning: true });
-	});
-	test("missing name → all false", () => {
-		expect(parseModelTags(undefined)).toEqual({ vision: false, reasoning: false });
-	});
-});
-
-describe("thinkingValid", () => {
-	test("valid pi levels", () => {
-		for (const lvl of ["off", "medium", "max"]) expect(thinkingValid(lvl, "pi")).toBe(true);
-	});
-	test("invalid level rejected", () => {
-		expect(thinkingValid("ultra", "pi")).toBe(false);
-		expect(thinkingValid("", "pi")).toBe(false);
-		expect(thinkingValid(undefined, "pi")).toBe(false);
-	});
-	test("unknown provider → fail closed", () => {
-		expect(thinkingValid("high", "mystery-provider")).toBe(false);
-	});
-});
-
-describe("MODEL_GUIDANCE", () => {
-	test("generic: no specific model names pinned", () => {
-		expect(MODEL_GUIDANCE).toContain("[V]");
-		expect(MODEL_GUIDANCE).toContain("thinkingOptionId");
-		// must not name any concrete model of this machine
-		expect(MODEL_GUIDANCE).not.toMatch(/glm|minimax|deepseek/i);
-	});
 });
 
 // #132/F2: door children already have plugin delivery — disable auto-ping to avoid duplicate pings

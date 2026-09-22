@@ -24,22 +24,21 @@ const omRuntime = read("observational-memory/src/runtime.ts");
 const zw = read("zombie-watchdog/index.ts");
 const subIdx = read("subagent-types/index.ts");
 const subChan = read("subagent-types/paseo-channel.ts");
-const subPool = read("subagent-types/pool.ts");
 const taskIdx = read("task/index.ts");
 const romIdx = read("read-only-mode/index.ts");
 const lessonsCore = read("_shared/lessons-core.ts");
 const lessonsIdx = read("lessons/index.ts");
 
 	describe("MARKERS.md producer contract v2", () => {
-	test("spec lists all 6 documented prefixes (2 deprecated + 4 active)", () => {
+	test("spec lists all 5 documented prefixes (2 deprecated + 3 active)", () => {
 		expect(documented).toContain("> om: ");
 		expect(documented).toContain("> zw ⚠ ");
 		expect(documented).toContain("[auto-report] ");
 		expect(documented).toContain("[channel-nack] ");
-		expect(documented).toContain('<machine-notice kind="pool-notice">');
 		expect(documented).toContain("Lessons from past sessions");
 		expect(spec).toContain("deprecated v2 — history render only");
 		expect(spec).toContain("v2.1 change");
+		expect(spec).toContain("RETIRED 2026-09-22, #220");
 	});
 
 	test("B: om sink emits no custom message by default (model-blind)", () => {
@@ -72,12 +71,6 @@ const lessonsIdx = read("lessons/index.ts");
 		expect(subChan).toContain("`[channel-nack] Kick to subagent ${agentId} FAILED (${errText})");
 	});
 
-	test("A: pool-notice envelope at both sendUserMessage sites (#52)", () => {
-		expect(subPool).toContain('<machine-notice kind="pool-notice">');
-		expect((subIdx.match(/poolNotice\(/g) ?? []).length).toBe(2);
-		expect(subIdx).toContain("poolNotice(aggregateReport(state))");
-	});
-
 	test("A: wake-prefix family (marker 6, v3 #82) — every prefix at its emit site", () => {
 		expect(taskIdx).toContain("`[task wake ${next.rounds}/${TASK_BUDGET}]");
 		expect(taskIdx).toContain("[task] continuation wrapped up");
@@ -101,7 +94,7 @@ const lessonsIdx = read("lessons/index.ts");
 	});
 
 	test("no orphan markers: every documented prefix exists at source (or behind escape hatch)", () => {
-		const sources = [omSink, omStatus, omRuntime, zw, subIdx, subChan, subPool, lessonsCore].join("\n");
+		const sources = [omSink, omStatus, omRuntime, zw, subIdx, subChan, lessonsCore].join("\n");
 		for (const pfx of documented) {
 			const literal = pfx.split("${")[0].replace(/^> /, "");
 			expect(sources.includes(literal)).toBe(true);

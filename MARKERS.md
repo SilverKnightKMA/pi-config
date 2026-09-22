@@ -106,16 +106,16 @@ text starts with "[channel-nack] "                      → channel-nack
 `paseo-plugins/` keeps a byte-identical copy of this file at its root;
 `check-markers.py` fails if the copies or `markers.ts` drift from it.
 
-### 5. `pool-notice` — detached pool lifecycle notice *(live — v2.1)*
+### 5. `pool-notice` — detached pool lifecycle notice *(RETIRED 2026-09-22, #220)*
 
-| Field | Value |
-|---|---|
-| Emitted by | `subagent-types` (`drivePoolDetached`) |
-| Mechanism | pi `sendUserMessage` followUp (user-role: model must act on it) |
-| Line prefix (exact) | `<machine-notice kind="pool-notice">` |
-| Payload | early notice: `[pool <id>] early notice: <item> -> <status>…` — first hard failure; final aggregate: `aggregateReport` (counts + per-item lines) |
-| Cadence | ≤ 2 per pool (one early notice on first gate_failed/failed, one final aggregate) |
-| Why user-role | spawn replacement / pool_resume decisions are model work; no model-facing alternative exists in pi today |
+The ext-side pool machinery (`spawn_pool`/`pool_status`/`pool_resume` in
+`subagent-types`, producer `drivePoolDetached` + `poolNotice`) was removed:
+spawning is now plugin-only (one door, `paseo-subagents`). The plugin owns
+its own pool state and surfaces lifecycle through plugin timeline items
+(doorbell), not through user-role notices. The `<machine-notice
+kind="pool-notice">` prefix is no longer emitted by anything; old timeline
+lines still render as plain text. Prefix removed from the documented set —
+do not reintroduce an emitter for it.
 
 ### 6. `wake-prefix` — continuation nudge family *(live — v3, 2026-09-16 #82)*
 

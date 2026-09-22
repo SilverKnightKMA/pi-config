@@ -762,3 +762,12 @@ export function replyDoorNote(foreign: boolean): string {
 				"- Report via exactly one of the two — never duplicate a report through both.",
 			].join("\n");
 }
+
+/** Mode knobs the spawn CLI/provider configs accept (moved from index.ts when
+ *  ext-owned spawn died — #220): read-only | auto | review | full. */
+export const MODE_KNOBS = ["read-only", "auto", "review", "full"] as const;
+
+/** Fail-fast client-side knob check (the plugin floor is the real gate). */
+export function validModeKnob(mode: string | undefined): boolean {
+	return mode === undefined || (MODE_KNOBS as readonly string[]).includes(mode);
+}

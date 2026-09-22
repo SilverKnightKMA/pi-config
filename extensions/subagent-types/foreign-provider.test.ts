@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { buildSpawnCliArgs, parseCliSpawnOutput, replyDoorNote } from "./paseo-channel.ts";
-import { MODE_KNOBS, validModeKnob } from "./index.ts";
+import { buildSpawnCliArgs, parseCliSpawnOutput, replyDoorNote, MODE_KNOBS, validModeKnob } from "./paseo-channel.ts";
 
 describe("buildSpawnCliArgs (#120 reply-door carrier)", () => {
 	test("env carrier + mode + labels + thinking, prompt last", () => {
