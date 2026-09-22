@@ -69,6 +69,7 @@ type UiContext = ExtensionContext;
 // GLM — default fci/deepseek-v4-flash; override: env TASK_JUDGE_MODEL, then
 // settings taskJudgeModel (workspace .pi/settings.json > ~/.pi/agent).
 const DEFAULT_JUDGE_MODEL = "cli-openai/fci/deepseek-v4-flash";
+const DEFAULT_JUDGE_THINKING = "medium";
 const JUDGE_TIMEOUT_MS = 60_000;
 
 function readSettingsKey(cwd: string, key: string): string | null {
@@ -87,9 +88,14 @@ function readSettingsKey(cwd: string, key: string): string | null {
 }
 
 function resolveJudgeModel(cwd: string): string {
-	const env = process.env.TASK_JUDGE_MODEL;
-	if (env && env.trim()) return env.trim();
+	// F12 2026-09-22: settings-only (một chỗ duy nhất ~/.pi/agent/settings.json /
+	// workspace .pi/settings.json) — env TASK_JUDGE_MODEL đã bỏ theo directive user.
 	return readSettingsKey(cwd, "taskJudgeModel") ?? DEFAULT_JUDGE_MODEL;
+}
+
+/** F12: judge thinking — settings taskJudgeThinking, default medium. */
+function resolveJudgeThinking(cwd: string): string {
+	return readSettingsKey(cwd, "taskJudgeThinking") ?? DEFAULT_JUDGE_THINKING;
 }
 
 // ---------------------------------------------------------------------------
@@ -188,6 +194,8 @@ function runJudge(packet: string, cwd: string): Promise<string | null> {
 			"--no-builtin-tools",
 			"--model",
 			resolveJudgeModel(cwd),
+			"--thinking",
+			resolveJudgeThinking(cwd),
 			"--session",
 			sessionPath,
 			"-p",

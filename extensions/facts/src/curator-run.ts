@@ -30,6 +30,27 @@ import { factsFilePath, parseFactsFile, serializeFacts, todayIso } from "./store
 
 export const MAX_PACK_BYTES = 100 * 1024; // ≤~100KB evidence ration (plan 2026-09-21)
 
+// --- F12 model/thinking: settings-only (một chỗ duy nhất, bỏ env) -----------------
+
+/** Read a string key from workspace .pi/settings.json > ~/.pi/agent/settings.json. */
+export function readCuratorSettingsKey(key: string, cwd = process.cwd()): string | null {
+	const candidates = [`${cwd}/.pi/settings.json`, `${process.env.HOME || ""}/.pi/agent/settings.json`];
+	for (const p of candidates) {
+		try {
+			const raw = JSON.parse(readFileSync(p, "utf-8"));
+			if (raw && typeof raw === "object" && typeof (raw as Record<string, unknown>)[key] === "string") {
+				return (raw as Record<string, string>)[key];
+			}
+		} catch {
+			// absent/unparsable — next candidate
+		}
+	}
+	return null;
+}
+
+export const CURATOR_DEFAULT_MODEL = "cli-openai/fci/deepseek-v4-flash";
+export const CURATOR_DEFAULT_THINKING = "medium";
+
 // --- paths ------------------------------------------------------------------------
 
 export function factsRunsDir(env: NodeJS.ProcessEnv = process.env, home = process.env.HOME ?? ""): string {
@@ -83,7 +104,11 @@ export function realPlannerSpawn(env: NodeJS.ProcessEnv = process.env): PlannerS
 				sessionName,
 				"-p",
 			];
-			if (env.FACTS_CURATOR_MODEL) args.push("--model", env.FACTS_CURATOR_MODEL);
+			// F12: model+thinking từ settings (factsCuratorModel/factsCuratorThinking) —
+			// env FACTS_CURATOR_MODEL đã bỏ theo directive user (một chỗ config duy nhất).
+			const curatorModel = readCuratorSettingsKey("factsCuratorModel") ?? CURATOR_DEFAULT_MODEL;
+			const curatorThinking = readCuratorSettingsKey("factsCuratorThinking") ?? CURATOR_DEFAULT_THINKING;
+			args.push("--model", curatorModel, "--thinking", curatorThinking);
 			const cwd = factsRunsDir(env);
 			mkdirSync(cwd, { recursive: true });
 			const proc = spawn(pi.command, args, {
