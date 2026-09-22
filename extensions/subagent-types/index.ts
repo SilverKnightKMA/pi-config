@@ -378,19 +378,44 @@ export function resolveSelf(sessionId: string, paseoDir = PASEO_AGENTS_DIR): Sel
 // Model fallback for .md-pinned models unavailable on this machine
 // ---------------------------------------------------------------------------
 
-const MODEL_FALLBACK: Array<[RegExp, string]> = [
+const DEFAULT_MODEL_FALLBACK: Array<[RegExp, string]> = [
 	[/anthropic\/claude-haiku[\w.-]*/, "cli-openai/zaicp/glm-5.3-flash"],
 	[/anthropic\/claude-sonnet[\w.-]*/, "cli-openai/zaicp/glm-5.3"],
 	[/anthropic\/claude[\w.-]*/, "cli-openai/zaicp/glm-5.3"],
 	[/openrouter\/z-ai\/glm-5\.3/, "cli-openai/zaicp/glm-5.3"],
 ];
 
+/** Settings key `subagentModelFallback`: array of `{match, fallback}` where
+ * `match` is a regex source. Present non-empty table REPLACES the default —
+ * the machine's model fleet is a deployment fact, not a code constant
+ * (audit #46 F5). Workspace .pi/settings.json wins over user-wide. */
+export function modelFallbackTable(): Array<[RegExp, string]> {
+	for (const p of [join(process.cwd(), ".pi", "settings.json"), join(homedir(), ".pi", "agent", "settings.json")]) {
+		const raw = readSettingsJson(p)?.["subagentModelFallback"];
+		if (!Array.isArray(raw)) continue;
+		const rows: Array<[RegExp, string]> = [];
+		for (const item of raw) {
+			if (!item || typeof item !== "object") continue;
+			const { match, fallback } = item as Record<string, unknown>;
+			if (typeof match === "string" && typeof fallback === "string" && match) {
+				try {
+					rows.push([new RegExp(match), fallback]);
+				} catch {
+					// invalid regex — skip row, keep the rest
+				}
+			}
+		}
+		if (rows.length > 0) return rows;
+	}
+	return DEFAULT_MODEL_FALLBACK;
+}
+
 /** Map a .md model pin onto a model this machine actually has. Strict: returns
  * undefined when nothing matches — the caller refuses the spawn. */
 export function resolveModel(model: string | undefined, available: string[]): string | undefined {
 	if (!model) return undefined;
 	if (available.includes(model)) return model;
-	for (const [pattern, fallback] of MODEL_FALLBACK) {
+	for (const [pattern, fallback] of modelFallbackTable()) {
 		if (pattern.test(model) && available.includes(fallback)) return fallback;
 	}
 	return undefined;

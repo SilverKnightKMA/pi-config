@@ -268,6 +268,26 @@ describe("resolveSelf — sessionId → agent record → role", () => {
 describe("resolveModel — fallback mapping", () => {
 	const available = ["cli-openai/zaicp/glm-5.3", "cli-openai/zaicp/glm-5.3-flash"];
 
+	test("settings subagentModelFallback replaces the default table (audit #46 F5)", () => {
+		const prevCwd = process.cwd();
+		const tmp = mkdtempSync(join(tmpdir(), "fb-settings-"));
+		try {
+			mkdirSync(join(tmp, ".pi"), { recursive: true });
+			writeFileSync(
+				join(tmp, ".pi", "settings.json"),
+				JSON.stringify({ subagentModelFallback: [{ match: "^glm-", fallback: "other/model-a" }, { match: "bad(", fallback: "skipped" }] }),
+			);
+			process.chdir(tmp);
+			// custom row wins (invalid-regex row skipped, not fatal)
+			expect(resolveModel("glm-old", ["other/model-a"])).toBe("other/model-a");
+			// default table no longer applies while override is present
+			expect(resolveModel("anthropic/claude-sonnet-5", available)).toBeUndefined();
+		} finally {
+			process.chdir(prevCwd);
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+
 	test("haiku pin → flash model", () => {
 		expect(resolveModel("anthropic/claude-haiku-4-5", available)).toBe("cli-openai/zaicp/glm-5.3-flash");
 	});
