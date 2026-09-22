@@ -82,3 +82,16 @@ No Linux-only syscall in runtime code (no /proc, no inotify flag, no gosu); home
 - Risk ranking ordered gãy > adapt > caveat. ✓
 - Provider axis answered with a real swap test. ✓
 - Fix proposals listed for user decision. ✓
+
+## 7. Fix status (F1–F6, post-audit tasks #203–#208)
+
+| # | fix | status |
+|---|---|---|
+| F1 | plan-plugin symlink → real install | DONE — paseo-plugins v1.0.80 (2b73748), Windows install+tsc green, daemon running v1.0.80 |
+| F2 | OM path-separator runtime (INDEX.md '/', sessionId basename) | DONE — f408376, both Windows tests pass |
+| F3 | smoke spawn via process.execPath | DONE — ebb5bc1, Windows smoke 16/16 EXIT 0 |
+| F4 | test hygiene (sort/CRLF/0600/writeFileSync race class) | DONE — 5c572f8+c31f6f0+905c502, **1014/1014 on all three environments** |
+| F5 | model fallback settings-driven | DONE — 37936e8, `subagentModelFallback` settings key |
+| F6 | conventions doc | DONE — docs/portability-conventions.md |
+
+Conventions: `docs/portability-conventions.md` (tags, fallback settings, Windows notes).
