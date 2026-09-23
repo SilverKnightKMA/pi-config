@@ -142,6 +142,15 @@ export function _setJudgeRunnerForTests(fn: ((packet: string) => Promise<string 
 	judgeRunnerOverride = fn;
 }
 
+/** #246 test seam: drive the task wake loop's steps synchronously — "settle"
+ * runs the taskSettle sanitize, "fire" clears pending timers then runs the
+ * fire-time validation/emit. No 2s/5s timer waits in tests. */
+let taskWakeDrive: ((step: "settle" | "fire") => void) | null = null;
+export function _driveTaskWakeForTests(step: "settle" | "fire"): void {
+	if (!taskWakeDrive) throw new Error("task extension not activated");
+	taskWakeDrive(step);
+}
+
 /** Session path for a one-shot judge run (v1.4.101): dedicated `--judge--`
  * subdir under the sessions root, so bulk import skips judge sessions
  * STRUCTURALLY (path + registry) instead of content fingerprinting. Filename
@@ -281,18 +290,28 @@ export default function taskExtension(pi: ExtensionAPI) {
 	 *  remains at settle (budget 10 per episode, anti-spin 3, ladder 5→80s).
 	 *  Yields while goal/plan own main's wake cadence (single-waker priority). */
 	let taskWakeTimer: ReturnType<typeof setTimeout> | null = null;
+	// #246: the session_start restart-back-up probe belongs to the same wake
+	// machinery — clearTaskWake disarms it together with the loop timer.
+	let restartBackupTimer: ReturnType<typeof setTimeout> | null = null;
 
 	function clearTaskWake(): void {
 		if (taskWakeTimer) {
 			clearTimeout(taskWakeTimer);
 			taskWakeTimer = null;
 		}
+		if (restartBackupTimer) {
+			clearTimeout(restartBackupTimer);
+			restartBackupTimer = null;
+		}
 	}
 
 	function taskSettle(): void {
 		clearTaskWake();
 		if (!controlSessionId) return;
-		if (continuationOwnedByHigherKind(anyGoalRunning(), planContinuationActive(controlSessionId))) return;
+		// #246 (M1): sanitize the wake ledger even when a higher kind owns the wake
+		// cadence — deferring the WAKE is not deferring the CLEANUP. Without this,
+		// a completed-while-plan-tracking task kept a stale wake signature that fired
+		// 4 real post-completion wakes (#174, 2026-09-21).
 		const open = state.tasks.filter((t) => t.status === "in_progress");
 		if (open.length === 0) {
 			if (state.wake) {
@@ -301,6 +320,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 			}
 			return;
 		}
+		if (continuationOwnedByHigherKind(anyGoalRunning(), planContinuationActive(controlSessionId))) return;
 		const sig = open.map((t) => `${t.id}:${t.status}:${t.updatedAt}`).join(",");
 		const prev = state.wake && state.wake.signature === sig ? state.wake : { rounds: 0, noProgress: 0, signature: sig };
 		const d = decide({ kind: "task", active: true, openWork: open.length, rounds: prev.rounds, budget: TASK_BUDGET, noProgressStreak: prev.noProgress });
@@ -318,30 +338,55 @@ export default function taskExtension(pi: ExtensionAPI) {
 		}
 		taskWakeTimer = setTimeout(() => {
 			taskWakeTimer = null;
-			if (!controlSessionId) return;
-			if (continuationOwnedByHigherKind(anyGoalRunning(), planContinuationActive(controlSessionId))) return;
-			const nowOpen = state.tasks.filter((t) => t.status === "in_progress");
-			if (nowOpen.length === 0) return;
-			const nowSig = nowOpen.map((t) => `${t.id}:${t.status}:${t.updatedAt}`).join(",");
-			const next = { rounds: (state.wake && state.wake.signature === nowSig ? state.wake.rounds : 0) + 1, noProgress: nextStreak(state.wake && state.wake.signature === nowSig ? state.wake.noProgress : 0, state.wake?.signature ?? "", nowSig), signature: nowSig };
-			state = { ...state, wake: next };
-			pi.appendEntry(TASK_STATE, state);
-			projectStatus();
-			// v1.4.86 (#82): machine-readable wake — display:false custom message keeps
-			// the nudge in model context (turn fires) but not as a chat-text block; the
-			// Paseo panel badges it from the "[task wake N/M]" prefix. WAKE_CHAT_EMISSION=1
-			// restores the old full user-role text block.
-			const wakeText = `[task wake ${next.rounds}/${TASK_BUDGET}] #${nowOpen.map((t) => t.id).join(" #")} still in_progress — continue with task_update (real evidence; the judge gates completion) or park with a reason if genuinely blocked. Do not re-declare completed without evidence.`;
-			if (process.env.WAKE_CHAT_EMISSION === "1") {
-				pi.sendUserMessage(wakeText, { deliverAs: "followUp" });
-			} else {
-				pi.sendMessage(
-					{ customType: "task-wake", content: wakeText, display: false, details: { phase: "wake", rounds: next.rounds, budget: TASK_BUDGET, openIds: nowOpen.map((t) => t.id) } },
-					{ deliverAs: "followUp", triggerTurn: true },
-				);
-			}
+			fireTaskWake();
+			// schedule the next round the same way the first one was scheduled
 			taskSettle();
 		}, d.delaySec * 1000);
+	}
+
+	/** #246: the fire-time half of the wake loop, extracted from the timer
+	 * callback so tests can drive validation + emit without waiting on the
+	 * 5→80s ladder. Re-scheduling stays with the timer (taskSettle re-decides). */
+	function fireTaskWake(): void {
+		if (!controlSessionId) return;
+		if (continuationOwnedByHigherKind(anyGoalRunning(), planContinuationActive(controlSessionId))) return;
+		const nowOpen = state.tasks.filter((t) => t.status === "in_progress");
+		// #246 (M3): empty at fire-time → CLEAR the stale ledger, not a bare return.
+		if (nowOpen.length === 0) {
+			if (state.wake) {
+				state = { ...state, wake: undefined };
+				pi.appendEntry(TASK_STATE, state);
+			}
+			return;
+		}
+		// #246 (M3): an old signature referencing ids that are no longer open is
+		// stale — reset rounds/noProgress so the wake for the NEW open set starts
+		// fresh instead of inheriting the dead set's counts.
+		if (state.wake) {
+			const openIds = new Set(nowOpen.map((t) => t.id));
+			const sigIds = state.wake.signature.split(",").map((s) => Number(s.split(":")[0]));
+			if (sigIds.some((id) => !openIds.has(id))) {
+				state = { ...state, wake: { rounds: 0, noProgress: 0, signature: "" } };
+			}
+		}
+		const nowSig = nowOpen.map((t) => `${t.id}:${t.status}:${t.updatedAt}`).join(",");
+		const next = { rounds: (state.wake && state.wake.signature === nowSig ? state.wake.rounds : 0) + 1, noProgress: nextStreak(state.wake && state.wake.signature === nowSig ? state.wake.noProgress : 0, state.wake?.signature ?? "", nowSig), signature: nowSig };
+		state = { ...state, wake: next };
+		pi.appendEntry(TASK_STATE, state);
+		projectStatus();
+		// v1.4.86 (#82): machine-readable wake — display:false custom message keeps
+		// the nudge in model context (turn fires) but not as a chat-text block; the
+		// Paseo panel badges it from the "[task wake N/M]" prefix. WAKE_CHAT_EMISSION=1
+		// restores the old full user-role text block.
+		const wakeText = `[task wake ${next.rounds}/${TASK_BUDGET}] #${nowOpen.map((t) => t.id).join(" #")} still in_progress — continue with task_update (real evidence; the judge gates completion) or park with a reason if genuinely blocked. Do not re-declare completed without evidence.`;
+		if (process.env.WAKE_CHAT_EMISSION === "1") {
+			pi.sendUserMessage(wakeText, { deliverAs: "followUp" });
+		} else {
+			pi.sendMessage(
+				{ customType: "task-wake", content: wakeText, display: false, details: { phase: "wake", rounds: next.rounds, budget: TASK_BUDGET, openIds: nowOpen.map((t) => t.id) } },
+				{ deliverAs: "followUp", triggerTurn: true },
+			);
+		}
 	}
 
 	/** Apply a plugin/user action from the control file (watch callback). */
@@ -991,6 +1036,12 @@ export default function taskExtension(pi: ExtensionAPI) {
 				}
 			}
 			const unblocked = newlyReady(state, cascadeState);
+			// #246 (M2): completing/parking/cancelling the LAST in_progress task clears
+			// the wake ledger right now — merged into this very commit, no extra entry,
+			// no window where a scheduled timer can fire on a dead set.
+			if (cascadeState.wake && !cascadeState.tasks.some((t) => t.status === "in_progress")) {
+				cascadeState = { ...cascadeState, wake: undefined };
+			}
 			commit(ctx as UiContext, cascadeState);
 			const warn = result.warnings.length > 0 ? `\nWarnings: ${result.warnings.join(" ")}` : "";
 			const auditNote = result.task!.audit ? `\nAudit: ${result.task!.audit.summary.replace(/\n/g, "; ")}` : "";
@@ -1192,7 +1243,18 @@ export default function taskExtension(pi: ExtensionAPI) {
 		renderWidget(ctx);
 		// v1.4.69 (#61 Phase C): restart-back-up — resume the task wake loop if
 		// in_progress work remains and no higher kind owns the cadence.
-		setTimeout(() => taskSettle(), 3_000);
+		restartBackupTimer = setTimeout(() => {
+			restartBackupTimer = null;
+			taskSettle();
+		}, 3_000);
+		// #246 test seam wiring: let tests drive settle/fire synchronously.
+		taskWakeDrive = (step) => {
+			if (step === "settle") taskSettle();
+			else {
+				clearTaskWake();
+				fireTaskWake();
+			}
+		};
 	});
 
 	pi.on("input", () => clearTaskWake());

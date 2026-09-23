@@ -292,6 +292,7 @@ interface FakeTool {
 function fakePi() {
 	const tools = new Map<string, FakeTool>();
 	const entries: { customType: string; data: unknown }[] = [];
+	const messages: { content: string; customType?: string; display?: boolean; userRole?: boolean; details?: unknown }[] = [];
 	const handlers = new Map<string, (event: unknown, ctx?: unknown) => Promise<unknown> | unknown>();
 	const commands = new Map<string, { description: string; handler: (args: unknown, ctx: unknown) => Promise<void> }>();
 	let branch: unknown[] = [];
@@ -302,6 +303,9 @@ function fakePi() {
 		on: (event: string, handler: (event: unknown, ctx?: unknown) => unknown) => handlers.set(event, handler),
 		registerCommand: (name: string, def: { description: string; handler: (args: unknown, ctx: unknown) => Promise<void> }) =>
 			commands.set(name, def),
+		// #246: the wake loop emits through these — capture so tests can assert emits.
+		sendMessage: (m: { content: string; customType?: string; display?: boolean; details?: unknown }) => messages.push({ ...m }),
+		sendUserMessage: (text: string) => messages.push({ content: text, userRole: true }),
 	};
 	const ctx = {
 		hasUI: false,
@@ -316,6 +320,7 @@ function fakePi() {
 		pi,
 		ctx,
 		entries,
+		messages,
 		commands,
 		handlers,
 		tool: (name: string) => {
@@ -1332,4 +1337,138 @@ test("v1.4.125 wiring: report task WITH successor blockedBy → no nudge", async
 		content: { text: string }[];
 	};
 	assert.doesNotMatch(out.content[0]!.text, /FOLLOW-UP NEEDED/);
+});
+
+// ── #246 wake sanitize: the ledger never outlives the task state it tracks ──
+
+import { _driveTaskWakeForTests } from "./index.ts";
+
+interface WakeSeededTask {
+	id: number;
+	subject: string;
+	status: "in_progress" | "completed" | "pending" | "cancelled";
+}
+
+function seedWakeBoard(tasks: WakeSeededTask[], wake?: { rounds: number; noProgress: number; signature: string }) {
+	return {
+		type: "custom" as const,
+		customType: TASK_STATE,
+		data: {
+			tasks: tasks.map((t) => ({ ...t, createdAt: 1, updatedAt: 2 })),
+			nextId: tasks.reduce((m, t) => Math.max(m, t.id), 0) + 1,
+			...(wake ? { wake } : {}),
+		},
+	};
+}
+
+test("#246 M1: plan owning the cadence still sanitizes the wake ledger at settle", async () => {
+	const tmp = fs.mkdtempSync(join(tmpdir(), "task-wake-"));
+	const prevHome = process.env.HOME;
+	process.env.HOME = tmp;
+	try {
+		const f = fakePi();
+		(f.ctx.sessionManager as { getSessionId: () => string }).getSessionId = () => "wake-m1";
+		taskExtension(f.pi as never);
+		// plan #100-style: tracking with steps left → higher kind owns the cadence
+		fs.mkdirSync(join(tmp, ".pi", "agent", "plan-control"), { recursive: true });
+		fs.writeFileSync(join(tmp, ".pi", "agent", "plan-control", "wake-m1.status.json"), JSON.stringify({ mode: "tracking", planId: "p-test", stepsDone: 1, stepsTotal: 3 }));
+		// #174 completed while the plan was tracking; stale wake ledger persisted (the 2026-09-21 #174 incident shape)
+		f.setBranch([seedWakeBoard([{ id: 174, subject: "done under plan", status: "completed" }], { rounds: 4, noProgress: 0, signature: "174:in_progress:1790004934598" })]);
+		await f.handlers.get("session_start")!({}, f.ctx);
+		_driveTaskWakeForTests("settle");
+		const last = f.entries[f.entries.length - 1]!;
+		assert.equal(last.customType, TASK_STATE, "sanitize must persist the cleaned state");
+		assert.equal((last.data as { wake?: unknown }).wake, undefined, "stale wake ledger must be cleared even while a plan owns the wake cadence");
+		assert.equal(f.messages.filter((m) => m.content.includes("[task wake")).length, 0, "no wake may fire for a completed task");
+	} finally {
+		if (prevHome !== undefined) process.env.HOME = prevHome;
+		fs.rmSync(tmp, { recursive: true, force: true });
+	}
+});
+
+test("#246 M2: completing the last in_progress task clears the wake ledger in the same commit", async () => {
+	const tmp = fs.mkdtempSync(join(tmpdir(), "task-wake-"));
+	const prevHome = process.env.HOME;
+	process.env.HOME = tmp;
+	stubJudge(JSON.stringify({ verdict: "pass", confidence: "high", reason: "brief meets the done-check", cited_log_ids: [] }));
+	try {
+		const f = fakePi();
+		(f.ctx.sessionManager as { getSessionId: () => string }).getSessionId = () => "wake-m2";
+		taskExtension(f.pi as never);
+		// plan tracking active: without M2 the commit would leave the wake ledger behind
+		fs.mkdirSync(join(tmp, ".pi", "agent", "plan-control"), { recursive: true });
+		fs.writeFileSync(join(tmp, ".pi", "agent", "plan-control", "wake-m2.status.json"), JSON.stringify({ mode: "tracking", planId: "p-test", stepsDone: 1, stepsTotal: 3 }));
+		f.setBranch([seedWakeBoard([{ id: 174, subject: "finish me", status: "in_progress" }], { rounds: 2, noProgress: 0, signature: "174:in_progress:1" })]);
+		await f.handlers.get("session_start")!({}, f.ctx);
+		await f.tool("task_update").execute("u1", { id: 174, status: "completed", evidence: "suite green" }, undefined, undefined, f.ctx);
+		const last = f.entries[f.entries.length - 1]!;
+		assert.equal(last.customType, TASK_STATE);
+		const data = last.data as { wake?: unknown; tasks?: { id: number; status: string }[] };
+		assert.equal(data.wake, undefined, "the completion commit itself must clear the wake ledger (no window for a stale fire)");
+		assert.equal(data.tasks!.find((t) => t.id === 174)!.status, "completed");
+	} finally {
+		_setJudgeRunnerForTests(null);
+		if (prevHome !== undefined) process.env.HOME = prevHome;
+		fs.rmSync(tmp, { recursive: true, force: true });
+	}
+});
+
+test("#246 M3: fire-time drops a stale signature id and starts the new open set fresh", async () => {
+	const tmp = fs.mkdtempSync(join(tmpdir(), "task-wake-"));
+	const prevHome = process.env.HOME;
+	process.env.HOME = tmp;
+	try {
+		const f = fakePi();
+		(f.ctx.sessionManager as { getSessionId: () => string }).getSessionId = () => "wake-m3";
+		taskExtension(f.pi as never);
+		f.setBranch([
+			seedWakeBoard(
+				[
+					{ id: 174, subject: "done", status: "completed" },
+					{ id: 180, subject: "live", status: "in_progress" },
+				],
+				{ rounds: 4, noProgress: 2, signature: "174:in_progress:1790004934598" },
+			),
+		]);
+		await f.handlers.get("session_start")!({}, f.ctx);
+		_driveTaskWakeForTests("fire");
+		const last = f.entries[f.entries.length - 1]!;
+		const wake = (last.data as { wake?: { rounds: number; signature: string } }).wake!;
+		assert.equal(wake.rounds, 1, "the new open set starts at round 1, not inheriting the dead set's 4");
+		assert.ok(wake.signature.startsWith("180:in_progress"), `signature rebuilt from the live open set: ${wake.signature}`);
+		const emit = f.messages.find((m) => m.content.includes("[task wake"));
+		assert.ok(emit, "wake must emit for the live set");
+		assert.match(emit!.content, /#180/);
+		assert.doesNotMatch(emit!.content, /#174/);
+		assert.equal(emit!.customType, "task-wake");
+	} finally {
+		if (prevHome !== undefined) process.env.HOME = prevHome;
+		fs.rmSync(tmp, { recursive: true, force: true });
+	}
+});
+
+test("#246 regression: normal wake still fires for a live in_progress task", async () => {
+	const tmp = fs.mkdtempSync(join(tmpdir(), "task-wake-"));
+	const prevHome = process.env.HOME;
+	process.env.HOME = tmp;
+	try {
+		const f = fakePi();
+		(f.ctx.sessionManager as { getSessionId: () => string }).getSessionId = () => "wake-reg";
+		taskExtension(f.pi as never);
+		f.setBranch([seedWakeBoard([{ id: 190, subject: "still working", status: "in_progress" }])]);
+		await f.handlers.get("session_start")!({}, f.ctx);
+		_driveTaskWakeForTests("settle"); // decides + schedules (timer cleared by the next seam call)
+		_driveTaskWakeForTests("fire"); // clears the pending timer, runs the emit half
+		const last = f.entries[f.entries.length - 1]!;
+		const wake = (last.data as { wake?: { rounds: number } }).wake!;
+		assert.equal(wake.rounds, 1);
+		const emit = f.messages.find((m) => m.content.includes("[task wake"));
+		assert.ok(emit, "normal wake must still emit");
+		assert.match(emit!.content, /\[task wake 1\/10\] #190/);
+		assert.equal(emit!.customType, "task-wake");
+		assert.notEqual(emit!.display, true, "wake stays a display:false custom entry (v1.4.86 contract)");
+	} finally {
+		if (prevHome !== undefined) process.env.HOME = prevHome;
+		fs.rmSync(tmp, { recursive: true, force: true });
+	}
 });
