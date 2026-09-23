@@ -79,15 +79,15 @@ describe("judge: newest-first slice + tail outputs + pattern history (2026-09-15
 		assert.equal(slice[2]!.ts, T0);
 	});
 
-	test("REGRESSION #75: tail rendering shows the verdict line the head-cut hid", () => {
+	test("REGRESSION #75 + #251: 2KB head+tail window keeps BOTH the top lines and the verdict line", () => {
 		const smokeOut = ["ok        ask-user-question", "ok        bash-long-run-guard", "ok        goal", "ok        lessons", "ok        md-log", "ok        quiz", "ok        zombie-watchdog", "ALL 14 EXTENSIONS LOAD CLEAN"].join("\n");
 		const packet = buildJudgePacket(
 			{ subject: "gate", doneCheck: "smoke green", evidence: "smoke ran", lane: "state", probes: [{ pattern: "smoke-extensions", expect: "ALL 14", status: "green" }] },
 			[mk("bun scripts/smoke-extensions.mjs 2>&1 | tail -16", smokeOut, T3)],
 		);
-		assert.match(packet, /ALL 14 EXTENSIONS LOAD CLEAN/); // was invisible under the head-cut
-		assert.doesNotMatch(packet, /ok        ask-user-question/); // head lines dropped
-		assert.match(packet, /out\(tail\): ok        quiz ⏎ ok        zombie-watchdog ⏎ ALL 14 EXTENSIONS LOAD CLEAN/);
+		assert.match(packet, /ALL 14 EXTENSIONS LOAD CLEAN/); // verdict line visible (was hidden by the head-cut)
+		assert.match(packet, /ok        ask-user-question/); // #251: head lines kept too — 2KB window, not a 3-line tail
+		assert.match(packet, /    out: ok        ask-user-question/);
 	});
 
 	test("REGRESSION #75: timestamps + NEWEST FIRST label in the LOG header", () => {
@@ -256,5 +256,47 @@ describe("judge: buildJudgePacket — doneCheck amendments (v1.4.38)", () => {
 		);
 		assert.ok(packet.includes("2 time(s), 1 by the worker"));
 		assert.ok(packet.includes("- (user)"));
+	});
+});
+
+// ── #238/#251: 5-component packet — user decisions, user chat, file digests, hierarchy ──
+
+describe("#251 judge packet widening (5 components)", () => {
+	test("USER DECISIONS section renders ask results verbatim, capped 400", () => {
+		const packet = buildJudgePacket(
+			{ subject: "s", doneCheck: "user approves spec", evidence: "user said yes", lane: "judgment", userDecisions: ["User selected: 1. Duyệt nguyên spec (Recommended)"] },
+			[],
+		);
+		assert.match(packet, /## USER DECISIONS \(ask_user_question results — EVIDENCE, the user's actual selections\)/);
+		assert.match(packet, /- User selected: 1\. Duyệt nguyên spec \(Recommended\)/);
+		assert.match(packet, /EVIDENCE HIERARCHY \(#251\): USER DECISIONS and USER CHAT are the user's actual words/);
+	});
+
+	test("empty channels print explicit placeholders (judge sees the absence)", () => {
+		const packet = buildJudgePacket({ subject: "s", doneCheck: "d", evidence: "e", lane: "judgment", userDecisions: [], userChat: [] }, []);
+		assert.match(packet, /## USER DECISIONS[\s\S]*\(none this session\)/);
+		assert.match(packet, /## USER CHAT[\s\S]*\(none captured\)/);
+	});
+
+	test("USER CHAT renders last messages; FILE DIGESTS section rides read results", () => {
+		const packet = buildJudgePacket(
+			{ subject: "s", doneCheck: "d", evidence: "e", lane: "judgment", userChat: ["hãy làm nhóm 1a trước"], fileDigests: ["read src/graph.ts → export function updateTask…"] },
+			[],
+		);
+		assert.match(packet, /## USER CHAT \(last user messages — EVIDENCE when the done-check depends on the user\)/);
+		assert.match(packet, /- hãy làm nhóm 1a trước/);
+		assert.match(packet, /## FILE DIGESTS \(read-tool results — ground truth\)/);
+		assert.match(packet, /read src\/graph\.ts/);
+	});
+
+	test("2KB window: a 5KB output is cut head+tail with the cut size named", () => {
+		const mkLocal = (cmd: string, output: string, ts: number) => ({ cmd, output, ts });
+		const long = `HEAD-MARKER\n${"x".repeat(5000)}\nTAIL-MARKER`;
+		const packet = buildJudgePacket({ subject: "s", doneCheck: "d", evidence: "e", lane: "state" }, [mkLocal("cat big.log", long, 1)]);
+		assert.match(packet, /HEAD-MARKER/);
+		assert.match(packet, /TAIL-MARKER/);
+		assert.match(packet, /…\[cut \d+ chars\]…/);
+		const outLine = packet.split("\n").find((l) => l.includes("HEAD-MARKER")) ?? "";
+		assert.ok(outLine.length < 2400, `out line stays under ~2KB, got ${outLine.length}`);
 	});
 });

@@ -265,6 +265,14 @@ export default function taskExtension(pi: ExtensionAPI) {
 	const runLogByCall = new Map<string, RunLogEntry>();
 	const BASH_TOOLS = new Set(["bash", "safe_bash"]);
 	const WRITE_TOOLS = new Set(["write", "edit"]);
+	// #238/#251 (v1.4.139): judge-evidence channels the old packet lacked —
+	// user decisions (ask_user_question results), user chat, read digests.
+	// Machine-written by the ENGINE from tool events; the model has no write
+	// path into them (the #238 self-written artifact stays rejected).
+	let userDecisionLog: string[] = [];
+	let userChatLog: string[] = [];
+	let fileDigestLog: string[] = [];
+	let pendingAskIds = new Set<string>();
 	function pushRunEntry(toolCallId: string, entry: RunLogEntry): void {
 		runLogByCall.set(toolCallId, entry);
 		runLog.push(entry);
@@ -499,6 +507,16 @@ export default function taskExtension(pi: ExtensionAPI) {
 					? `write ${p} (${typeof e.args?.content === "string" ? Buffer.byteLength(e.args.content, "utf8") : "?"} bytes)`
 					: `edit ${p} (${Array.isArray(e.args?.edits) ? e.args.edits.length : "?"} block(s))`;
 			pushRunEntry(e.toolCallId, { tool: e.toolName ?? "", cmd, output: "", ts: Date.now() });
+			return;
+		}
+		// #251: read digests + ask_user_question results → judge-evidence channels
+		if (e.toolName === "read") {
+			const p = typeof e.args?.path === "string" ? e.args.path : "?";
+			pushRunEntry(e.toolCallId, { tool: "read", cmd: `read ${p}`, output: "", ts: Date.now(), digestOnly: true });
+			return;
+		}
+		if (e.toolName === "ask_user_question") {
+			pendingAskIds.add(e.toolCallId);
 		}
 	});
 
@@ -506,10 +524,27 @@ export default function taskExtension(pi: ExtensionAPI) {
 		const e = event as { toolCallId?: string; result?: unknown };
 		const id = e.toolCallId;
 		if (!id) return;
+		// #251: the user's actual selection is EVIDENCE — captured verbatim
+		if (pendingAskIds.delete(id)) {
+			const out = extractOutput(e.result);
+			if (out) {
+				userDecisionLog.push(out);
+				if (userDecisionLog.length > 8) userDecisionLog = userDecisionLog.slice(-8);
+			}
+			return;
+		}
 		const entry = runLogByCall.get(id);
 		if (!entry) return;
 		entry.output = extractOutput(e.result);
 		runLogByCall.delete(id);
+		// read digests live in their own channel — they must not dilute the
+		// probe-relevant LOG slice
+		if (entry.tool === "read") {
+			const i = runLog.indexOf(entry);
+			if (i >= 0) runLog.splice(i, 1);
+			fileDigestLog.push(`${entry.cmd} → ${entry.output.slice(0, 260)}`);
+			if (fileDigestLog.length > 8) fileDigestLog = fileDigestLog.slice(-8);
+		}
 	});
 
 	/** Read-only file projection (~/.pi/agent/task-status/<sessionId>.json):
@@ -1081,6 +1116,11 @@ export default function taskExtension(pi: ExtensionAPI) {
 								probes: probeViews,
 								descHistory: judgeDescHistory,
 								fullLog: mapped,
+								// #251: the 5-component packet — user decisions, user chat,
+								// file digests, 2KB log outputs, hierarchy instruction (inside).
+								userDecisions: [...userDecisionLog],
+								userChat: [...userChatLog],
+								fileDigests: [...fileDigestLog],
 							},
 							logSlice,
 						);
@@ -1279,6 +1319,28 @@ export default function taskExtension(pi: ExtensionAPI) {
 	// ── Nudges: transient context-hook injection (never persisted) ───────
 
 	pi.on("context", async (event) => {
+		// #251: rebuild the user-chat channel from the request messages — the
+		// user's ACTUAL words (chat role, no <system-reminder> machine wrappers,
+		// no custom entries); rebuilt per event so it stays idempotent.
+		try {
+			const chat: string[] = [];
+			for (const m of event.messages as Array<{ role?: string; content?: unknown; customType?: string }>) {
+				if (m.role !== "user" || m.customType) continue;
+				let text = "";
+				if (typeof m.content === "string") text = m.content;
+				else if (Array.isArray(m.content)) {
+					text = (m.content as Array<{ type?: string; text?: unknown }>)
+						.map((b) => (b?.type === "text" && typeof b.text === "string" ? b.text : ""))
+						.join("\n")
+						.trim();
+				}
+				if (!text || text.startsWith("<system-reminder>")) continue;
+				chat.push(text);
+			}
+			userChatLog = chat.slice(-10);
+		} catch {
+			// capture is best-effort — never breaks the nudge machinery
+		}
 		// A finished list gets one sweep; an unfinished one gets the stale-list
 		// nudge. Both are transient — decided per request, never persisted.
 		const signature = completionSignature(state);
@@ -1326,6 +1388,11 @@ export default function taskExtension(pi: ExtensionAPI) {
 		lastTurnTextOnly = false;
 		runLog = [];
 		runLogByCall.clear();
+		// #251: judge-evidence channels reset with the run log (restart = fresh evidence)
+		userDecisionLog = [];
+		userChatLog = [];
+		fileDigestLog = [];
+		pendingAskIds = new Set();
 
 		// v1.4.28 control bridge: user-only actions (unpark / strict) from the Paseo
 		// panel. Only the main chat watches (like snip) — worker sessions have no file.

@@ -55,6 +55,15 @@ export interface JudgePacketInput {
 	/** v1.4.76: the FULL run log (pre-slice) so PATTERN HISTORY can report
 	 * matching runs the cap cut out. When omitted, no history section. */
 	fullLog?: LogSliceEntry[];
+	/** #238/#251 (v1.4.139): USER DECISIONS — every ask_user_question
+	 * toolResult this session. The user's actual selections are EVIDENCE,
+	 * not claims; the judge weighs them above the worker's narration. */
+	userDecisions?: string[];
+	/** #238/#251: last 10 USER chat messages (machine injections filtered by
+	 * the producer — no <system-reminder> wrappers, no custom entries). */
+	userChat?: string[];
+	/** #238/#251: read-tool digests (edit/write already ride the LOG section). */
+	fileDigests?: string[];
 }
 
 export const MAX_LOG_SLICE = 20;
@@ -131,16 +140,17 @@ function fmtTs(ts: number | undefined): string {
 	return ts === undefined ? "" : ` ${new Date(ts).toISOString().slice(11, 19)}Z`;
 }
 
-/** Render the TAIL of an output: verdict lines of suites/logs live at the
- * end ("0 fail", "ALL 14 EXTENSIONS LOAD CLEAN", exit codes). The old
- * head-cut hid them behind the first 3 lines and judges ruled "truncated /
- * cannot confirm" (2026-09-15 incident, same shape as the v1.4.74 loop-guard
- * head-window false kill). */
-function renderTail(output: string): string {
+/** Render an output for the judge packet: 2KB head+tail window (#251).
+ *  Suite verdicts live at the END, error context at the top — the old
+ *  3-line/300-char tail hid both behind the cut (34% of holds traced to
+ *  channel-evidence blindness, #238 RCA). */
+function renderOut(output: string): string {
 	if (!output) return "";
-	const lines = output.split("\n").filter((l) => l.trim() !== "");
-	if (lines.length === 0) return "";
-	return lines.slice(-3).join(" ⏎ ").slice(-300);
+	const CAP = 2048;
+	if (output.length <= CAP) return output;
+	const head = output.slice(0, 800);
+	const tail = output.slice(CAP - 1200);
+	return `${head}\n…[cut ${output.length - CAP} chars]…\n${tail}`;
 }
 
 /** Build the judge packet: instructions + task + probes + evidence + numbered log. */
@@ -154,6 +164,10 @@ export function buildJudgePacket(input: JudgePacketInput, log: LogSliceEntry[]):
 		"- fail: clear signs the work is NOT done, or the evidence is fabricated",
 		"- insufficient_evidence: you cannot tell from this material",
 		"cited_log_ids reference LOG lines below (0-based) and MUST exist; fabricated ids invalidate your verdict.",
+		"EVIDENCE HIERARCHY (#251): USER DECISIONS and USER CHAT are the user's actual words — the strongest " +
+			"evidence; raw tool outputs (LOG, FILE DIGESTS) are ground truth; the worker's EVIDENCE text is a CLAIM. " +
+			"When the done-check depends on a user decision or reply, verify it against those sections — never against " +
+			"the worker's paraphrase of what the user said.",
 	);
 	lines.push("## TASK");
 	lines.push(`subject: ${input.subject}`);
@@ -182,11 +196,25 @@ export function buildJudgePacket(input: JudgePacketInput, log: LogSliceEntry[]):
 	}
 	lines.push("## EVIDENCE (worker's claim — not proof)");
 	lines.push(input.evidence || "(none provided)");
-	lines.push(`## LOG (${log.length} lines, NEWEST FIRST — [0] is the most recent; timestamps HH:MM:SSZ)`);
+	if (input.userDecisions !== undefined) {
+		lines.push("## USER DECISIONS (ask_user_question results — EVIDENCE, the user's actual selections)");
+		if (input.userDecisions.length === 0) lines.push("(none this session)");
+		for (const d of input.userDecisions) lines.push(`- ${d.slice(0, 400).replace(/\n/g, " ⏎ ")}`);
+	}
+	if (input.userChat !== undefined) {
+		lines.push("## USER CHAT (last user messages — EVIDENCE when the done-check depends on the user)");
+		if (input.userChat.length === 0) lines.push("(none captured)");
+		for (const c of input.userChat) lines.push(`- ${c.slice(0, 300).replace(/\n/g, " ⏎ ")}`);
+	}
+	if (input.fileDigests !== undefined && input.fileDigests.length > 0) {
+		lines.push("## FILE DIGESTS (read-tool results — ground truth)");
+		for (const d of input.fileDigests.slice(-6)) lines.push(`- ${d.slice(0, 300).replace(/\n/g, " ⏎ ")}`);
+	}
+	lines.push(`## LOG (${log.length} lines, NEWEST FIRST — [0] is the most recent; timestamps HH:MM:SSZ; outputs capped 2KB head+tail)`);
 	log.forEach((e, i) => {
 		lines.push(`[${i}]${fmtTs(e.ts)} cmd: ${e.cmd}`);
-		const tail = renderTail(e.output);
-		if (tail) lines.push(`    out(tail): ${tail}`);
+		const tail = renderOut(e.output);
+		if (tail) lines.push(`    out: ${tail}`);
 	});
 	const hist = input.fullLog ? patternHistory(input.fullLog, input.probes ?? [], log) : [];
 	if (hist.length > 0) {

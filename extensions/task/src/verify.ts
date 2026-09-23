@@ -42,6 +42,9 @@ export interface RunLogEntry {
 	cmd: string;
 	output: string;
 	ts: number;
+	/** #251: read-tool entries route to the file-digest channel on completion —
+	 *  they never stay in the probe-relevant LOG. */
+	digestOnly?: boolean;
 }
 
 export type ProbeStatus = "green" | "amber" | "red";

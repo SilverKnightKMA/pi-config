@@ -1807,3 +1807,43 @@ test("#262: proposal-decide keeps its own [task-decision] message — no duplica
 		fs.rmSync(tmp, { recursive: true, force: true });
 	}
 });
+
+// ── #251 wiring: judge-evidence channels captured from tool/context events ──
+
+test("#251 wiring: ask results, read digests and user chat ride the judge packet", async () => {
+	const tmp = fs.mkdtempSync(join(tmpdir(), "task-judge-eco-"));
+	const prevHome = process.env.HOME;
+	process.env.HOME = tmp;
+	const calls = stubJudge(JSON.stringify({ verdict: "pass", confidence: "high", reason: "user decision verified", cited_log_ids: [] }));
+	try {
+		const f = fakePi();
+		(f.ctx.sessionManager as { getSessionId: () => string }).getSessionId = () => "judge-eco";
+		taskExtension(f.pi as never);
+		await f.handlers.get("session_start")!({}, f.ctx);
+		// user answers a question (ask_user_question tool result)
+		f.handlers.get("tool_execution_start")!({ toolCallId: "q1", toolName: "ask_user_question", args: {} }, f.ctx);
+		f.handlers.get("tool_execution_end")!({ toolCallId: "q1", result: { content: [{ type: "text", text: "User selected: 1. Duyệt nguyên spec (Recommended)" }] } }, f.ctx);
+		// a read rides the digest channel, not the probe LOG
+		f.handlers.get("tool_execution_start")!({ toolCallId: "r1", toolName: "read", args: { path: "src/graph.ts" } }, f.ctx);
+		f.handlers.get("tool_execution_end")!({ toolCallId: "r1", result: { content: [{ type: "text", text: "export function updateTask…" }] } }, f.ctx);
+		fireBash(f, "b1", "bun test suite", "9 pass 0 fail");
+		// the user's chat words enter via the context event (machine injections filtered)
+		await f.handlers.get("context")!({ messages: [
+			{ role: "user", content: [{ type: "text", text: "giao nhóm 1a trước nhé" }] },
+			{ role: "assistant", content: [{ type: "text", text: "ok" }] },
+			{ role: "user", content: [{ type: "text", text: "<system-reminder>machine wrapper</system-reminder>" }] },
+		] });
+		await f.tool("task_create").execute("c1", { subject: "needs user verdict", verify: { lane: "judgment" } }, undefined, undefined, f.ctx);
+		await f.tool("task_update").execute("u1", { id: 1, status: "completed", evidence: "user approved spec" }, undefined, undefined, f.ctx);
+		const packet = calls[0]!;
+		assert.match(packet, /## USER DECISIONS[\s\S]*User selected: 1\. Duyệt nguyên spec \(Recommended\)/);
+		assert.match(packet, /## USER CHAT[\s\S]*giao nhóm 1a trước nhé/);
+		assert.doesNotMatch(packet, /machine wrapper/);
+		assert.match(packet, /## FILE DIGESTS[\s\S]*read src\/graph\.ts → export function updateTask…/);
+		assert.match(packet, /EVIDENCE HIERARCHY \(#251\)/);
+	} finally {
+		_setJudgeRunnerForTests(null);
+		if (prevHome !== undefined) process.env.HOME = prevHome;
+		fs.rmSync(tmp, { recursive: true, force: true });
+	}
+});
