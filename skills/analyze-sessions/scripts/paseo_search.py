@@ -48,13 +48,16 @@ def main() -> int:
             continue
         shown_for_agent = 0
         try:
-            lines = s.transcript.read_text(errors="replace").splitlines()
+            # stream line-by-line — constant memory (2026-09-24 #286: the old
+            # read_text().splitlines() OOM-killed on the 533MB main-session transcript)
+            fh = s.transcript.open(encoding="utf-8", errors="replace")
         except Exception:
             continue
-        for i, line in enumerate(lines):
-            m = pattern.search(line)
-            if not m:
-                continue
+        with fh:
+            for line in fh:
+                m = pattern.search(line)
+                if not m:
+                    continue
             # Skip the raw-JSON noise: only count hits inside message text values
             try:
                 entry = json.loads(line)
