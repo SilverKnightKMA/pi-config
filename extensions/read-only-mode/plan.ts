@@ -156,6 +156,23 @@ export function slugFromPlan(markdown: string): string {
 	return base || "plan";
 }
 
+/** #236: which file does THIS generation's write_plan target? Reuse only our
+ *  own draft file (active/awaiting, no completion stamp); a completed or
+ *  foreign planFile is never reused — resolve a fresh path instead. */
+export function resolvePlanFileName(state: PlanState, existing: readonly string[], slug: string): string {
+	const reusable = state.planFile && !state.completedAt && (state.mode === "active" || state.mode === "awaiting");
+	if (reusable && state.planFile) return state.planFile.split(/[\\/]/).pop()!;
+	return planFilePath(existing, slug);
+}
+
+/** #236: compute the auto-close artifact — stamped text + --COMPLETED name.
+ *  Null when the file is already closed (idempotent) or unnamed. */
+export function closePlanFilePlan(base: string, text: string, completedAt: string, planId?: string): { newName: string; newText: string } | null {
+	if (!base || base.endsWith("--COMPLETED.md")) return null;
+	const newText = `${text.replace(/\n*$/, "\n")}<!-- plan-complete: ${completedAt} ${planId ?? "-"} -->\n`;
+	return { newName: base.replace(/\.md$/, "--COMPLETED.md"), newText };
+}
+
 /** Next free plan file path given existing files (collision → -2, -3, …). */
 export function planFilePath(existing: readonly string[], slug: string, date = new Date()): string {
 	const stamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -267,7 +284,14 @@ export function applyControlAction(state: PlanState, action: PlanControlAction, 
 	switch (action) {
 		case "on":
 			if (state.mode === "inactive" || state.mode === "complete") {
-				return { state: { ...state, mode: "active" }, note: "Plan mode ON — model writes the plan via write_plan." };
+				// #236: NEW GENERATION — never inherit the previous plan's file/id/
+				// completion (live incident: 2026-09-14 plan file overwritten 09-22).
+				// The old generation's file stays closed in the library; write_plan
+				// will create a fresh one for this generation.
+				return {
+					state: { ...state, mode: "active", planFile: undefined, planId: undefined, completedAt: undefined, steps: [] },
+					note: "Plan mode ON — new plan; a fresh file will be created on write_plan (the old plan's file stays closed in the library).",
+				};
 			}
 			return { state, note: `Plan mode already ${state.mode}.` };
 		case "approve":

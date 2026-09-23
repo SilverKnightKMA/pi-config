@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
+	closePlanFilePlan,
+	resolvePlanFileName,
 	actionableSteps,
 	applyControlAction,
 	emptyPlan,
@@ -408,5 +410,51 @@ describe("actionableSteps — unresolved vs wake-eligible split (#80)", () => {
 
 	test("independent pending stays actionable — flat plans (tonight's 12-step shape) keep flowing", () => {
 		expect(actionableSteps([{ id: 1, status: "pending" }, { id: 2, status: "pending" }] as never)).toHaveLength(2);
+	});
+});
+
+// ── #236 plan file lifecycle: one generation, one file ──
+
+describe("#236 plan file lifecycle (generation identity)", () => {
+	test("on-from-complete resets the generation — file/id/completion never inherited", () => {
+		const done = { ...emptyPlan(), mode: "complete" as const, planFile: ".pi/plans/2026-09-14-old.md", planId: "p-old", completedAt: "2026-09-15T00:00:00.000Z", steps: [
+			{ index: 1, text: "a", done: true },
+		] };
+		const r = applyControlAction(done, "on");
+		expect(r.state.mode).toBe("active");
+		expect(r.state.planFile).toBeUndefined();
+		expect(r.state.planId).toBeUndefined();
+		expect(r.state.completedAt).toBeUndefined();
+		expect(r.state.steps).toEqual([]);
+		expect(r.note).toContain("fresh file");
+	});
+
+	test("on-from-inactive also strips an orphan planFile", () => {
+		const orphan = { ...emptyPlan(), mode: "inactive" as const, planFile: ".pi/plans/orphan.md", steps: [] };
+		const r = applyControlAction(orphan, "on");
+		expect(r.state.mode).toBe("active");
+		expect(r.state.planFile).toBeUndefined();
+		expect(r.state.steps).toEqual([]);
+	});
+
+	test("write_plan reuses ONLY our generation's draft — never a completed file", () => {
+		const stale = { ...emptyPlan(), mode: "active" as const, planFile: ".pi/plans/2026-09-14-old.md", completedAt: "2026-09-15T00:00:00.000Z" };
+		const fresh = resolvePlanFileName(stale, ["2026-09-22-x.md"], "my-plan");
+		expect(fresh).not.toBe("2026-09-14-old.md");
+		expect(fresh).toMatch(/^2026-09-22-my-plan(-\d+)?\.md$|^2\d{3}-\d{2}-\d{2}-my-plan\.md$/);
+	});
+
+	test("draft revision keeps writing the SAME file (no suffix churn)", () => {
+		const draft = { ...emptyPlan(), mode: "active" as const, planFile: ".pi/plans/2026-09-22-my-plan.md" };
+		const again = resolvePlanFileName(draft, ["2026-09-22-my-plan.md"], "my-plan");
+		expect(again).toBe("2026-09-22-my-plan.md");
+	});
+
+	test("closePlanFilePlan stamps the marker and derives the --COMPLETED name (idempotent)", () => {
+		const r = closePlanFilePlan("2026-09-22-my-plan.md", "# Plan\n\n1. step\n", "2026-09-23T01:02:03.000Z", "p-42");
+		expect(r).not.toBeNull();
+		expect(r!.newName).toBe("2026-09-22-my-plan--COMPLETED.md");
+		expect(r!.newText.endsWith("<!-- plan-complete: 2026-09-23T01:02:03.000Z p-42 -->\n")).toBe(true);
+		expect(closePlanFilePlan(r!.newName, "x", "2026-09-23T01:02:03.000Z")).toBeNull();
 	});
 });

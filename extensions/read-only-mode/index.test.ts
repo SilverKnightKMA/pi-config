@@ -251,3 +251,34 @@ describe("plan auto-close wiring (#62)", () => {
 		expect(f2.state.tools.some((t: { name: string }) => t.name === "plan_step_done")).toBe(true);
 	});
 });
+
+// ── #236 plan file lifecycle: closePlanFileOnDisk end-to-end ──
+
+describe("#236 closePlanFileOnDisk (stamp + --COMPLETED rename)", () => {
+	test("renames, stamps the marker, frees the original name; idempotent", async () => {
+		const { closePlanFileOnDisk } = await import("./index");
+		const { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } = await import("node:fs");
+		const { tmpdir } = await import("node:os");
+		const { join } = await import("node:path");
+		const dir = join(tmpdir(), `plan-close-${Date.now()}-${Math.floor(Math.random() * 1e6)}`);
+		mkdirSync(dir, { recursive: true });
+		try {
+			const orig = join(dir, "2026-09-22-my-plan.md");
+			writeFileSync(orig, "# Plan\n\n1. step\n", "utf8");
+			const newName = closePlanFileOnDisk(orig, "2026-09-23T01:02:03.000Z", "p-42");
+			if (!newName) throw new Error("close returned null");
+			expect(newName).toBe("2026-09-22-my-plan--COMPLETED.md");
+			expect(existsSync(orig)).toBe(false); // "file cũ phải đóng lại" — original name freed
+			const closed = join(dir, newName);
+			expect(existsSync(closed)).toBe(true);
+			const text = readFileSync(closed, "utf8");
+			expect(text).toContain("<!-- plan-complete: 2026-09-23T01:02:03.000Z p-42 -->");
+			// second close → no-op (already closed)
+			expect(closePlanFileOnDisk(closed, "2026-09-23T01:02:03.000Z")).toBeNull();
+			// missing file → null, never throws
+			expect(closePlanFileOnDisk(join(dir, "nope.md"), "t")).toBeNull();
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});

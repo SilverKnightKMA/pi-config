@@ -43,7 +43,7 @@
  * - NOT ported: 3-tier bash classifier (plan mode blocks bash outright),
  *   ctrl+alt+p, --plan flag, HTML export, ctx.newSession fresh-handoff
  */
-import { existsSync, mkdirSync, readFileSync, readdirSync, watch, writeFileSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, watch, writeFileSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { Type } from "@sinclair/typebox";
@@ -58,6 +58,8 @@ import {
 	parseControlPayload,
 	parseSteps,
 	planFilePath,
+	resolvePlanFileName,
+	closePlanFilePlan,
 	planStatusText,
 	planStatusPayload,
 	planToolGate,
@@ -87,6 +89,36 @@ export function getReadOnlyToolNames(pi: ExtensionAPI): string[] {
 
 function applyReadOnlyTools(pi: ExtensionAPI): void {
 	pi.setActiveTools(getReadOnlyToolNames(pi));
+}
+
+/** #236: close the plan FILE at auto-close — stamp the terminal marker and
+ *  rename <slug>.md → <slug>--COMPLETED.md (atomic tmp+rename; the original
+ *  name is freed for the next generation). Module-level so tests can drive
+ *  it without the closure; returns the new base name, or null when nothing
+ *  to close (unnamed / already closed / file missing on disk). */
+export function closePlanFileOnDisk(planFile: string | undefined, completedAt: string | undefined, planId?: string): string | null {
+	if (!planFile || !completedAt) return null;
+	const base = planFile.split(/[\\/]/).pop()!;
+	if (base.endsWith("--COMPLETED.md")) return null;
+	let text: string;
+	try {
+		text = readFileSync(planFile, "utf8");
+	} catch {
+		return null; // file missing — nothing to stamp
+	}
+	const closed = closePlanFilePlan(base, text, completedAt, planId);
+	if (!closed) return null;
+	const dir = planFile.slice(0, planFile.length - base.length);
+	const newFull = `${dir}${closed.newName}`;
+	const tmp = `${newFull}.tmp-${Date.now().toString(36)}`;
+	try {
+		writeFileSync(tmp, closed.newText, "utf8");
+		renameSync(tmp, newFull);
+		if (planFile !== newFull) rmSync(planFile, { force: true });
+	} catch {
+		return null; // fs trouble — the close stamp is best-effort, never fatal
+	}
+	return closed.newName;
 }
 
 export function restoreTools(pi: ExtensionAPI, toolsBeforeReadOnly?: string[]): string[] {
@@ -337,9 +369,15 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 					// missing file → reconcile with what we have
 				}
 			}
+			const wasComplete = plan.mode === "complete";
 			const r = reconcilePlan(plan, text);
 			if (r.changed || d.changed) {
 				plan = r.state;
+				// #236: first flip to complete → close the file artifact too
+				if (!wasComplete && plan.mode === "complete") {
+					const closed = closePlanFileOnDisk(plan.planFile, plan.completedAt, plan.planId);
+					if (closed && plan.planFile) plan.planFile = `${plan.planFile.slice(0, plan.planFile.length - plan.planFile.split(/[\\/]/).pop()!.length)}${closed}`;
+				}
 				persistPlan();
 				return;
 			}
@@ -704,7 +742,9 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 			try {
 				mkdirSync(plansDir(), { recursive: true });
 				const existing = existsSync(plansDir()) ? readdirSync(plansDir()).filter((f) => f.endsWith(".md")) : [];
-				const name = plan.planFile ? plan.planFile.split(/[\\/]/).pop()! : planFilePath(existing, slugFromPlan(params.content));
+					// #236: reuse only OUR generation's draft file — a completed or replayed-
+					// stale planFile is never reused (the old generation's file stays closed).
+					const name = resolvePlanFileName(plan, existing, slugFromPlan(params.content));
 				const full = join(plansDir(), name);
 				const tmp = `${full}.tmp-${Date.now().toString(36)}`;
 				writeFileSync(tmp, params.content, "utf8");
@@ -774,16 +814,21 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 			// v1.4.60 (#62, user 2026-09-14): last open step done → AUTO-CLOSE — the plan no longer
 			// hangs in tracking forever; /plan off is now just a manual cleanup command.
 			let closedNow = false;
+			let closedFile: string | null = null;
 			if (r.open === 0 && plan.mode === "tracking") {
 				plan.mode = "complete";
 				plan.completedAt = new Date().toISOString();
 				closedNow = true;
+				// #236: close the file — stamp + --COMPLETED rename; the reference now
+				// points at the closed artifact and the original name is freed.
+				closedFile = closePlanFileOnDisk(plan.planFile, plan.completedAt, plan.planId);
+				if (closedFile && plan.planFile) plan.planFile = `${plan.planFile.slice(0, plan.planFile.length - plan.planFile.split(/[\\/]/).pop()!.length)}${closedFile}`;
 			}
 			persistPlan();
 			const openList = plan.steps.filter((s) => !s.done).map((s) => `#${s.index} ${s.text}`).join("\n");
 			if (closedNow) {
 				return {
-					content: [{ type: "text" as const, text: `Step #${params.index} done — ${r.total}/${r.total} complete.\n🎉 PLAN COMPLETE — auto-closed ${plan.completedAt}; tracking ends, the plan file stays in the library (${plan.planFile ?? ".pi/plans/"}). No need for /plan off.` }],
+					content: [{ type: "text" as const, text: `Step #${params.index} done — ${r.total}/${r.total} complete.\n🎉 PLAN COMPLETE — auto-closed ${plan.completedAt}; tracking ends, the plan file is closed in the library (${closedFile ?? plan.planFile ?? ".pi/plans/"}). No need for /plan off.` }],
 					details: { open: 0, total: r.total, complete: true },
 				};
 			}
