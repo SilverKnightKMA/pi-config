@@ -232,6 +232,40 @@ describe("graph: descAmend accounting (v1.4.38)", () => {
 	});
 });
 
+describe("#272 proposal-decide dId — cancel-proposal KEEP flips status (v1.4.141)", () => {
+	function stateWithCancelProposal(blocked = false): TaskState {
+		let st = createTask(EMPTY_STATE, "t", "brief", [], 1000).state!;
+		if (blocked) {
+			st = createTask(st, "blocker", "b", [], 1000).state!;
+			st.tasks[0] = { ...st.tasks[0], blockedBy: [2] };
+		}
+		const t = st.tasks[0];
+		st.tasks[0] = { ...t, status: "proposed_cancel" as const };
+		return st;
+	}
+	const hookOk = (dId: string, decision: "approved" | "rejected") => ({ taskId: 1, kind: "cancel-proposal" });
+	test("KEEP (rejected): proposed_cancel task flips back in_progress (unblocked)", () => {
+		const st = stateWithCancelProposal(false);
+		const r = applyControlAction(st, { v: 1, action: "proposal-decide", id: 1, dId: "d-1", decision: "rejected" }, 3000, { decideEntry: hookOk });
+		expect(r.applied).toBe(true);
+		expect(r.state.tasks[0].status).toBe("in_progress");
+		expect(r.note).toContain("#1 kept");
+	});
+	test("KEEP (rejected) with open blocker: flips to pending, not in_progress", () => {
+		const st = stateWithCancelProposal(true);
+		const r = applyControlAction(st, { v: 1, action: "proposal-decide", id: 1, dId: "d-1", decision: "rejected" }, 3000, { decideEntry: hookOk });
+		expect(r.applied).toBe(true);
+		expect(r.state.tasks[0].status).toBe("pending");
+		expect(r.note).toContain("still blocked");
+	});
+	test("amend kind rejected: status untouched (no flip outside cancel-proposal)", () => {
+		const st = stateWithCancelProposal(false);
+		const r = applyControlAction(st, { v: 1, action: "proposal-decide", id: 1, dId: "d-2", decision: "rejected" }, 3000, { decideEntry: () => ({ taskId: 1, kind: "amend" }) });
+		expect(r.applied).toBe(true);
+		expect(r.state.tasks[0].status).toBe("proposed_cancel"); // unchanged
+	});
+});
+
 describe("proposal-decide (v1.4.53 — approval board when amend is blocked)", () => {
 	function stateWithProposal(strict = false): TaskState {
 		let st = createTask(EMPTY_STATE, "t", "original brief", [], 1000, strict ? { lane: "state", strict: true, probes: [{ pattern: "ls", expect: "x" }] } : undefined).state!;

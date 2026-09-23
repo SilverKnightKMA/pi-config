@@ -195,6 +195,20 @@ export function applyControlAction(state: TaskState, payload: TaskControlFile, n
 		if (payload.dId) {
 			const decided = hooks?.decideEntry?.(payload.dId, payload.decision === "approved" ? "approved" : "rejected") ?? null;
 			if (!decided) return { state, note: `no pending decision ${payload.dId}`, applied: false };
+			// v1.4.141 #272: KEEP (rejected) on a cancel-proposal must un-stick the
+			// task from proposed_cancel limbo — revert reopen-style (blocked-aware).
+			// Approved stays the button-verb design: the CANCEL TASK button itself
+			// sends action 'cancel', so this branch never cancels.
+			if (decided.kind === "cancel-proposal" && payload.decision === "rejected") {
+				const task = state.tasks.find((t) => t.id === decided.taskId);
+				if (task && task.status === "proposed_cancel") {
+					const index = new Map(state.tasks.map((t) => [t.id, t] as const));
+					const blocked = openBlockers(task, index).length > 0;
+					const flip = updateTask(state, decided.taskId, { status: blocked ? "pending" : "in_progress" }, now);
+					if (flip.error) return { state, note: flip.error, applied: false };
+					return { state: flip.state, note: `decision ${payload.dId} rejected — card closed, #${decided.taskId} kept (${blocked ? "pending — still blocked" : "in_progress"})`, applied: true };
+				}
+			}
 			return { state, note: `decision ${payload.dId} ${payload.decision} — card closed (task #${decided.taskId}, ${decided.kind})`, applied: true };
 		}
 		// v1.4.53: the user approves/rejects a done-check amendment proposal on the panel.
