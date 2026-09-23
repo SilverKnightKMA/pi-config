@@ -316,16 +316,13 @@ describe("plan task bridge (#47 Phase B)", () => {
 	});
 });
 
-describe("planToolGate — mode entry is user-only (v1.4.70)", () => {
-	test("enter_plan_mode is NEVER a model tool — blocked in every mode", () => {
+describe("planToolGate — mode entry is user-only (v1.4.70; #248 v2: tool removed entirely)", () => {
+	test("#248 v2: enter_plan_mode is no longer a registered tool — no gate branch, unknown-tool failure instead", () => {
+		// v1.4.138: the registration AND its gate branch are gone; a stray call
+		// fails as an unknown tool at the harness level (1 turn, same as today).
 		for (const m of ["inactive", "active", "awaiting", "tracking", "complete"] as const) {
 			const g = planToolGate(m, "enter_plan_mode");
-			expect(g.allowed).toBe(false);
-		}
-		const g = planToolGate("inactive", "enter_plan_mode");
-		if (!g.allowed) {
-			expect(g.door).toContain("/plan on");
-			expect(g.next).toContain("ask the user");
+			expect(g.allowed).toBe(true); // not the gate's business anymore
 		}
 	});
 

@@ -282,3 +282,24 @@ describe("#236 closePlanFileOnDisk (stamp + --COMPLETED rename)", () => {
 		}
 	});
 });
+
+// ── #248 v2: enter_plan_mode removed from the model toolset ──
+
+describe("#248 v2: enter_plan_mode removal + write_plan guidance", () => {
+	test("extension registers NO enter_plan_mode tool (the 7 wasted-call door is gone)", async () => {
+		const { pi, state } = fakePi(["read", "bash", "edit", "write"]);
+		readOnlyModeExtension(pi as never);
+		const names = state.tools.map((t: any) => t.name);
+		expect(names).not.toContain("enter_plan_mode");
+		expect(names).toContain("write_plan");
+		expect(names).toContain("exit_plan_mode");
+	});
+
+	test("write_plan description carries the user-initiated guidance", async () => {
+		const { pi, state } = fakePi(["read", "bash", "edit", "write"]);
+		readOnlyModeExtension(pi as never);
+		const wp = state.tools.find((t: any) => t.name === "write_plan");
+		expect(wp.description).toContain("user-initiated");
+		expect(wp.description).toContain("ask the user to enable it (/plan on)");
+	});
+});

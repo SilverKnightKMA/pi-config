@@ -80,7 +80,7 @@ export const PLAN_COMMAND_NAME = "plan";
 export const READ_ONLY_TOOL_NAMES = ["read", "grep", "find", "ls"] as const;
 
 /** Plan-mode additions to the read-only core (all registered by this ext). */
-export const PLAN_TOOL_NAMES = ["write_plan", "exit_plan_mode", "enter_plan_mode", "plan_step_done"] as const;
+export const PLAN_TOOL_NAMES = ["write_plan", "exit_plan_mode", "plan_step_done"] as const; // #248 v2: enter_plan_mode REMOVED — entry is user-only (/plan on), the tool invited 7 wasted calls
 
 export function getReadOnlyToolNames(pi: ExtensionAPI): string[] {
 	const allToolNames = new Set(pi.getAllTools().map((tool) => tool.name));
@@ -692,8 +692,6 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 
 	// ── Plan tools ────────────────────────────────────────────────────────
 
-	const EnterParams = Type.Object({});
-	type EnterDetails = { mode?: string };
 	const WritePlanParams = Type.Object({
 		content: Type.String({ description: "Complete plan markdown. First `# heading` names the plan; top-level list items become trackable steps." }),
 	});
@@ -706,34 +704,12 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 	});
 	type StepDetails = { open?: number; total?: number };
 
-	pi.registerTool<typeof EnterParams, EnterDetails>({
-		name: "enter_plan_mode",
-		label: "enter_plan_mode",
-		description:
-			"Enter plan mode: read-only exploration + write_plan for the plan file, nothing else. Plan first when the task is risky or the user asks for a plan. Exiting is user-only — exit_plan_mode submits the plan for approval.",
-		promptSnippet: "Call enter_plan_mode before non-trivial implementation when a plan adds value; the user approves before anything executes.",
-		parameters: EnterParams,
-		async execute() {
-			if (planActive()) {
-				return { content: [{ type: "text" as const, text: `Plan mode already ${plan.mode}.` }], details: {} };
-			}
-			plan.mode = "active";
-			saveThinking();
-			toolsBeforePlan = pi.getActiveTools();
-			applyPlanTools(pi);
-			persistPlan();
-			return {
-				content: [{ type: "text" as const, text: "Plan mode ON. Explore with read/grep/find/ls, then author the plan with write_plan (steps = top-level numbered/bulleted lines, max 40). When the plan is ready, call exit_plan_mode — the USER approves it; you cannot approve your own plan." }],
-				details: { mode: plan.mode },
-			};
-		},
-	});
 
 	pi.registerTool<typeof WritePlanParams, WriteDetails>({
 		name: "write_plan",
 		label: "write_plan",
 		description:
-			"Write the full plan markdown (plan mode only). The extension writes .pi/plans/YYYY-MM-DD-<slug>.md — the ONLY write path in plan mode. Re-writes replace the plan; steps are top-level numbered/bulleted lines (≤40, ≤200 chars). Optional \"(after N[,M])\" marker at the END of a step line declares a REAL dependency (backward refs only) — the bridge wires it to task blockedBy so the wake driver and task_list skip not-ready steps; never forced, keep independent steps flat.",
+			"Write the full plan markdown (plan mode only). The extension writes .pi/plans/YYYY-MM-DD-<slug>.md — the ONLY write path in plan mode. Re-writes replace the plan; steps are top-level numbered/bulleted lines (≤40, ≤200 chars). Optional \"(after N[,M])\" marker at the END of a step line declares a REAL dependency (backward refs only) — the bridge wires it to task blockedBy so the wake driver and task_list skip not-ready steps; never forced, keep independent steps flat. Plan mode is user-initiated — you cannot enter it yourself; if a risky task warrants a plan, ask the user to enable it (/plan on) and stay read-only until then.",
 		parameters: WritePlanParams,
 		async execute(_id, params) {
 			if (plan.mode !== "active") {

@@ -36,23 +36,8 @@ export type PlanToolGate =
 	| { allowed: false; what: string; why: string; door: string; next: string };
 
 export function planToolGate(mode: PlanMode, tool: string): PlanToolGate {
-	if (tool === "enter_plan_mode") {
-		return mode === "inactive"
-			? {
-					allowed: false,
-					what: `tool "enter_plan_mode" is blocked`,
-					why: "plan mode entry is user-only — the bot never opens the mode itself",
-					door: "/plan on (user)",
-					next: "present the plan outline in chat and ask the user to run /plan on; once the mode is active, write_plan becomes available",
-				}
-			: {
-					allowed: false,
-					what: `tool "enter_plan_mode" is blocked`,
-					why: `plan mode is already ${mode} — entry happened through the user door`,
-					door: "/plan on (user)",
-					next: mode === "active" || mode === "awaiting" ? "use write_plan to draft, exit_plan_mode to submit for approval" : `the plan is ${mode}; /plan off (user) ends it`,
-				};
-	}
+	// (#248 v2): enter_plan_mode is no longer a registered tool at all — its
+	// gate branch is gone with it; a stray call now fails as an unknown tool.
 	if (tool === "write_plan") {
 		if (mode === "active" || mode === "awaiting") return { allowed: true };
 		return mode === "inactive"
