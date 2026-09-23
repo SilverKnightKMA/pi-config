@@ -170,3 +170,16 @@ Source: four-question spike against daemon source (/opt/paseo @getpaseo/server d
 | pi-agent-memory | AGPL-3.0 + worker daemon :37777 | DROP (license) |
 
 User decision 2026-09-21 (verbatim chain in `learn/decision-2026-09-21-memory-part2.md`): **HYBRID** — build durable facts tier in-house on existing lessons-inject mechanism; model READ-ONLY (memory-guard extended to lessons.md + facts.md); 3 write paths (regex trigger / memory-curator worker proposes + engine gate / user by hand); curator usage-triggered (diff/token/session counters + 30d floor), NOT calendar; PUSH cap ~20 lines/2KB, PULL recall tool (grep backend, FTS5 swap-point); plugin panel component 7. Plan mode required (verbatim 'cái này phải dùng plan mode chứ'); plan brief `learn/plan-memory-part2-2026-09-21.md`; no build task on board (#173 cancelled per doctrine).
+
+## Landscape: user-action → running-agent notification (task reopen/panel actions) (2026-09-22, #2)
+Trigger: user reopened task #238 via panel and had to MANUALLY tell the agent ("Đã mở lại") — asked for automation eval (/skill:pi-ext-eval, mode 1).
+
+| Candidate | Mechanism | Verdict |
+|---|---|---|
+| @gamaraan/todos-tool (npm) | /todo cmd + HUD + desktop notify on completed/blocked; manual /todo edit "notifies the agent" | **BORROW concept** (notify-agent-on-user-edit) — parallel task system = duplicate of task ext; desktop notify is outbound (wrong direction) |
+| mitsuhiko/agent-stuff + Jueast/pi-agent-stuff todos.ts | TUI TodoActionMenuComponent with explicit reopen action for closed tasks | **BORROW concept** (action menu → agent-visible event); TUI-local, our surface is the Paseo panel |
+| Codex (openai/codex) | `notify` hook = outbound agent-turn-complete only; inbound = NEW MCP custom notifications → Submission::UserInput (issue #17543) | Direction confirm: inbound injection is the emerging pattern; we ALREADY have it |
+| OpenCode agent-intercom | durable inbound message injection, session wakes and continues from injected prompt | Same — we already have equivalent (api.agents.send + wake driver) |
+| Claude Code | NO native mechanism; open feature requests (#57019, #31243); 3rd-party Kanban dashboards poll task files | Nothing to copy — upstream gap acknowledged |
+
+**Gap vs our stack**: inbound injection machinery already exists (Paseo agents.send delivered [door-grant]/[child-report]/[housekeeping]; wake driver injects display:false custom entries). Missing piece is ONLY: task-control file watcher → on user verb (reopen/unpark/cancel/proposal-decide) inject self-describing `[task-notice] user reopened #238 — …` at next turn boundary (display:false, badgeable prefix). ~30-40 lines in task ext. Doctrine-safe: user philosophy = messages must be self-describing, prefix + explanation (lesson 2026-09-22). Proposal → task pair #252/#253 awaiting user.
