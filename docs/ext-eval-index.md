@@ -196,3 +196,4 @@ Trigger: user said eval results presentation was too sketchy ("/skill:harness-ev
 | pi-bench / evalset / paired-eval / weighted score | model/task-eval family | **DROP** — family mismatch; pseudo-precision |
 | @firstpick/lifecycle; pidev deep-tail | later value | **SET ASIDE** |
 Full report: `learn/harness-eval-self-eval-20260924.md`. User pick of build order → #284 (a/b/c/d).
+| harness-eval self-eval VÒNG 2 (bản mới) | 4 FIX doc (2-template conflict, pidev 3.2MB read, GITHUB_TOKEN use-site, SET ASIDE place) + 1 SET ASIDE | **#295 → P-A chờ user** |
