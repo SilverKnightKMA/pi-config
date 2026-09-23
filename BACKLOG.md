@@ -50,3 +50,10 @@ start working it) when its trigger fires. Owner: main agent + user.
 *Related parked board items that stay on the board (user decisions pending): none —
 this file only absorbs deferred/no-trigger work. Decision tasks awaiting user stay on
 the board by design.*
+
+## Moved from harness-eval SKILL.md known-gap map (2026-09-24, backlog rule #285)
+
+- [repo: pi-config] "Lessons that stop a repeat" (explicit memory) — @pify/memory evaluated, SET ASIDE. Trigger to revisit: recurring repeat-mistakes the lessons tier demonstrably fails to stop.
+- [repo: pi-config] pre-image NOTE + recovery-record undo (yolo) — old eval item #25. Trigger: next yolo-mode work.
+- [repo: pi-config] Cross-session file-lock task scope (tintinweb) — deferred with swarm part 5. Trigger: when swarm multi-agent work resumes.
+- (deleted, resolved: directed-continuation goal anchor — goal extension shipped through v1.4.80+; row was stale)
