@@ -60,6 +60,10 @@ export interface Task {
    * Typed field (NOT a description marker — the model can edit descriptions, it
    * cannot touch this): guards read it to keep the pair's existence user-owned. */
   decisionOf?: number;
+  /** #242 (v1.4.134): stamped when the task goes terminal (completed/cancelled)
+   *  — display/cost-tier metadata for task_list scope + the panel; any later
+   *  real touch (content edit or non-terminal status move) clears it. */
+  archivedAt?: string;
   /** v1.4.38: append-only diff trail of description rewrites (agent AND user),
    * capped length; the judge packet carries this so layer-2 can weigh
    * self-serving rewrites (live lesson: judge only sees the CURRENT sheet). */
@@ -98,6 +102,8 @@ export interface TaskState {
    *  reset whenever the in_progress set changes (new episode). Persisted in
    *  the task ledger (single root snapshot, last wins). */
   wake?: { rounds: number; noProgress: number; signature: string };
+  /** #242: one-time legacy terminal stamp ran (ensureLegacyArchive). */
+  legacyArchived?: boolean;
 }
 
 export const EMPTY_STATE: TaskState = { tasks: [], nextId: 1 };

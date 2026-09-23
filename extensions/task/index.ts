@@ -25,6 +25,7 @@ import { randomUUID } from "node:crypto";
 import {
 	TASK_STATE,
 	createTask,
+	ensureLegacyArchive,
 	newlyReady,
 	readyTasks,
 	replayBranch,
@@ -54,7 +55,7 @@ import {
 	type JudgeProbeView,
 } from "./src/judge.ts";
 import { ackPayload, applyControlAction, controlFilePath, parseControlPayload } from "./src/control.ts";
-import { EMPTY_STATE, DESC_AMEND_MAX, type TaskProposal, type TaskState, type TaskStatus } from "./src/types.ts";
+import { EMPTY_STATE, DESC_AMEND_MAX, type Task, type TaskProposal, type TaskState, type TaskStatus } from "./src/types.ts";
 import { activeGoal, anyGoalRunning, goalIdActive, planContinuationActive, tryConsumeLease } from "./src/goal-bridge.ts";
 import { decide, nextStreak, TASK_BUDGET, continuationOwnedByHigherKind } from "../_shared/continuation-driver.ts";
 import { pokeBridges } from "../_shared/doorbell.ts";
@@ -515,26 +516,31 @@ export default function taskExtension(pi: ExtensionAPI) {
 		);
 	}
 
+	/** One row of the board (shared by every snapshot view). #242: terminal
+	 * tasks that carry archivedAt get the archived flag in the all-scope. */
+	const taskLine = (t: Task, index: Map<number, Task>) => {
+		const blockers = openBlockers(t, index);
+		const flags = [
+			t.status,
+			blockers.length > 0 ? `blocked by ${blockers.map((b) => `#${b}`).join(",")}` : "",
+			t.evidence ? "evidence recorded" : "",
+			t.verify ? `verify:${t.verify.lane}${t.verify.probes.length > 0 ? `(${t.verify.probes.length})` : ""}${t.verify.strict ? "+strict" : ""}` : "",
+			t.audit ? `audit:${t.audit.verdict}` : "",
+			t.judgeRounds ? `judge-rounds:${t.judgeRounds}` : "",
+			t.failStreak ? `fail-streak:${t.failStreak}` : "",
+			t.status === "parked" ? `parked:${(t.appealReason ?? "awaiting user").slice(0, 60)}` : "",
+			t.status === "held" ? `HELD judge ${t.judgeRounds ?? 1}/3 — needs real evidence, do not re-declare verbatim` : "",
+			t.archivedAt ? "archived" : "",
+		]
+			.filter(Boolean)
+			.join(" · ");
+		return `#${t.id} [${flags}] ${t.subject}${t.description ? ` — ${t.description.length > 120 ? `${t.description.slice(0, 120)}…` : t.description}` : ""}`;
+	};
+
 	function snapshot(): string {
 		if (state.tasks.length === 0) return "No tasks.";
 		const index = new Map(state.tasks.map((t) => [t.id, t]));
-		const lines = state.tasks.map((t) => {
-			const blockers = openBlockers(t, index);
-			const flags = [
-				t.status,
-				blockers.length > 0 ? `blocked by ${blockers.map((b) => `#${b}`).join(",")}` : "",
-				t.evidence ? "evidence recorded" : "",
-				t.verify ? `verify:${t.verify.lane}${t.verify.probes.length > 0 ? `(${t.verify.probes.length})` : ""}${t.verify.strict ? "+strict" : ""}` : "",
-				t.audit ? `audit:${t.audit.verdict}` : "",
-				t.judgeRounds ? `judge-rounds:${t.judgeRounds}` : "",
-				t.failStreak ? `fail-streak:${t.failStreak}` : "",
-				t.status === "parked" ? `parked:${(t.appealReason ?? "awaiting user").slice(0, 60)}` : "",
-				t.status === "held" ? `HELD judge ${t.judgeRounds ?? 1}/3 — needs real evidence, do not re-declare verbatim` : "",
-			]
-				.filter(Boolean)
-				.join(" · ");
-			return `#${t.id} [${flags}] ${t.subject}${t.description ? ` — ${t.description}` : ""}`;
-		});
+		const lines = state.tasks.map((t) => taskLine(t, index));
 		const ready = readyTasks(state);
 		if (ready.length > 0) {
 			lines.push(`Ready to start: ${ready.map((t) => `#${t.id}`).join(", ")}`);
@@ -542,6 +548,49 @@ export default function taskExtension(pi: ExtensionAPI) {
 		return lines.join("\n");
 	}
 
+	// #242 (v1.4.134): the open scope — task_list's DEFAULT view. Terminal
+	// tasks live behind scope:"all"; on this session's real board the cut is
+	// >90% of printed text (measured 5.9MB over 55 task_list calls / 14d).
+	const OPEN_STATUSES = new Set(["pending", "in_progress", "held", "parked"]);
+	const openTasks = () => state.tasks.filter((t) => OPEN_STATUSES.has(t.status));
+
+	function snapshotOpen(): string {
+		const open = openTasks();
+		if (open.length === 0) {
+			const archived = state.tasks.filter((t) => t.archivedAt).length;
+			return `No open tasks (${archived} archived terminal — task_list {scope:"all"}).`;
+		}
+		const index = new Map(state.tasks.map((t) => [t.id, t]));
+		const lines = open.map((t) => taskLine(t, index));
+		const ready = readyTasks(state);
+		if (ready.length > 0) {
+			lines.push(`Ready to start: ${ready.map((t) => `#${t.id}`).join(", ")}`);
+		}
+		return lines.join("\n");
+	}
+
+	/** #242 deep view: ONE task, full sheet — description (cut 400), flags,
+	 * evidence, verify/audit/judge, blockers, open dependents. */
+	function snapshotTask(t: Task): string {
+		const index = new Map(state.tasks.map((x) => [x.id, x]));
+		const blockers = openBlockers(t, index);
+		const dependents = t.blocks.filter((id) => OPEN_STATUSES.has(index.get(id)?.status ?? ""));
+		return [
+			`#${t.id} ${t.subject}`,
+			`status: ${t.status}${t.archivedAt ? ` · archived ${t.archivedAt}` : ""}`,
+			t.description ? `description: ${t.description.length > 400 ? `${t.description.slice(0, 400)}…` : t.description}` : "",
+			blockers.length > 0 ? `blocked by: ${blockers.map((b) => `#${b}`).join(", ")}` : "",
+			dependents.length > 0 ? `blocks (open): ${dependents.map((d) => `#${d}`).join(", ")}` : "",
+			t.evidence ? `evidence: ${t.evidence}` : "",
+			t.verify ? `verify: lane=${t.verify.lane}${t.verify.probes.length > 0 ? ` probes=${t.verify.probes.length}` : ""}${t.verify.strict ? " STRICT" : ""}` : "",
+			t.audit ? `audit: ${t.audit.verdict} — ${t.audit.summary.replace(/\n/g, "; ")}` : "",
+			t.judgeRounds || t.failStreak ? `judge: rounds=${t.judgeRounds ?? 0} fail-streak=${t.failStreak ?? 0}` : "",
+			t.goalId ? `goal: ${t.goalId}` : "",
+			t.planId ? `plan: ${t.planId}${t.stepIndex ? ` step ${t.stepIndex}` : ""}` : "",
+		]
+			.filter(Boolean)
+			.join("\n");
+	}
 	// ── Tools ────────────────────────────────────────────────────────────
 
 	// details.tasks rides every tool result (model-invisible metadata) so the
@@ -551,6 +600,16 @@ export default function taskExtension(pi: ExtensionAPI) {
 	// collapsed behind the card's expander (user request 2026-09-09).
 	const detailsTasks = (s: TaskState) =>
 		s.tasks.map((t) => ({ id: t.id, subject: t.subject, status: t.status }));
+	// #242 (v1.4.134): create/update details carry ONLY the affected task(s) —
+	// the panel card used to re-render the whole board on every touch (P5:
+	// "update 1 task in ra tất cả"); the workspace panel itself reads the
+	// status-file projection, which still updates on every change.
+	const changedTasks = (prev: TaskState, next: TaskState) => {
+		const before = new Map(prev.tasks.map((t) => [t.id, `${t.status}|${t.subject}`]));
+		return next.tasks
+			.filter((t) => before.get(t.id) !== `${t.status}|${t.subject}`)
+			.map((t) => ({ id: t.id, subject: t.subject, status: t.status }));
+	};
 	const changeFor = (id: number, from: string | null, to: string) => {
 		const t = state.tasks.find((x) => x.id === id);
 		return t ? [{ id, subject: t.subject, from, to }] : [];
@@ -698,7 +757,8 @@ export default function taskExtension(pi: ExtensionAPI) {
 				details: {
 					id: result.task!.id,
 					warnings: result.warnings,
-					tasks: detailsTasks(finalState),
+					// #242: affected-only — the card shows the born task, not the board.
+					tasks: [{ id: result.task!.id, subject: result.task!.subject, status: result.task!.status }],
 					changes: changeFor(result.task!.id, null, result.task!.status),
 				},
 			};
@@ -1015,6 +1075,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 
 			const prevTask = state.tasks.find((t) => t.id === params.id);
 			const prevStatus = prevTask?.status ?? null;
+			const prevStateForDiff = state; // #242: diff base for affected-only details
 			const result = updateTask(state, params.id, patch, Date.now());
 			if (result.error) throw new Error(result.error);
 			// v1.4.87 #101 A→B decision pair; v1.4.88 hardening: the cascade PARKS
@@ -1098,7 +1159,11 @@ export default function taskExtension(pi: ExtensionAPI) {
 					status: result.task!.status,
 					warnings: result.warnings,
 					ready: unblocked.map((t) => t.id),
-					tasks: detailsTasks(cascadeState),
+					// #242: affected-only (the updated task + cascade flips), not the board.
+					tasks: (() => {
+						const changed = changedTasks(prevStateForDiff, cascadeState);
+						return changed.length > 0 ? changed : changeFor(result.task!.id, prevStatus, result.task!.status);
+					})(),
 					changes: changeFor(result.task!.id, prevStatus, result.task!.status),
 					// #45: field-level diff — "pending => pending" said nothing about
 					// WHAT changed (user 2026-09-13). Panel card renders these lines.
@@ -1126,11 +1191,39 @@ export default function taskExtension(pi: ExtensionAPI) {
 		promptSnippet: "The task list, with what is ready to start",
 		description:
 			"The current task list with statuses, open blockers, and which tasks are ready to start " +
-			"(no open blockers) — ready tasks are safe to parallelize.",
-		parameters: Type.Object({}),
-		async execute() {
+			"(no open blockers) — ready tasks are safe to parallelize. Prints only what you ask for: " +
+			'default scope "open" shows pending/in_progress/held/parked (terminal history stays behind ' +
+			'scope:"all", archived-flagged; the empty-board line says how many); scope "id" deep-views ONE ' +
+			"task (full flags, evidence, judge state, blockers, dependents).",
+		parameters: Type.Object({
+			scope: Type.Optional(
+				Type.Union([Type.Literal("open"), Type.Literal("all"), Type.Literal("id")], {
+					description: 'open (default) = live board; all = include terminal/archived history; id = deep-view one task (pass id)',
+				}),
+			),
+			id: Type.Optional(Type.Number({ description: "Task id for the scope:'id' deep view" })),
+		}),
+		async execute(_sid, params: { scope?: "open" | "all" | "id"; id?: number }) {
 			turnsSinceTaskTool = 0;
-			return { content: [{ type: "text", text: snapshot() }], details: { count: state.tasks.length, tasks: detailsTasks(state) } };
+			if ((params.scope ?? "open") === "id") {
+				const t = state.tasks.find((x) => x.id === params.id);
+				if (!t) return { content: [{ type: "text", text: `no task #${params.id}` }], details: { count: 0, total: state.tasks.length, tasks: [] } };
+				return {
+					content: [{ type: "text", text: snapshotTask(t) }],
+					details: { count: 1, total: state.tasks.length, tasks: [{ id: t.id, subject: t.subject, status: t.status }] },
+				};
+			}
+			if (params.scope === "all") {
+				return {
+					content: [{ type: "text", text: snapshot() }],
+				details: { count: state.tasks.length, total: state.tasks.length, tasks: detailsTasks(state) },
+				};
+			}
+			const open = openTasks();
+			return {
+				content: [{ type: "text", text: snapshotOpen() }],
+				details: { count: open.length, total: state.tasks.length, tasks: open.map((t) => ({ id: t.id, subject: t.subject, status: t.status })) },
+			};
 		},
 	});
 
@@ -1173,6 +1266,12 @@ export default function taskExtension(pi: ExtensionAPI) {
 
 	pi.on("session_start", async (_event, ctx) => {
 		state = replayBranch(ctx.sessionManager.getBranch() as never);
+		// #242: one-time legacy archive stamp for pre-v1.4.134 terminal tasks.
+		const legacy = ensureLegacyArchive(state, Date.now());
+		if (legacy.changed) {
+			state = legacy.state;
+			pi.appendEntry(TASK_STATE, state);
+		}
 		statusSessionId = (ctx.sessionManager.getSessionId?.() as string | undefined) ?? "";
 		turnsSinceTaskTool = 0;
 		lastTurnTextOnly = false;
@@ -1267,6 +1366,12 @@ export default function taskExtension(pi: ExtensionAPI) {
 
 	pi.on("session_tree", async (_event, ctx) => {
 		state = replayBranch(ctx.sessionManager.getBranch() as never);
+		// #242: same legacy stamp on branch re-root (guarded by state.legacyArchived).
+		const legacyTree = ensureLegacyArchive(state, Date.now());
+		if (legacyTree.changed) {
+			state = legacyTree.state;
+			pi.appendEntry(TASK_STATE, state);
+		}
 		projectStatus();
 		renderWidget(ctx);
 	});
@@ -1286,7 +1391,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 	pi.registerCommand("tasks", {
 		description: "Show the session task list (statuses, blockers, ready set)",
 		handler: async (_args, ctx) => {
-			if (ctx.hasUI) ctx.ui.notify(snapshot(), "info");
+			if (ctx.hasUI) ctx.ui.notify(snapshotOpen(), "info");
 		},
 	});
 }

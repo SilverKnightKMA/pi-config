@@ -385,7 +385,8 @@ test("wiring: evidence gate surfaces through task_update execute", async () => {
 		/requires evidence/,
 	);
 	await f.tool("task_update").execute("u2", { id: 1, status: "completed", evidence: "bun test green" }, undefined, undefined, f.ctx);
-	const list = (await f.tool("task_list").execute("l1", {}, undefined, undefined, f.ctx)) as {
+	// #242: terminal tasks live behind scope:"all" (archived-flagged)
+	const list = (await f.tool("task_list").execute("l1", { scope: "all" }, undefined, undefined, f.ctx)) as {
 		content: { text: string }[];
 	};
 	assert.match(list.content[0]!.text, /completed · evidence recorded/);
@@ -566,7 +567,7 @@ test("writeTaskStatus sweeps stale tmps of its own target", async () => {
 	}
 });
 
-test("wiring: tool results carry details.tasks snapshot for the Paseo transformer", async () => {
+test("wiring: details.tasks carries ONLY the affected task(s) — #242 output economy", async () => {
 	const f = fakePi();
 	taskExtension(f.pi as never);
 	await f.handlers.get("session_start")!({}, f.ctx);
@@ -574,17 +575,22 @@ test("wiring: tool results carry details.tasks snapshot for the Paseo transforme
 	const created = await f.tool("task_create").execute("c2", { subject: "beta", blockedBy: [1] }, undefined, undefined, f.ctx);
 	type Details = { tasks: { id: number; subject: string; status: string }[] };
 	const createdDetails = (created as { details: Details }).details;
-	assert.equal(createdDetails.tasks.length, 2, "create carries full snapshot");
-	assert.equal(createdDetails.tasks[0]!.subject, "alpha");
-	assert.equal(createdDetails.tasks[1]!.status, "pending");
+	assert.equal(createdDetails.tasks.length, 1, "create carries the born task, not the board");
+	assert.equal(createdDetails.tasks[0]!.subject, "beta");
+	assert.equal(createdDetails.tasks[0]!.status, "pending");
 	const updated = await f
 		.tool("task_update")
 		.execute("u1", { id: 1, status: "completed", evidence: "tests green" }, undefined, undefined, f.ctx);
 	const updatedDetails = (updated as { details: Details }).details;
-	assert.equal(updatedDetails.tasks[0]!.status, "completed", "update carries full snapshot");
+	assert.equal(updatedDetails.tasks.length, 1, "update carries the affected task, not the board");
+	assert.equal(updatedDetails.tasks[0]!.id, 1);
+	assert.equal(updatedDetails.tasks[0]!.status, "completed");
 	const listed = await f.tool("task_list").execute("l1", {}, undefined, undefined, f.ctx);
 	const listDetails = (listed as { details: Details }).details;
-	assert.equal(listDetails.tasks.length, 2, "list carries full snapshot");
+	assert.equal(listDetails.tasks.length, 1, "default list details = open board only (beta; #1 is terminal)");
+	assert.equal(listDetails.tasks[0]!.subject, "beta");
+	const listedAll = await f.tool("task_list").execute("l2", { scope: "all" }, undefined, undefined, f.ctx);
+	assert.equal(((listedAll as { details: Details }).details).tasks.length, 2, "scope all carries the full board");
 });
 
 test("v1.4.64 (#64): an update that keeps status unchanged names WHAT changed — no more bare '#N → pending'", async () => {
@@ -683,7 +689,8 @@ test("verify wiring: green path — real command in log unlocks completion + aud
 		content: { text: string }[];
 	};
 	assert.match(out.content[0]!.text, /Audit: ✓/);
-	const list = (await f.tool("task_list").execute("l1", {}, undefined, undefined, f.ctx)) as { content: { text: string }[] };
+	// #242: the completed task + its audit live in scope:"all" (default hides terminal)
+	const list = (await f.tool("task_list").execute("l1", { scope: "all" }, undefined, undefined, f.ctx)) as { content: { text: string }[] };
 	assert.match(list.content[0]!.text, /audit:pass/);
 });
 
@@ -755,7 +762,8 @@ test("verify wiring: judgment lane completes via the judge; advisory claims ride
 			content: { text: string }[];
 		};
 		assert.match(out.content[0]!.text, /judge: PASS/);
-		const list = (await f.tool("task_list").execute("l1", {}, undefined, undefined, f.ctx)) as { content: { text: string }[] };
+		// #242: the completed task + its audit live in scope:"all" (default hides terminal)
+		const list = (await f.tool("task_list").execute("l1", { scope: "all" }, undefined, undefined, f.ctx)) as { content: { text: string }[] };
 		assert.match(list.content[0]!.text, /audit:judge-pass/);
 		assert.match(calls[0]!, /grep -c source brief.md/); // backticked claim rides the judge packet
 	} finally {
@@ -1223,13 +1231,13 @@ test("v1.4.87 decision pair: awaitsDecision creates an [AWAITING-USER-DECISION] 
 	assert.match(out.content[0]!.text, /Created #1: eval ext X/);
 	assert.match(out.content[0]!.text, /Decision pair: #2 \[AWAITING-USER-DECISION\] created blocked by #1/);
 	const tasks = out.details!.tasks!;
-	assert.equal(tasks.length, 2);
-	const b = tasks.find((t) => t.id === 2)!;
-	assert.equal(b.subject, "[AWAITING-USER-DECISION] eval ext X (#1)");
-	assert.equal(b.status, "pending");
-	// full fields (blockedBy/description/verify) live in the ledger state, not the slim details projection
-	const ledger = f.entries.at(-1)!.data as { tasks: { id: number; blockedBy: number[]; description: string; verify?: { lane: string } }[] };
+	assert.equal(tasks.length, 1, "#242: create details carry the born task only (pair is in the ledger)");
+	assert.equal(tasks[0]!.subject, "eval ext X");
+	// full fields (blockedBy/description/verify/status) live in the ledger state, not the slim details projection
+	const ledger = f.entries.at(-1)!.data as { tasks: { id: number; subject: string; status: string; blockedBy: number[]; description: string; verify?: { lane: string } }[] };
 	const lb = ledger.tasks.find((t) => t.id === 2)!;
+	assert.equal(lb.subject, "[AWAITING-USER-DECISION] eval ext X (#1)");
+	assert.equal(lb.status, "pending");
 	assert.deepEqual(lb.blockedBy, [1]);
 	assert.match(lb.description, /^decisionOf:#1\n/);
 	assert.equal(lb.verify?.lane, "judgment");
@@ -1471,4 +1479,105 @@ test("#246 regression: normal wake still fires for a live in_progress task", asy
 		if (prevHome !== undefined) process.env.HOME = prevHome;
 		fs.rmSync(tmp, { recursive: true, force: true });
 	}
+});
+
+// ── #242 task tool output economy: open-scope list, archived tier, slim details ──
+
+test("#242 M1: default task_list prints the open board; empty board names the archived count", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	await f.handlers.get("session_start")!({}, f.ctx);
+	await f.tool("task_create").execute("c1", { subject: "alpha" }, undefined, undefined, f.ctx);
+	await f.tool("task_create").execute("c2", { subject: "beta" }, undefined, undefined, f.ctx);
+	await f.tool("task_update").execute("u1", { id: 1, status: "completed", evidence: "done" }, undefined, undefined, f.ctx);
+	const open = (await f.tool("task_list").execute("l1", {}, undefined, undefined, f.ctx)) as { content: { text: string }[] };
+	assert.match(open.content[0]!.text, /#2 \[pending\]/, "open board shows the live task");
+	assert.doesNotMatch(open.content[0]!.text, /alpha/, "terminal tasks are hidden from the default scope");
+	await f.tool("task_update").execute("u2", { id: 2, status: "completed", evidence: "done too" }, undefined, undefined, f.ctx);
+	const empty = (await f.tool("task_list").execute("l2", {}, undefined, undefined, f.ctx)) as { content: { text: string }[] };
+	assert.match(empty.content[0]!.text, /^No open tasks \(2 archived terminal — task_list \{scope:"all"\}\)\.$/);
+});
+
+test("#242 M1: scope all shows history with the archived flag; scope id deep-views one task", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	await f.handlers.get("session_start")!({}, f.ctx);
+	await f.tool("task_create").execute("c1", { subject: "alpha", description: "the first one" }, undefined, undefined, f.ctx);
+	await f.tool("task_create").execute("c2", { subject: "beta", blockedBy: [1] }, undefined, undefined, f.ctx);
+	await f.tool("task_update").execute("u1", { id: 1, status: "completed", evidence: "evidence text alpha" }, undefined, undefined, f.ctx);
+	const all = (await f.tool("task_list").execute("l1", { scope: "all" }, undefined, undefined, f.ctx)) as { content: { text: string }[] };
+	assert.match(all.content[0]!.text, /#1 \[completed[^\\]*archived[^\\]*\] alpha/);
+	assert.match(all.content[0]!.text, /#2 \[pending\]/);
+	const deep = (await f.tool("task_list").execute("l2", { scope: "id", id: 1 }, undefined, undefined, f.ctx)) as { content: { text: string }[] };
+	assert.match(deep.content[0]!.text, /^#1 alpha/);
+	assert.match(deep.content[0]!.text, /status: completed · archived /);
+	assert.match(deep.content[0]!.text, /evidence: evidence text alpha/);
+	assert.match(deep.content[0]!.text, /description: the first one/);
+	const miss = (await f.tool("task_list").execute("l3", { scope: "id", id: 99 }, undefined, undefined, f.ctx)) as { content: { text: string }[] };
+	assert.match(miss.content[0]!.text, /no task #99/);
+});
+
+test("#242 M2: task_update details carry ONLY the changed task, never the full board", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	await f.handlers.get("session_start")!({}, f.ctx);
+	await f.tool("task_create").execute("c1", { subject: "alpha" }, undefined, undefined, f.ctx);
+	await f.tool("task_create").execute("c2", { subject: "beta" }, undefined, undefined, f.ctx);
+	await f.tool("task_create").execute("c3", { subject: "gamma" }, undefined, undefined, f.ctx);
+	const out = (await f.tool("task_update").execute("u1", { id: 2, status: "in_progress" }, undefined, undefined, f.ctx)) as {
+		details: { tasks: { id: number; subject: string; status: string }[] };
+	};
+	assert.equal(out.details.tasks.length, 1, "one changed task, not the 3-task board");
+	assert.equal(out.details.tasks[0]!.id, 2);
+	assert.equal(out.details.tasks[0]!.status, "in_progress");
+});
+
+test("#242 M3: completion stamps archivedAt; a touching update revives it", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	await f.handlers.get("session_start")!({}, f.ctx);
+	await f.tool("task_create").execute("c1", { subject: "alpha" }, undefined, undefined, f.ctx);
+	await f.tool("task_update").execute("u1", { id: 1, status: "completed", evidence: "done" }, undefined, undefined, f.ctx);
+	const stamped = (f.entries.at(-1)!.data as TaskState).tasks[0]!;
+	assert.ok(stamped.archivedAt, "terminal transition stamps archivedAt");
+	await f.tool("task_update").execute("u2", { id: 1, description: "amended brief" }, undefined, undefined, f.ctx);
+	const revived = (f.entries.at(-1)!.data as TaskState).tasks[0]!;
+	assert.equal(revived.archivedAt, undefined, "a real content touch clears the stamp (revive-on-touch)");
+	assert.equal(revived.status, "completed", "status semantics unchanged — metadata only");
+});
+
+test("#242 M3: one-time legacy stamp on load — 3 terminal + 2 open → 3 stamped, never repeated", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	const mk = (id: number, subject: string, status: string) => ({ id, subject, status, createdAt: 1, updatedAt: 2 });
+	f.setBranch([
+		{
+			type: "custom",
+			customType: TASK_STATE,
+			data: {
+				tasks: [mk(1, "done1", "completed"), mk(2, "done2", "completed"), mk(3, "gone", "cancelled"), mk(4, "live1", "pending"), mk(5, "live2", "in_progress")],
+				nextId: 6,
+			},
+		},
+	]);
+	await f.handlers.get("session_start")!({}, f.ctx);
+	const after = f.entries.at(-1)!.data as TaskState;
+	assert.ok(after.legacyArchived, "flag recorded");
+	assert.equal(after.tasks.filter((t) => t.archivedAt).length, 3, "exactly the 3 terminal tasks stamped");
+	assert.equal(after.tasks.filter((t) => t.archivedAt).every((t) => t.status === "completed" || t.status === "cancelled"), true);
+	const countAfterFirst = f.entries.length;
+	// simulate a real restart: the branch now INCLUDES the stamped entry (getBranch is fixed in fakePi)
+	f.setBranch(f.entries.map((e) => ({ type: "custom", customType: e.customType, data: e.data })));
+	await f.handlers.get("session_start")!({}, f.ctx);
+	assert.equal(f.entries.length, countAfterFirst, "second load writes nothing — the run is one-time");
+});
+
+test("#242 regression: create/update message text keeps the current format", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	await f.handlers.get("session_start")!({}, f.ctx);
+	const created = (await f.tool("task_create").execute("c1", { subject: "alpha" }, undefined, undefined, f.ctx)) as { content: { text: string }[] };
+	assert.match(created.content[0]!.text, /^Created #1: alpha$/);
+	const started = (await f.tool("task_update").execute("u1", { id: 1, status: "in_progress" }, undefined, undefined, f.ctx)) as { content: { text: string }[] };
+	assert.match(started.content[0]!.text, /^#1 → in_progress/);
 });

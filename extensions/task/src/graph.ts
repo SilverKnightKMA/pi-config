@@ -216,6 +216,16 @@ export function updateTask(state: TaskState, id: number, patch: UpdatePatch, now
     next.blockedBy = sanitizeBlockers(state, id, patch.blockedBy, warnings);
   }
 
+  // revive-on-touch must run BEFORE the status block so a terminal target
+  // re-stamps after the clear (subject edit + complete in one patch).
+  if (
+    existing.archivedAt &&
+    (patch.subject !== undefined || patch.description !== undefined || patch.evidence !== undefined || patch.blockedBy !== undefined ||
+      (patch.status !== undefined && patch.status !== "completed" && patch.status !== "cancelled"))
+  ) {
+    next.archivedAt = undefined;
+  }
+
   if (patch.status !== undefined && patch.status !== existing.status) {
     const index = byId(state);
     const open = openBlockers({ ...next }, index);
@@ -236,6 +246,9 @@ export function updateTask(state: TaskState, id: number, patch: UpdatePatch, now
       };
     }
     next.status = patch.status;
+    // #242 M3: going terminal stamps archive metadata — task_list's cost tier
+    // + panel display flag. Metadata only: status semantics are unchanged.
+    if (patch.status === "completed" || patch.status === "cancelled") next.archivedAt = new Date(now).toISOString();
   }
 
   const tasks = rebuildReverseLinks(state.tasks.map((t) => (t.id === id ? next : t)));
@@ -257,6 +270,25 @@ export function replayBranch(entries: BranchEntryLike[]): TaskState {
     state = sanitizeState(data);
   }
   return state;
+}
+
+/** #242 one-time legacy stamp: pre-existing terminal tasks (boards created
+ *  before v1.4.134) get archivedAt so task_list's open scope stays cheap.
+ *  Returns changed:false when the run already happened (state.legacyArchived)
+ *  or nothing needed stamping — the caller persists only on change, so a
+ *  clean board costs one scan, zero TASK_STATE writes. */
+export function ensureLegacyArchive(state: TaskState, now: number): { state: TaskState; changed: boolean } {
+  if (state.legacyArchived) return { state, changed: false };
+  let stamped = false;
+  const tasks = state.tasks.map((t) => {
+    if ((t.status === "completed" || t.status === "cancelled") && !t.archivedAt) {
+      stamped = true;
+      return { ...t, archivedAt: new Date(now).toISOString() };
+    }
+    return t;
+  });
+  if (!stamped) return { state, changed: false };
+  return { state: { ...state, tasks, legacyArchived: true }, changed: true };
 }
 
 const STATUSES = new Set(["pending", "in_progress", "held", "completed", "cancelled", "parked"]); // v1.4.65 #64: held = judge holds completion
@@ -319,6 +351,8 @@ export function sanitizeState(data: Record<string, unknown>): TaskState {
       goalId: typeof item.goalId === "string" && item.goalId.startsWith("g-") ? item.goalId : undefined,
       planId: typeof item.planId === "string" && item.planId.startsWith("p-") ? item.planId : undefined,
       stepIndex: typeof item.stepIndex === "number" && Number.isInteger(item.stepIndex) && item.stepIndex > 0 ? item.stepIndex : undefined,
+      // #242: archive stamp survives replay round-trips.
+      archivedAt: typeof item.archivedAt === "string" && item.archivedAt ? item.archivedAt : undefined,
       proposals: Array.isArray(item.proposals)
         ? item.proposals.filter(
 					(p): p is TaskProposal =>
@@ -338,7 +372,7 @@ export function sanitizeState(data: Record<string, unknown>): TaskState {
     typeof w.rounds === "number" && typeof w.noProgress === "number" && typeof w.signature === "string"
       ? { rounds: Math.max(0, Math.floor(w.rounds)), noProgress: Math.max(0, Math.floor(w.noProgress)), signature: w.signature.slice(0, 500) }
       : undefined;
-  return { tasks: rebuildReverseLinks(tasks), nextId, ...(wake ? { wake } : {}) };
+  return { tasks: rebuildReverseLinks(tasks), nextId, ...(wake ? { wake } : {}), ...(data.legacyArchived === true ? { legacyArchived: true } : {}) };
 }
 
 // ── #45: field-level CHANGES for update cards ──────────────────────────
