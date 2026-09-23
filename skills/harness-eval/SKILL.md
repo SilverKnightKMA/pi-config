@@ -85,6 +85,12 @@ or a scan finds the upstream SHA changed versus the registry's ref column.
 Note: there is NO dependabot witness PR for ported exts — the ported code lives in pi-config,
 a version bump installs nothing; the issue is the only signal (user decided 2026-09-12).
 
+**Batch fan-out (N≥2 issues/candidates)**: spawn one researcher subagent per item (`spawn_pool`, concurrency 3-4),
+each child gets THIS Mode-3 brief inline (npm view confirm → npm pack both refs → real diff → mini-brief per template,
+bounded reads). Main only absorbs mini-briefs → ONE merged report → user decides per package → main updates
+registry + index + closes issues. Single issue: main does the diff itself.
+(First run: batch #294, 5 issues → 5 researchers, 2026-09-24 — coordination tax ≈5k tokens vs ~75-100k if done in main.)
+
 1. Open `upstream-registry.md`, find the matching row → old ref.
 2. **Diff for real** old → new ref (tarball both versions or `git diff` two SHAs). Do NOT read the changelog instead of diffing.
 3. **Mini-brief ~10 lines**: what changed / the stated reason / does it touch a region we already ported or a region where we have evolved beyond upstream / is there a piece worth bringing home / proposal.
