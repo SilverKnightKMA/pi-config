@@ -153,6 +153,13 @@ export function _driveTaskWakeForTests(step: "settle" | "fire"): void {
 	taskWakeDrive(step);
 }
 
+/** #262 test seam: run the control-file consumer synchronously (no bell/watcher). */
+let controlConsumeDrive: ((which: "task" | "plan") => void) | null = null;
+export function _consumeControlForTests(which: "task" | "plan" = "task"): void {
+	if (!controlConsumeDrive) throw new Error("task extension not activated");
+	controlConsumeDrive(which);
+}
+
 /** Session path for a one-shot judge run (v1.4.101): dedicated `--judge--`
  * subdir under the sessions root, so bulk import skips judge sessions
  * STRUCTURALLY (path + registry) instead of content fingerprinting. Filename
@@ -427,6 +434,15 @@ export default function taskExtension(pi: ExtensionAPI) {
 				pi.sendUserMessage(
 					`[task-proposal] #${payload.id} ${payload.decision === "apply" ? "user APPROVED" : "user REJECTED"} the done-check amendment proposal${payload.note ? ` (note: ${payload.note})` : ""}. ${payload.decision === "apply" ? "New brief applied — continue with the new brief." : "Brief unchanged — continue under the old brief or ask the user to clarify."}`,
 					{ deliverAs: "followUp" },
+				);
+			} else {
+				// #252/#262 (v1.4.136): every OTHER applied panel action now tells the
+				// model — the user no longer types "Đã mở lại #235" by hand. One notice
+				// per applied action; failed/parse-error actions stay silent.
+				// Self-describing prefix (lesson 2026-09-22), display:false badgeable entry.
+				pi.sendMessage(
+					{ customType: "task-notice", content: `[task-notice] user action via panel: ${result.note} — act on it (the board is already updated).`, display: false, details: { verb: payload.action, taskId: payload.id, note: result.note } },
+					{ deliverAs: "followUp", triggerTurn: true },
 				);
 			}
 		}
@@ -1369,6 +1385,8 @@ export default function taskExtension(pi: ExtensionAPI) {
 				else consumePlanBridge();
 			});
 			bellStop = startDoorbellServer(controlSessionId);
+			// #262 test seam wiring
+			controlConsumeDrive = (which) => (which === "task" ? consumeControlFile() : consumePlanBridge());
 		}
 
 		projectStatus();

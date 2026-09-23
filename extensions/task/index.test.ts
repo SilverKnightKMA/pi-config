@@ -1726,3 +1726,84 @@ test("#257 E1: pruneDecided drops >7d decided entries, keeps undecided + notes",
 		fs.rmSync(tmp, { recursive: true, force: true });
 	}
 });
+
+// ── #252/#262: task-notice — applied panel actions notify the model ──
+
+import { _consumeControlForTests } from "./index.ts";
+import { controlFilePath } from "./src/control.ts";
+
+test("#262: applied control action sends exactly one [task-notice] (display:false, triggerTurn)", async () => {
+	const tmp = fs.mkdtempSync(join(tmpdir(), "task-notice-"));
+	const prevHome = process.env.HOME;
+	process.env.HOME = tmp;
+	try {
+		const f = fakePi();
+		(f.ctx.sessionManager as { getSessionId: () => string }).getSessionId = () => "notice-1";
+		taskExtension(f.pi as never);
+		await f.handlers.get("session_start")!({}, f.ctx);
+		await f.tool("task_create").execute("c1", { subject: "panel-managed" }, undefined, undefined, f.ctx);
+		// user cancels via panel (control file) → notice fires
+		fs.writeFileSync(controlFilePath("notice-1"), JSON.stringify({ v: 1, action: "cancel", id: 1, sentAt: "s1" }));
+		_consumeControlForTests("task");
+		const notices = f.messages.filter((m) => m.customType === "task-notice");
+		assert.equal(notices.length, 1, "exactly one notice per applied action");
+		assert.match(notices[0]!.content, /^\[task-notice\] user action via panel: #1 cancelled \(user\)/);
+		assert.notEqual(notices[0]!.display, true, "display:false — badgeable, not a chat block");
+		// FAILED action (unpark on a non-parked task) → silent
+		fs.writeFileSync(controlFilePath("notice-1"), JSON.stringify({ v: 1, action: "unpark", id: 1, sentAt: "s2" }));
+		_consumeControlForTests("task");
+		assert.equal(f.messages.filter((m) => m.customType === "task-notice").length, 1, "failed action sends nothing");
+		// JUNK file → silent
+		fs.writeFileSync(controlFilePath("notice-1"), "{not json");
+		_consumeControlForTests("task");
+		assert.equal(f.messages.filter((m) => m.customType === "task-notice").length, 1, "parse error sends nothing");
+	} finally {
+		if (prevHome !== undefined) process.env.HOME = prevHome;
+		fs.rmSync(tmp, { recursive: true, force: true });
+	}
+});
+
+test("#262: reopen via panel notifies with the reopen verb (the 'Đã mở lại' automation)", async () => {
+	const tmp = fs.mkdtempSync(join(tmpdir(), "task-notice-"));
+	const prevHome = process.env.HOME;
+	process.env.HOME = tmp;
+	try {
+		const f = fakePi();
+		(f.ctx.sessionManager as { getSessionId: () => string }).getSessionId = () => "notice-2";
+		taskExtension(f.pi as never);
+		await f.handlers.get("session_start")!({}, f.ctx);
+		await f.tool("task_create").execute("c1", { subject: "done thing" }, undefined, undefined, f.ctx);
+		await f.tool("task_update").execute("u1", { id: 1, status: "completed", evidence: "did" }, undefined, undefined, f.ctx);
+		fs.writeFileSync(controlFilePath("notice-2"), JSON.stringify({ v: 1, action: "reopen", id: 1, sentAt: "s1" }));
+		_consumeControlForTests("task");
+		const notices = f.messages.filter((m) => m.customType === "task-notice");
+		assert.equal(notices.length, 1);
+		assert.match(notices[0]!.content, /#1 reopen \(in_progress\)/);
+		assert.equal((notices[0]!.details as { verb?: string }).verb, "reopen");
+	} finally {
+		if (prevHome !== undefined) process.env.HOME = prevHome;
+		fs.rmSync(tmp, { recursive: true, force: true });
+	}
+});
+
+test("#262: proposal-decide keeps its own [task-decision] message — no duplicate generic notice", async () => {
+	const tmp = fs.mkdtempSync(join(tmpdir(), "task-notice-"));
+	const prevHome = process.env.HOME;
+	process.env.HOME = tmp;
+	try {
+		const f = fakePi();
+		(f.ctx.sessionManager as { getSessionId: () => string }).getSessionId = () => "notice-3";
+		taskExtension(f.pi as never);
+		await f.handlers.get("session_start")!({}, f.ctx);
+		await f.tool("task_create").execute("c1", { subject: "with proposal" }, undefined, undefined, f.ctx);
+		appendDecision("notice-3", 1, "cancel-proposal", "r");
+		fs.writeFileSync(controlFilePath("notice-3"), JSON.stringify({ v: 1, action: "proposal-decide", id: 1, dId: "d-1", decision: "approved", sentAt: "s1" }));
+		_consumeControlForTests("task");
+		assert.equal(f.messages.filter((m) => m.customType === "task-notice").length, 0, "dId decisions ride [task-decision], not the generic notice");
+		const ledger = f.entries.at(-1)!.data as TaskState;
+		assert.equal(ledger.tasks[0]!.status, "pending", "decision applied to the card only — the task itself is untouched by this verb");
+	} finally {
+		if (prevHome !== undefined) process.env.HOME = prevHome;
+		fs.rmSync(tmp, { recursive: true, force: true });
+	}
+});
