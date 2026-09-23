@@ -57,3 +57,4 @@ the board by design.*
 - [repo: pi-config] pre-image NOTE + recovery-record undo (yolo) — old eval item #25. Trigger: next yolo-mode work.
 - [repo: pi-config] Cross-session file-lock task scope (tintinweb) — deferred with swarm part 5. Trigger: when swarm multi-agent work resumes.
 - (deleted, resolved: directed-continuation goal anchor — goal extension shipped through v1.4.80+; row was stale)
+- [repo: pi-config] Watch pi-vetter (closest eval-family cousin, security-only vetting) as reference — NOT adopted. Trigger: when eval volume grows enough that security vetting needs deeper checks than the 2-check pre-filter (ADR 0003).
