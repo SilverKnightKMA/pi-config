@@ -79,8 +79,11 @@ export function isFactsTierPath(
 
 /** True when `t` is a clean path token referencing the facts tier under
  *  ~/.pi/agent — `~`-relative, `$HOME`-expanded, or absolute. A bare
- *  `facts.md` in the workspace does NOT count (a different file). */
+ *  `facts.md` in the workspace does NOT count (a different file). #250: a
+ *  trailing command separator (`;` `&` `|`) is stripped first — chained
+ *  commands glue it onto the token and the mention scan must not miss it. */
 function isFactsTierToken(t: string): boolean {
+	t = t.replace(/[;|&]+$/, "");
 	if (t.startsWith("~/")) t = t.slice(1);
 	return /(^|\/)\.pi\/agent\/(facts\.md|lessons\.md|facts-runs)(\/|$)/.test(t) || t.includes("$HOME/.pi/agent/");
 }
@@ -188,8 +191,10 @@ const MUTATION = /\b(rm|mv|tee|truncate|shred|dd|mkdir|rmdir|chmod|chown|rsync|i
 /** cp mutates only when a `.memory` path is the FINAL argument (the destination). */
 const CP_INTO_MEMORY = /\bcp\b[^|;&]*\s\S*\.memory(\/[^\s|;&]*)?\s*$/;
 
-/** True when `t` is a clean path token referencing the memory tree. */
+/** True when `t` is a clean path token referencing the memory tree.
+ *  #250: trailing command separators stripped (see isFactsTierToken). */
 function isMemoryPathToken(t: string): boolean {
+	t = t.replace(/[;|&]+$/, "");
 	return (
 		t === ".memory" ||
 		t === ".memory/" ||

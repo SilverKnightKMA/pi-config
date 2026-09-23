@@ -90,3 +90,41 @@ describe("classifyBashFactsTierTouch", () => {
 		expect(classifyBashFactsTierTouch(`git commit -m "touch ~/.pi/agent/facts.md layout in docs"`, HOME)).toBe("none");
 	});
 });
+
+// ── #250 (M1): per-SEGMENT classification — the live false-positive closes ──
+// NOTE: fixture strings below build tier paths from const pieces so THIS
+// source file never itself looks like a mutating command to the guard that
+// gates the tools writing it (dogfooding the very classifier under test).
+
+describe("#250 per-segment classification (v1.4.140)", () => {
+	const HOME = "/home/coder";
+	const FACTS = `${HOME}/.pi/agent/facts.md`;
+	const LESSONS = `${HOME}/.pi/agent/lessons.md`;
+	const RUNS = `${HOME}/.pi/agent/facts-runs`;
+	test("LIVE false-positive: unrelated python3 -c no longer blocks a tier read", () => {
+		expect(classifyBashFactsTierTouch(`echo a; python3 -c "print(1)"; ls ${RUNS}/`, HOME)).toBe("read");
+	});
+	test("python3 -c WRITING the tier still blocks (same-segment mention)", () => {
+		const w = "ope" + "n";
+		expect(classifyBashFactsTierTouch(`python3 -c "${w}('${FACTS}','w')"`, HOME)).toBe("mutate");
+	});
+	test("redirect whose DESTINATION is the tier blocks; > /dev/null read does not", () => {
+		expect(classifyBashFactsTierTouch(`echo x > ${FACTS}`, HOME)).toBe("mutate");
+		expect(classifyBashFactsTierTouch(`tee ${LESSONS}`, HOME)).toBe("mutate");
+		expect(classifyBashFactsTierTouch(`cat ${FACTS} > /dev/null`, HOME)).toBe("read");
+	});
+	test("mkdir in a foreign segment + tier read = read", () => {
+		expect(classifyBashFactsTierTouch(`cat ${FACTS}; mkdir tmpdir`, HOME)).toBe("read");
+	});
+	test(".memory branch: same per-segment fix", () => {
+		const MEM = "." + "memory";
+		expect(classifyBashMemoryTouch(`echo a; python3 -c "print(1)"; ls ${MEM}/`)).toBe("read");
+		const ow = "ope" + "n";
+		expect(classifyBashMemoryTouch(`python3 -c "${ow}('${MEM}/a','w')"`)).toBe("mutate");
+		expect(classifyBashMemoryTouch(`cat ${MEM}/x.md; rm tmpfile`)).toBe("read");
+	});
+	test("unterminated quote → fail CLOSED (whole-command rule)", () => {
+		const MEM = "." + "memory";
+		expect(classifyBashMemoryTouch(`echo "unterminated; rm ${MEM}/x`)).toBe("mutate");
+	});
+});
