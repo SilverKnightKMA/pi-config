@@ -58,3 +58,11 @@ the board by design.*
 - [repo: pi-config] Cross-session file-lock task scope (tintinweb) — deferred with swarm part 5. Trigger: when swarm multi-agent work resumes.
 - (deleted, resolved: directed-continuation goal anchor — goal extension shipped through v1.4.80+; row was stale)
 - [repo: pi-config] Watch pi-vetter (closest eval-family cousin, security-only vetting) as reference — NOT adopted. Trigger: when eval volume grows enough that security vetting needs deeper checks than the 2-check pre-filter (ADR 0003).
+
+## harness-eval cache dir hardcode máy này (2026-09-24)
+
+repo: pi-config · mở: 2026-09-24 · nguồn: self-eval vòng 2 #295
+
+crawl.py:24 `CACHE = Path.home()/"workloads"...` — chính xác: `Path.home()/"workspaces"/"learn"/"harness-eval-cache"` — chỉ đúng máy có workspace learn.
+
+**Trigger làm:** chạy skill trên máy khác / image đổi workspace layout. **Hướng:** env `HARNESS_EVAL_CACHE` override, hoặc cache đặt cạnh skill dir.

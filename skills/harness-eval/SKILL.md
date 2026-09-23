@@ -52,10 +52,10 @@ When the user asks "is there a similar ext / how do others do it", or on a perio
    - **future harnesses**: add a group + a crawler source here when a third harness joins the eval scope.
 3. **Outsource the WHOLE research leg to ONE researcher subagent — main agent only absorbs the result.** The main agent never runs the crawler or the searches itself; they cost time and context that must stay in the worker's window. Spawn role `researcher` with a brief like:
    > LANDSCAPE for family `<family>` in harness-eval, groups `<pi|paseo|both>`.
-   > (1) CRAWL: run `python3 ~/.pi/agent/skills/harness-eval/crawl.py <sources...>` (stdlib-only, cached per day in `~/workspaces/learn/harness-eval-cache/` — if today's files exist, reuse, do not re-crawl; `--force <src>` only when freshness matters). Read `catalog.md` + the `<src>-<date>.json` files — that's the crawled ground truth.
+   > (1) CRAWL: run `python3 ~/.pi/agent/skills/harness-eval/crawl.py <sources...>` (stdlib-only, cached per day in `~/workspaces/learn/harness-eval-cache/` — if today's files exist, reuse, do not re-crawl; `--force <src>` only when freshness matters). Ground-truth reading is BOUNDED: `catalog.md` is the primary read; query the `<src>-<date>.json` with capped python/jq only (top-N by score, keyword filter, `[:200]` slices) — NEVER read the pidev JSON wholesale (3.2MB blows your window).
    > (2) SEARCH the angles a crawl cannot replace: npm/GitHub keyword search for the family (catches wrong/missing `pi-package` keyword); other harnesses (Claude Code docs/changelog, Codex, opencode) where the trend starts before pi/paseo ports appear; familiar authors (tintinweb, @arhen...) beyond the two crawled accounts.
    > (3) MERGE crawled + searched into ONE comparison table (name / ★-age / license / one-line mechanism / how it differs from pi-config extensions AND paseo-plugins / proposed verdict — every row tagged source=crawl|search), then answer the 6-question checklist per candidate: clean license · TUI-only · doctrine conflict (single-writer, disk-is-truth, memory-guard, safe_bash, managed-tools) · duplicates something we have · maturity (age/releases/tests/users) · integration cost.
-   > (4) Submit as a report following the report template (TIÊU CHÍ → BẢNG VERDICT → ĐỀ XUẤT kèm THIẾT KẾ + NGUỒN → options).
+   > (4) Submit as a report following the report template (TIÊU CHÍ → BẢNG VERDICT → ĐỀ XUẤT kèm THIẾT KẾ + NGUỒN → options) — template text: `~/.pi/agent/skills/harness-eval/SKILL.md` § Report template.
    The main agent reviews the report (code-first verification stays with the main for finalists — npm pack/clone and read the source before any port decision), then decides with the user. If the researcher goes idle without submitting — kick it, then escalate to the user.
 4. Record the merged landscape in `ext-eval-index.md` (verdicts + where the family is heading).
 
@@ -64,13 +64,14 @@ When the user asks "is there a similar ext / how do others do it", or on a perio
 When the user picks one package for a deep evaluation. Pattern proven across 5 runs (task, workflow, swarm, plan-mode, goal):
 
 1. **Collect for real**: `npm pack <pkg>` or clone the repo → read the whole source. If there is a version diff (`0.6.0 → 0.6.2`): tarball both, diff for real, summarize the changes per version step.
-2. **Write the brief** to a fixed template (output ~15-20KB, research workspace `learn/pify-<name>-eval-YYYY-MM-DD.md`):
+2. **Write the brief** to a fixed template (output ~15-20KB, research workspace `learn/pify-<name>-eval-YYYY-MM-DD.md`).
+   The brief uses the 5-block template as its FRAME: TIÊU CHÍ first (criteria locked before evaluating), the sections below fill BẢNG VERDICT (gap table) and ĐỀ XUẤT (proposal + THIẾT KẾ), and the brief ends with CẦN USER QUYẾT — the TL;DR is that final block's one-paragraph opener:
    - **TL;DR** — proposed verdict + 2-3 sentences of reasoning.
    - **The real mechanism** — quoted code: data structures, event hooks used, main flow, safety boundaries. State line/file counts explicitly.
    - **Gap table** — each piece upstream provides VERSUS our system: which overlap (and which are stronger than ours), which are real gaps.
    - **Integration cost + risks** — which extensions it touches, any double-owner issues, daemon/pi version requirements.
    - **Port/borrow/drop proposal** — concretely split into pieces, with the cheapest option when one exists.
-   - **Supply-chain pre-filter (P4, deployed 2026-09-24)** — for every finalist with a GitHub repo run `python3 ~/.pi/agent/skills/harness-eval/crawl.py --supply-chain owner/repo` (SECURITY.md + dependabot.yml existence — the cheap derivable subset of OpenSSF Scorecard, github.com/ossf/scorecard; a PRE-FILTER, not a security certificate) and record the result in the gap table.
+   - **Supply-chain pre-filter (P4, deployed 2026-09-24)** — for every finalist with a GitHub repo run `python3 ~/.pi/agent/skills/harness-eval/crawl.py --supply-chain owner/repo` (SECURITY.md + dependabot.yml existence — the cheap derivable subset of OpenSSF Scorecard, github.com/ossf/scorecard; a PRE-FILTER, not a security certificate; requires GITHUB_TOKEN in env — without it the check silently skips with a note: treat that as NOT RUN and say so in the table) and record the result in the gap table.
    - **NGUỒN** — credit every borrowed concept (report template §3).
    - **Source limits** — what could not be verified (no live run, no test suite, versions may have changed).
 3. An **independent researcher** writes the brief (spawn a researcher, cheap model + web tools); kick it if it goes idle without submitting.
@@ -102,7 +103,7 @@ a version bump installs nothing; the issue is the only signal (user decided 2026
 | PORT | bring the mechanism into pi-config, adapted (no package installed) |
 | BORROW / BORROW PIECES | take a concept/loose piece, reimplement in our system's style |
 | DROP | duplicates something we already have, or conflicts with doctrine/safety |
-| SET ASIDE / DEFERRED | worthwhile but not yet time; record in the index with a date |
+| SET ASIDE / DEFERRED | worthwhile but not yet time; record in BACKLOG.md (tag repo:) with a re-review trigger; one summary row in the index only when a final verdict lands |
 | drift-issue | the upstream-drift workflow opens an issue when upstream ≠ ported-ref; auto-closes when the registry updates — the mechanism for exts ALREADY PORTED |
 | witness-deps | devDeps pins for the 2 actually-installed externals (pi-mcp-adapter/pi-web-access) — a dependabot bump = a real upgrade; NOT for ported exts |
 | own design beyond | a region where we have developed further than upstream (still recorded in the registry for comparison) |
