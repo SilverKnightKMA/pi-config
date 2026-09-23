@@ -1,18 +1,33 @@
 /**
- * memory-guard — keep `.memory/` owned by the observational-memory pipeline.
+ * memory-guard — the machine-written memory surfaces, protected.
+ *
+ * #250 (M3) DENY-LIST — what this guard protects (all MACHINE-WRITTEN, single
+ * sanctioned writer each; the MODEL never writes them):
+ *   - `~/.pi/agent/facts.md`    — durable facts tier (regex trigger P2 + memory-curator)
+ *   - `~/.pi/agent/lessons.md`  — global lessons tier (auto-injected, curated)
+ *   - `~/.pi/agent/facts-runs/` — curator run receipts (headless curator sessions)
+ *   - `<cwd>/.memory/`          — observational-memory tree (observer/consolidator
+ *                                 single-writer; runtime OM state lives here too)
+ *
+ * NOT guarded (MODEL-OWNED by design — never add them here):
+ *   - `~/.pi/agent/task-status/`  — task ext projection + decisions artifact
+ *   - `~/.pi/agent/task-control/` — user→engine control files
  *
  * Three layers (2026-09-01 design, user-approved):
- *   1. hard:   pi.on("tool_call") blocks write/edit into `.memory/` and
- *              bash/safe_bash commands that mutate it;
+ *   1. hard:   pi.on("tool_call") blocks write/edit into the trees above and
+ *              bash/safe_bash commands that mutate them (#250: per-SEGMENT
+ *              classification — an unrelated mutation shape in another
+ *              segment no longer blocks a pure read);
  *   2. soft:   pi.on("context") appends a one-paragraph policy line to the
  *              system prompt every LLM call (~40 tok, non-destructive);
  *   3. escape: `/om off` disables both (admin/repair mode), and OM worker
- *              subprocesses (env OM_WORKER) are always exempt — they are the
- *              sanctioned writers.
+ *              subprocesses (env OM_WORKER / FACTS_WORKER) are always exempt
+ *              — they are the sanctioned writers.
  *
  * bash stays a documented, deliberate escape hatch (obfuscated paths can
  * bypass the classifier); blocking the obvious mutations stops accidents and
- * sloppy "helpful" edits, which is the actual failure mode.
+ * sloppy "helpful" edits, which is the actual failure mode. Uncertain
+ * tokenization (unterminated quotes) fails CLOSED — whole-command rules.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { resolve, sep } from "node:path";
@@ -108,13 +123,65 @@ export function mentionsFactsTierPath(command: string, home: string = process.en
 }
 
 /** Classify a bash command against the facts tier: "mutate" (block) /
- *  "read" (allow) / "none" (not our tree). */
+ *  "read" (allow) / "none" (not our tree).
+ *
+ *  #250 (M1, v1.4.140): classification is PER-SEGMENT, not per-command. The
+ *  old whole-command rule false-positived live (twice on 2026-09-22): a
+ *  compound like `…; python3 -c "…unrelated json…"; ls ~/.pi/agent/facts-runs/`
+ *  was blocked because MUTATION matched the python segment while the tier
+ *  mention lived in a DIFFERENT segment. Now a command blocks only when at
+ *  least one segment BOTH mentions the tier AND mutates by itself. */
 const CP_INTO_FACTS_TIER = /\bcp\b[^|;&]*\s\S*\.pi\/agent\/(facts\.md|lessons\.md|facts-runs)(\/[^\s|;&]*)?\s*$/;
+/** `>` redirect whose DESTINATION token is the facts tier (`echo x > ~/.pi/agent/facts.md`);
+ *  `> /dev/null` while reading the tier does NOT match (destination is /dev/null). */
+const REDIRECT_INTO_FACTS_TIER = />[ \t>]*~?\/?[^\s|;&;]*\.pi\/agent\/(facts\.md|lessons\.md|facts-runs)(\/[^\s|;&]*)?(\s|$)/;
+
+/** #250 (M1): split a command into `;` `&&` `||` `|` segments, respecting
+ *  quotes. Returns null when tokenization is uncertain (unterminated quote)
+ *  — callers then fail CLOSED: whole-command classification, the pre-M1 rule. */
+export function splitSegments(command: string): string[] | null {
+	const segs: string[] = [];
+	let buf = "";
+	let quote: '"' | "'" | null = null;
+	for (let i = 0; i < command.length; i++) {
+		const ch = command[i]!;
+		if (quote) {
+			buf += ch;
+			if (ch === quote) quote = null;
+			continue;
+		}
+		if (ch === '"' || ch === "'") {
+			buf += ch;
+			quote = ch;
+			continue;
+		}
+		if (ch === ";" || ch === "|" || ch === "&") {
+			let j = i;
+			while (j < command.length && (command[j] === ";" || command[j] === "|" || command[j] === "&")) j++;
+			segs.push(buf);
+			buf = "";
+			i = j - 1;
+			continue;
+		}
+		buf += ch;
+	}
+	if (quote) return null; // unterminated quote — uncertain → fail closed upstream
+	if (buf.trim()) segs.push(buf);
+	return segs;
+}
+
+function factsSegMutates(seg: string): boolean {
+	return MUTATION.test(seg) || CP_INTO_FACTS_TIER.test(seg) || REDIRECT_INTO_FACTS_TIER.test(seg);
+}
 
 export function classifyBashFactsTierTouch(command: string, home: string = process.env.HOME ?? ""): "none" | "read" | "mutate" {
 	if (!mentionsFactsTierPath(command, home)) return "none";
-	if (MUTATION.test(command) || CP_INTO_FACTS_TIER.test(command)) return "mutate";
-	return "read";
+	const segs = splitSegments(command);
+	if (segs === null) {
+		// uncertain tokenization — fail CLOSED (the pre-M1 whole-command rule)
+		return factsSegMutates(command) ? "mutate" : "read";
+	}
+	return segs.some((seg) => mentionsFactsTierPath(seg, home) && factsSegMutates(seg)) ? "mutate" : "read";
 }
 
 const MUTATION = /\b(rm|mv|tee|truncate|shred|dd|mkdir|rmdir|chmod|chown|rsync|install)\b|>>|>[ \t>]*\S*\.memory|sed\s+(-[a-zA-Z]*)*i|perl\s+(-[a-zA-Z]*)*i\b|python3?\s+-c|node\s+-e|\bxargs\b/;
@@ -181,12 +248,18 @@ export function mentionsMemoryPath(command: string): boolean {
 /**
  * Classify a bash command that touches `.memory` via a path token:
  * "mutate" (block), "read" (allow). Commands with no memory path token are "none".
+ * #250 (M1, v1.4.140): PER-SEGMENT — same fix as the facts tier above; a
+ *  mutation shape in one segment no longer blocks a pure read in another.
  */
 export function classifyBashMemoryTouch(command: string): "none" | "read" | "mutate" {
 	if (!mentionsMemoryPath(command)) return "none";
-	if (CP_INTO_MEMORY.test(command)) return "mutate";
-	if (MUTATION.test(command)) return "mutate";
-	return "read";
+	const segs = splitSegments(command);
+	const whole = (seg: string) => CP_INTO_MEMORY.test(seg) || MUTATION.test(seg);
+	if (segs === null) {
+		// uncertain tokenization — fail CLOSED (the pre-M1 whole-command rule)
+		return whole(command) ? "mutate" : "read";
+	}
+	return segs.some((seg) => mentionsMemoryPath(seg) && whole(seg)) ? "mutate" : "read";
 }
 
 const POLICY =

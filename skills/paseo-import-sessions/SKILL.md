@@ -14,7 +14,7 @@ Knowledge from the real 2026-09-18→09-20 import campaign: ~2600 sessions, 974�
    `persistence.sessionId` points to the provider's original file — it does NOT copy the transcript.
    The provider file is the real data: **never delete it**; deleting the original file breaks the
    conversation view and leaves only a metadata shell.
-2. **General rule: every session WITH content must go into Paseo.** Only the four groups below may be skipped.
+2. **General rule: every session WITH content must go into Paseo.** Only the five groups below may be skipped.
 3. **An unimported subagent MUST be imported and then archived immediately — do NOT omit it** (user directive 2026-09-19).
    Subagents spawned in the MCP era are already live (they go through `paseo_create_agent` and have
    `subagent.role`/`subagent.parent` labels); only pre-MCP subagents remain on disk — identify them
@@ -22,7 +22,7 @@ Knowledge from the real 2026-09-18→09-20 import campaign: ~2600 sessions, 974�
    or the delimiter `\n---\nTASK:\n`. Import with `--label subagent.role=<role>`, then archive
    IMMEDIATELY through MCP `paseo_archive_agent`.
 
-## Four-layer policy table (the only skips)
+## Five-layer policy table (the only skips)
 
 | Layer | Group | Reason to skip | Grows automatically? | Verification |
 |---|---|---|---|---|
@@ -30,6 +30,7 @@ Knowledge from the real 2026-09-18→09-20 import campaign: ~2600 sessions, 974�
 | 2 | **New judge** (dir `--judge--/` + registry `~/.pi/agent/judge-sessions.jsonl`) | One-shot done-check verifier: reads log → PASS/FAIL → exits; first-class marker since pi-config v1.4.101 | YES — every done check | `tail ~/.pi/agent/judge-sessions.jsonl` |
 | 3 | **Empty Copilot row** (sqlite `~/.copilot/session-store.db`) | Zero turns throughout — a handshake/health-check byproduct | YES | `SELECT COUNT(*) FROM turns` per session |
 | 4 | **OMP observer-review** (subdir `<ts>_<uuid>/`) | Internal OMP artifact (`observerPlanReview/observerResultReview.jsonl`), not a session; the real omp session is the parent-level `<ts>_<uuid>.jsonl` file | YES | glob `[0-9a-f-]{36}\.jsonl` separately |
+| 5 | **Facts curator** (pi, #250 v1.4.140: dir `--home-coder-.pi-agent-facts-runs--`, i.e. cwd `~/.pi/agent/facts-runs`; headless run with env `FACTS_WORKER=1`; prompt signature `memory-curator`) | Headless curator run whose receipts already live in `facts-runs/` — not a conversation; importing it would mint a junk agent | YES — every curator run (first run pending) | `ls ~/.pi/agent/sessions/ \| grep facts-runs`; self-check after the first curator run: NO new agent named/labelled curator appears in Paseo |
 
 **Boundary:** do NOT skip a one-shot probe WITH content — import + archive it as usual
 (completed for all: 5 omp stubs, 6 codex, 8+19 pi). OLD judges (pre-v1.4.101) are also
