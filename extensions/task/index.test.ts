@@ -1059,10 +1059,10 @@ test("control wiring: model cannot un-park a parked task via task_update", async
 		f.tool("task_update").execute("u2", { id: 1, status: "in_progress" }, undefined, undefined, f.ctx),
 		/cannot un-park/,
 	);
-	// the model cancels a task awaiting the user → also blocked (cancelling = hiding the dispute)
+	// the model cancels a task awaiting the user → P6 (v1.4.135): ALL model cancels refused
 	await assert.rejects(
 		f.tool("task_update").execute("u3", { id: 1, status: "cancelled" }, undefined, undefined, f.ctx),
-		/cannot un-park/,
+		/cancel is user-only.*proposed_cancel/s,
 	);
 	// re-park (already parked) is still harmless — allowed through
 	const re = (await f.tool("task_update").execute("u4", { id: 1, status: "parked" }, undefined, undefined, f.ctx)) as {
@@ -1252,25 +1252,28 @@ test("v1.4.87 decision pair: without awaitsDecision nothing extra is created (no
 	assert.equal(out.details!.tasks!.length, 1);
 });
 
-test("v1.4.88 hardening: model cancels A → pending B is PARKED (not cancelled) — P1/P3 closed", async () => {
+test("v1.4.135 P6: model cancel is refused outright — proposing via proposed_cancel is the only door", async () => {
 	const f = fakePi();
 	taskExtension(f.pi as never);
 	await f.tool("task_create").execute("c1", { subject: "eval ext Y", awaitsDecision: true }, undefined, undefined, f.ctx);
-	const cancelled = (await f.tool("task_update").execute("c2", { id: 1, status: "cancelled" }, undefined, undefined, f.ctx)) as {
-		details?: { tasks?: { id: number; status: string }[] };
-	};
-	const statuses = Object.fromEntries((cancelled.details!.tasks ?? []).map((t) => [t.id, t.status]));
-	assert.equal(statuses[1], "cancelled");
-	assert.equal(statuses[2], "parked", "B must survive as parked — never silently erased");
+	// P6: the model may not cancel A itself — the pair cascade is user-origin only (control file)
+	await assert.rejects(
+		f.tool("task_update").execute("c2", { id: 1, status: "cancelled" }, undefined, undefined, f.ctx),
+		/cancel is user-only.*proposed_cancel.*panel/s,
+	);
+	const ledger = f.entries.at(-1)!.data as { tasks: { id: number; status: string }[] };
+	assert.notEqual(ledger.tasks.find((t) => t.id === 1)!.status, "cancelled", "A untouched by the refused cancel");
+	assert.equal(ledger.tasks.find((t) => t.id === 2)!.status, "pending", "B survives untouched");
 });
 
 test("v1.4.88 hardening: model cannot cancel B directly — P2 closed (user-owned existence)", async () => {
 	const f = fakePi();
 	taskExtension(f.pi as never);
 	await f.tool("task_create").execute("c1", { subject: "eval ext Z", awaitsDecision: true }, undefined, undefined, f.ctx);
+	// v1.4.135 P6: blanket model-cancel refusal now fires before the pair guard
 	await assert.rejects(
 		f.tool("task_update").execute("c2", { id: 2, status: "cancelled" }, undefined, undefined, f.ctx),
-		/AWAITING-USER-DECISION.*user-owned.*cancel \(user\)/s,
+		/cancel is user-only/s,
 	);
 });
 
@@ -1283,10 +1286,10 @@ test("v1.4.88 hardening: typed decisionOf survives description edits (marker str
 	const b = ledger.tasks.find((x) => x.id === 2)!;
 	assert.equal(b.decisionOf, 1, "typed field intact after description rewrite");
 	assert.equal(b.description, "marker stripped, no decisionOf line");
-	// guard still fires on the typed field even though the description marker is gone
+	// P6 (v1.4.135): the blanket model-cancel refusal now covers this too
 	await assert.rejects(
 		f.tool("task_update").execute("c3", { id: 2, status: "cancelled" }, undefined, undefined, f.ctx),
-		/user-owned/,
+		/cancel is user-only/s,
 	);
 });
 
@@ -1580,4 +1583,146 @@ test("#242 regression: create/update message text keeps the current format", asy
 	assert.match(created.content[0]!.text, /^Created #1: alpha$/);
 	const started = (await f.tool("task_update").execute("u1", { id: 1, status: "in_progress" }, undefined, undefined, f.ctx)) as { content: { text: string }[] };
 	assert.match(started.content[0]!.text, /^#1 → in_progress/);
+});
+
+// ── #240/#257 E1: decisions artifact + proposed_cancel + P6 cancel gate ──
+
+import { appendDecision, decideDecision, pruneDecided, readDecisions } from "./src/decisions.ts";
+import { parseControlPayload } from "./src/control.ts";
+
+test("#257 E1: model cancel refused with the P6 pointer text", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	await f.handlers.get("session_start")!({}, f.ctx);
+	await f.tool("task_create").execute("c1", { subject: "plain work" }, undefined, undefined, f.ctx);
+	await assert.rejects(
+		f.tool("task_update").execute("u1", { id: 1, status: "cancelled" }, undefined, undefined, f.ctx),
+		/cancel is user-only — use status:'proposed_cancel' to propose; the user decides on the panel\./,
+	);
+});
+
+test("#257 E1: proposed_cancel moves the status and creates the cancel-proposal card", async () => {
+	const tmp = fs.mkdtempSync(join(tmpdir(), "task-dec-"));
+	const prevHome = process.env.HOME;
+	process.env.HOME = tmp;
+	try {
+		const f = fakePi();
+		(f.ctx.sessionManager as { getSessionId: () => string }).getSessionId = () => "dec-1";
+		taskExtension(f.pi as never);
+		await f.handlers.get("session_start")!({}, f.ctx);
+		await f.tool("task_create").execute("c1", { subject: "doomed work" }, undefined, undefined, f.ctx);
+		const out = (await f.tool("task_update").execute("u1", { id: 1, status: "proposed_cancel", evidence: "superseded by #9" }, undefined, undefined, f.ctx)) as {
+			content: { text: string }[];
+		};
+		assert.match(out.content[0]!.text, /#1 → proposed_cancel/);
+		assert.match(out.content[0]!.text, /decision card on panel \(d-1\)/);
+		const ledger = f.entries.at(-1)!.data as TaskState;
+		assert.equal(ledger.tasks[0]!.status, "proposed_cancel");
+		const entries = readDecisions("dec-1");
+		assert.equal(entries.length, 1);
+		assert.equal(entries[0]!.kind, "cancel-proposal");
+		assert.equal(entries[0]!.taskId, 1);
+		assert.equal(entries[0]!.reason, "superseded by #9");
+		assert.equal(entries[0]!.decidedAt, null);
+	} finally {
+		if (prevHome !== undefined) process.env.HOME = prevHome;
+		fs.rmSync(tmp, { recursive: true, force: true });
+	}
+});
+
+test("#257 E1: proposal-decide (dId) via control file closes the entry", () => {
+	const tmp = fs.mkdtempSync(join(tmpdir(), "task-dec-"));
+	const prevHome = process.env.HOME;
+	process.env.HOME = tmp;
+	try {
+		const s0 = createTask(EMPTY_STATE, "A", "", [], 1).state!;
+		const e1 = appendDecision("dec-2", 1, "cancel-proposal", "reason");
+		const payload = parseControlPayload(JSON.stringify({ v: 1, action: "proposal-decide", id: 1, dId: "d-1", decision: "rejected", sentAt: "t" }));
+		assert.ok(payload, "parse accepts the dId form");
+		const hooks = {
+			decideEntry: (dId: string, decision: "approved" | "rejected") => {
+				const entry = decideDecision("dec-2", dId, decision, 5);
+				return entry ? { taskId: entry.taskId, kind: entry.kind } : null;
+			},
+		};
+		const r = applyControlAction(s0, payload!, 5, hooks);
+		assert.ok(r.applied);
+		assert.match(r.note, /decision d-1 rejected — card closed/);
+		const entries = readDecisions("dec-2");
+		assert.equal(entries[0]!.decidedAt, new Date(5).toISOString());
+		assert.equal(entries[0]!.decision, "rejected");
+		// second decide on the same entry → no-op
+		const again = applyControlAction(s0, payload!, 6, hooks);
+		assert.equal(again.applied, false);
+		assert.match(again.note, /no pending decision d-1/);
+		void e1;
+	} finally {
+		if (prevHome !== undefined) process.env.HOME = prevHome;
+		fs.rmSync(tmp, { recursive: true, force: true });
+	}
+});
+
+test("#257 E1: note appends display-only and caps at 10; amend hold + appeal create their cards", async () => {
+	const tmp = fs.mkdtempSync(join(tmpdir(), "task-dec-"));
+	const prevHome = process.env.HOME;
+	process.env.HOME = tmp;
+	const calls = stubJudge(JSON.stringify({ verdict: "insufficient_evidence", confidence: "high", reason: "no evidence", cited_log_ids: [] }));
+	try {
+		const f = fakePi();
+		(f.ctx.sessionManager as { getSessionId: () => string }).getSessionId = () => "dec-3";
+		taskExtension(f.pi as never);
+		await f.handlers.get("session_start")!({}, f.ctx);
+		await f.tool("task_create").execute("c1", { subject: "holdable", verify: { lane: "judgment" } }, undefined, undefined, f.ctx);
+		// (a) held completion + amendReason → amend card
+		const held = (await f.tool("task_update").execute("u1", { id: 1, status: "completed", evidence: "did it", amendReason: "brief drifted — asking user to re-confirm scope" }, undefined, undefined, f.ctx)) as {
+			content: { text: string }[];
+		};
+		assert.match(held.content[0]!.text, /decision card on panel \(d-1\)/);
+		// (b) appeal → appeal card
+		await f.tool("task_update").execute("u2", { id: 1, appeal: "judge wrong" }, undefined, undefined, f.ctx);
+		// (c) notes x11 → only the last 10 kept
+		for (let i = 1; i <= 11; i++) {
+			const r = (await f.tool("task_update").execute(`n${i}`, { id: 1, note: `note ${i}` }, undefined, undefined, f.ctx)) as { content: { text: string }[] };
+			assert.match(r.content[0]!.text, /note recorded/);
+		}
+		const entries = readDecisions("dec-3");
+		const kinds = entries.map((e) => e.kind);
+		assert.equal(kinds.filter((k) => k === "note").length, 10, "note cap 10");
+		assert.ok(kinds.includes("amend") && kinds.includes("appeal"), `amend+appeal present: ${kinds.join(",")}`);
+		const reasons = entries.filter((e) => e.kind === "note").map((e) => e.reason);
+		assert.ok(reasons.includes("note 11") && !reasons.includes("note 1"), "oldest note dropped, newest kept");
+		// note-only updates never touched the ledger status
+		const ledger = f.entries.at(-1)!.data as TaskState;
+		assert.equal(ledger.tasks[0]!.status, "parked", "note-only update changed no state (still parked from appeal)");
+	} finally {
+		_setJudgeRunnerForTests(null);
+		if (prevHome !== undefined) process.env.HOME = prevHome;
+		fs.rmSync(tmp, { recursive: true, force: true });
+	}
+});
+
+test("#257 E1: pruneDecided drops >7d decided entries, keeps undecided + notes", () => {
+	const tmp = fs.mkdtempSync(join(tmpdir(), "task-dec-"));
+	const prevHome = process.env.HOME;
+	process.env.HOME = tmp;
+	try {
+		const now = Date.now();
+		const old = now - 8 * 24 * 3600 * 1000;
+		const mk = (n: number) => appendDecision("dec-4", n, "cancel-proposal", `r${n}`, now);
+		const a = mk(1);
+		const b = mk(2);
+		const c = mk(3);
+		const d = mk(4);
+		// decide a+b in the PAST (stale), c undecided
+		decideDecision("dec-4", a.id, "approved", old);
+		decideDecision("dec-4", b.id, "rejected", old);
+		const pruned = pruneDecided("dec-4", 7 * 24 * 3600 * 1000, now);
+		assert.ok(pruned);
+		const left = readDecisions("dec-4");
+		assert.deepEqual(left.map((e) => e.id), [c.id, d.id], "undecided kept, stale decided dropped");
+		assert.equal(pruneDecided("dec-4", 7 * 24 * 3600 * 1000, now), false, "second prune is a no-op");
+	} finally {
+		if (prevHome !== undefined) process.env.HOME = prevHome;
+		fs.rmSync(tmp, { recursive: true, force: true });
+	}
 });

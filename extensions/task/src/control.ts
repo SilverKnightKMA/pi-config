@@ -29,9 +29,11 @@ export interface TaskControlFile {
 	value?: boolean;
 	/** amend only (v1.4.38): the new done-check text, authored by the user. */
 	description?: string;
-	/** proposal-decide only (v1.4.53). */
+	/** proposal-decide only (v1.4.53): done-check proposal id. */
 	proposalId?: string;
-	decision?: "apply" | "reject";
+	/** proposal-decide only (v1.4.135 #240 E1): panel-decision entry id (d-<n>). */
+	dId?: string;
+	decision?: "apply" | "reject" | "approved" | "rejected";
 	note?: string;
 	sentAt?: string;
 	ackAt?: string;
@@ -57,11 +59,24 @@ export function parseControlPayload(raw: string): TaskControlFile | null {
 	if (!data || typeof data !== "object") return null;
 	const d = data as Record<string, unknown>;
 	if (d.v !== 1) return null;
-	if (d.action !== "unpark" && d.action !== "strict" && d.action !== "reopen" && d.action !== "amend" && d.action !== "proposal-decide") return null;
+	if (d.action !== "unpark" && d.action !== "strict" && d.action !== "reopen" && d.action !== "amend" && d.action !== "proposal-decide" && d.action !== "cancel") return null;
 	if (typeof d.id !== "number" || !Number.isInteger(d.id) || d.id <= 0) return null;
 	if (d.value !== undefined && typeof d.value !== "boolean") return null;
-	// proposal-decide (v1.4.53): the user clicks ✓/✗ on a done-check amendment proposal
+	// proposal-decide: EITHER a done-check amendment proposal (v1.4.53, proposalId
+	// + apply|reject) OR a panel-decision entry (v1.4.135 #240 E1, dId + approved|rejected)
 	if (d.action === "proposal-decide") {
+		if (typeof d.dId === "string" && /^d-\d+$/.test(d.dId) && (d.decision === "approved" || d.decision === "rejected")) {
+			return {
+				v: 1,
+				action: "proposal-decide",
+				id: d.id,
+				dId: d.dId,
+				decision: d.decision,
+				note: typeof d.note === "string" ? d.note.slice(0, 1000) : undefined,
+				sentAt: typeof d.sentAt === "string" ? d.sentAt : undefined,
+				ackAt: typeof d.ackAt === "string" ? d.ackAt : undefined,
+			};
+		}
 		if (typeof d.proposalId !== "string" || !d.proposalId) return null;
 		if (d.decision !== "apply" && d.decision !== "reject") return null;
 		return {
@@ -103,9 +118,15 @@ export interface ControlApplyResult {
 	applied: boolean;
 }
 
+/** v1.4.135 #240 E1: caller-owned side effects for panel decisions (disk artifact). */
+export interface ControlHooks {
+	/** Decide a panel-decision entry (d-<n>) — returns the stamped entry's task/kind, or null when unknown/already decided. */
+	decideEntry?: (dId: string, decision: "approved" | "rejected") => { taskId: number; kind: string } | null;
+}
+
 /** Apply a user-surface action to the task state.
  *  Pure: no fs, no clock — the caller owns reading the file and writing the ack. */
-export function applyControlAction(state: TaskState, payload: TaskControlFile, now: number): ControlApplyResult {
+export function applyControlAction(state: TaskState, payload: TaskControlFile, now: number, hooks?: ControlHooks): ControlApplyResult {
 	const task = state.tasks.find((t) => t.id === payload.id);
 	if (!task) return { state, note: `no task #${payload.id}`, applied: false };
 	// v1.4.88 cancel (user-only): the panel/chat-user force-cancel. The model
@@ -168,6 +189,14 @@ export function applyControlAction(state: TaskState, payload: TaskControlFile, n
 		return { state: result.state, note: `#${payload.id} reopen (${blocked ? "pending — still blocked" : "in_progress"})`, applied: true };
 	}
 	if (payload.action === "proposal-decide") {
+		// v1.4.135 #240 E1: panel-decision entry (d-<n>) — disk artifact only; the
+		// card closes, audit stamps. Applying the approved outcome (e.g. really
+		// cancelling) is the BUTTON's own verb (cancel/unpark/…), not this branch.
+		if (payload.dId) {
+			const decided = hooks?.decideEntry?.(payload.dId, payload.decision === "approved" ? "approved" : "rejected") ?? null;
+			if (!decided) return { state, note: `no pending decision ${payload.dId}`, applied: false };
+			return { state, note: `decision ${payload.dId} ${payload.decision} — card closed (task #${decided.taskId}, ${decided.kind})`, applied: true };
+		}
 		// v1.4.53: the user approves/rejects a done-check amendment proposal on the panel.
 		// apply = the user-amend path: does NOT consume the descAmendments cap, descHistory by 'user-proposal'.
 		const p = (task.proposals ?? []).find((x) => x.id === payload.proposalId && x.status === "pending");

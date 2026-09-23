@@ -291,7 +291,7 @@ export function ensureLegacyArchive(state: TaskState, now: number): { state: Tas
   return { state: { ...state, tasks, legacyArchived: true }, changed: true };
 }
 
-const STATUSES = new Set(["pending", "in_progress", "held", "completed", "cancelled", "parked"]); // v1.4.65 #64: held = judge holds completion
+const STATUSES = new Set(["pending", "in_progress", "held", "completed", "cancelled", "parked", "proposed_cancel"]); // v1.4.65 #64: held = judge holds completion; v1.4.135 #240: proposed_cancel = model's cancel PROPOSAL (user decides)
 
 function numbers(value: unknown): number[] {
   return Array.isArray(value) ? value.filter((n): n is number => typeof n === "number") : [];

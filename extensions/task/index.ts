@@ -57,6 +57,7 @@ import {
 import { ackPayload, applyControlAction, controlFilePath, parseControlPayload } from "./src/control.ts";
 import { EMPTY_STATE, DESC_AMEND_MAX, type Task, type TaskProposal, type TaskState, type TaskStatus } from "./src/types.ts";
 import { activeGoal, anyGoalRunning, goalIdActive, planContinuationActive, tryConsumeLease } from "./src/goal-bridge.ts";
+import { appendDecision, decideDecision, pruneDecided, readDecisions, type TaskDecisionEntry } from "./src/decisions.ts";
 import { decide, nextStreak, TASK_BUDGET, continuationOwnedByHigherKind } from "../_shared/continuation-driver.ts";
 import { pokeBridges } from "../_shared/doorbell.ts";
 import { registerBellListener, startDoorbellServer } from "../_shared/doorbell-server.ts";
@@ -402,7 +403,13 @@ export default function taskExtension(pi: ExtensionAPI) {
 		if (!payload) return;
 		if (payload.sentAt && payload.sentAt === lastControlSentAt) return; // our own ack echo
 		lastControlSentAt = payload.sentAt ?? `no-sentAt-${Date.now()}`;
-		const result = applyControlAction(state, payload, Date.now());
+		// v1.4.135 #240 E1: panel-decision entries live on disk — hook the artifact update in.
+		const result = applyControlAction(state, payload, Date.now(), {
+			decideEntry: (dId, decision) => {
+				const entry = decideDecision(statusSessionId || controlSessionId, dId, decision);
+				return entry ? { taskId: entry.taskId, kind: entry.kind } : null;
+			},
+		});
 		if (result.applied) {
 			// engine-side commit: no ctx here, projection + widget refresh via stored ctx
 			state = result.state;
@@ -410,7 +417,13 @@ export default function taskExtension(pi: ExtensionAPI) {
 			projectStatus();
 			renderWidget();
 			// v1.4.53: closed loop — report back to the model so it can continue, no polling
-			if (payload.action === "proposal-decide") {
+			if (payload.action === "proposal-decide" && payload.dId) {
+				// v1.4.135 #240: panel-decision verdict — self-describing pointer (lesson 2026-09-22)
+				pi.sendUserMessage(
+					`[task-decision] ${result.note} — the user ruled on the panel card. Follow the verdict: ${payload.decision === "approved" ? "apply the approved outcome now" : "do NOT proceed with what was proposed; continue under the current state"}.`,
+					{ deliverAs: "followUp" },
+				);
+			} else if (payload.action === "proposal-decide") {
 				pi.sendUserMessage(
 					`[task-proposal] #${payload.id} ${payload.decision === "apply" ? "user APPROVED" : "user REJECTED"} the done-check amendment proposal${payload.note ? ` (note: ${payload.note})` : ""}. ${payload.decision === "apply" ? "New brief applied — continue with the new brief." : "Brief unchanged — continue under the old brief or ask the user to clarify."}`,
 					{ deliverAs: "followUp" },
@@ -551,7 +564,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 	// #242 (v1.4.134): the open scope — task_list's DEFAULT view. Terminal
 	// tasks live behind scope:"all"; on this session's real board the cut is
 	// >90% of printed text (measured 5.9MB over 55 task_list calls / 14d).
-	const OPEN_STATUSES = new Set(["pending", "in_progress", "held", "parked"]);
+	const OPEN_STATUSES = new Set(["pending", "in_progress", "held", "parked", "proposed_cancel"]);
 	const openTasks = () => state.tasks.filter((t) => OPEN_STATUSES.has(t.status));
 
 	function snapshotOpen(): string {
@@ -777,7 +790,9 @@ export default function taskExtension(pi: ExtensionAPI) {
 			"Never mark completed merely because you wrote code. Completing a REPORT-type task (research/eval/audit) " +
 			"with no successor on the board triggers a FOLLOW-UP NUDGE — create the implementation/decision " +
 			"successor (or record why none is needed) before closing the chain. appeal=\"reason\" parks a task you dispute for the " +
-			"user; status=parked/cancelled prune/pause a task.",
+			"user; status=parked prunes/pauses a task. v1.4.135: cancel is USER-ONLY — propose with " +
+			"status:'proposed_cancel' (panel card, user decides; not in_progress, no wake). note=\"…\" records a " +
+			"display-only card for the user without changing anything.",
 		parameters: Type.Object({
 			id: Type.Number(),
 			status: Type.Optional(
@@ -788,14 +803,16 @@ export default function taskExtension(pi: ExtensionAPI) {
 						Type.Literal("completed"),
 						Type.Literal("cancelled"),
 						Type.Literal("parked"),
+						Type.Literal("proposed_cancel"),
 					],
-					{ description: "Task status" },
+					{ description: "Task status. proposed_cancel (v1.4.135) = propose cancelling — the user decides on the panel; 'cancelled' itself is user-only" },
 				),
 			),
 			subject: Type.Optional(Type.String()),
 			description: Type.Optional(Type.String()),
 			blockedBy: Type.Optional(Type.Array(Type.Number())),
-			evidence: Type.Optional(Type.String({ description: "Required when completing" })),
+			evidence: Type.Optional(Type.String({ description: "Required when completing; doubles as the reason for a proposed_cancel" })),
+			note: Type.Optional(Type.String({ description: "v1.4.135 #240: display-only note for the user — records a panel card, changes nothing" })),
 			amendReason: Type.Optional(Type.String({ description: "v1.4.53: reason for the done-check amendment proposal (shown in the approval panel) — state it clearly when blocked" })),
 			appeal: Type.Optional(
 				Type.String({
@@ -829,12 +846,36 @@ export default function taskExtension(pi: ExtensionAPI) {
 				verify?: unknown;
 				appeal?: string;
 				amendReason?: string;
+				note?: string;
 			},
 			_signal,
 			_onUpdate,
 			ctx,
 		) {
 			turnsSinceTaskTool = 0;
+			// #240/#257 (P6, v1.4.135): cancel is USER-ONLY — the model's only door is
+			// PROPOSING: status:"proposed_cancel" creates the panel card, the user decides.
+			if (params.status === "cancelled") {
+				throw new Error("cancel is user-only — use status:'proposed_cancel' to propose; the user decides on the panel.");
+			}
+			// #240/#257 (E1): note — display-only card on the panel; artifact only, NO state change.
+			let noteEntry: TaskDecisionEntry | null = null;
+			if (params.note !== undefined && params.note.trim()) {
+				if (statusSessionId) noteEntry = appendDecision(statusSessionId, params.id, "note", params.note);
+				const noteOnly = params.status === undefined && params.subject === undefined && params.description === undefined &&
+					params.blockedBy === undefined && params.evidence === undefined && params.verify === undefined && params.appeal === undefined && params.amendReason === undefined;
+				if (noteOnly) {
+					return {
+						content: [{ type: "text", text: `note recorded${noteEntry ? ` — decision card on panel (${noteEntry.id})` : " (no panel session; chat only)"}` }],
+						details: { id: params.id, tasks: [] },
+					};
+				}
+			}
+			// #240/#257 (E1): panel-decision cards created by THIS update (amend hold /
+			// appeal / cancel proposal). Chat text keeps only a pointer — the panel card is the surface.
+			let appealEntry: TaskDecisionEntry | null = null;
+			let amendEntry: TaskDecisionEntry | null = null;
+			let cancelEntry: TaskDecisionEntry | null = null;
 			const patch: UpdatePatch = {};
 			// v1.4.51 no-reopen-in-goal: completed is one-way inside a goal — flip-flopping
 			// (done → reopened → redone) burns meaningless epochs. The valid escape: CREATE a
@@ -853,28 +894,16 @@ export default function taskExtension(pi: ExtensionAPI) {
 			if (params.blockedBy !== undefined) patch.blockedBy = params.blockedBy;
 			if (params.evidence !== undefined) patch.evidence = params.evidence;
 
-			// v1.4.88 #101-hardening: the pair's EXISTENCE is user-owned, like PARK.
-			// The model may put B on the board (via A's awaitsDecision) but never
-			// remove it — B closes only on the user's answer, or the user's own cancel
-			// (panel → control file). A chat request to drop B gets it PARKED
-			// (model-reachable) and the user clears it on the panel. Closes P2.
-			if (
-				params.status === "cancelled" &&
-				state.tasks.find((t) => t.id === params.id)?.decisionOf !== undefined
-			) {
-				throw new Error(
-					`[task] #${params.id} is an [AWAITING-USER-DECISION] stage — its existence is user-owned; the model cannot cancel it. Valid paths: the user answers the decision (then complete B quoting their reply), or the user clicks "cancel (user)" on the task panel (control file), or asks in chat — then PARK B (model-reachable) and tell the user to cancel/reopen it on the panel.`,
-				);
-			}
+			// (v1.4.88 #101 model-cancel-of-pair guard removed — P6 v1.4.135 refuses ALL
+			// model cancels earlier; pair closure stays user-owned via the control file.)
 			// PARK is one-way for the model (v1.4.28): the model may put a task INTO park
 			// (appeal/cap) but never take it out — a worker un-parking itself bypasses the
 			// entire verdict (user report 2026-09-09). The only way out: the panel button
-			// (user) → control file → consumeControlFile above. Cancelling a task awaiting
-			// the user is blocked too (cancelling = hiding the dispute).
+			// (user) → control file → consumeControlFile above.
 			const existingForLock = state.tasks.find((t) => t.id === params.id);
 			if (existingForLock?.status === "parked" && params.status !== undefined && params.status !== "parked") {
 				throw new Error(
-					`[task] #${params.id} is PARKED (stopped, awaiting the user) — the model cannot un-park or cancel it itself. The user clicks "reopen" on the task panel (control-file bridge), or says so directly in chat.`,
+					`[task] #${params.id} is PARKED (stopped, awaiting the user) — the model cannot un-park it itself. The user clicks "reopen" on the task panel (control-file bridge), or says so directly in chat.`,
 				);
 			}
 
@@ -968,6 +997,8 @@ export default function taskExtension(pi: ExtensionAPI) {
 				patch.status = "parked";
 				patch.appealReason = params.appeal.trim().slice(0, 500);
 				patch.failStreak = 0;
+				// #240/#257: appeal → panel card (the dispute is the USER's to settle)
+				if (statusSessionId) appealEntry = appendDecision(statusSessionId, params.id, "appeal", params.appeal);
 			} else if (params.status === "completed") {
 				const task = state.tasks.find((t) => t.id === params.id);
 				const spec = patch.verify ?? task?.verify;
@@ -1073,6 +1104,11 @@ export default function taskExtension(pi: ExtensionAPI) {
 				}
 			}
 
+			// #240/#257: held completion WITH amendReason → amend card (judge hold context).
+			if (params.status === "completed" && params.amendReason && patch.status === "held" && statusSessionId) {
+				amendEntry = appendDecision(statusSessionId, params.id, "amend", params.amendReason);
+			}
+
 			const prevTask = state.tasks.find((t) => t.id === params.id);
 			const prevStatus = prevTask?.status ?? null;
 			const prevStateForDiff = state; // #242: diff base for affected-only details
@@ -1084,18 +1120,8 @@ export default function taskExtension(pi: ExtensionAPI) {
 			// Closes P1 (model cancels A → B dies) and P3 (completed A flipped to
 			// cancelled outside a goal → B dies after the research already landed).
 			let cascadeState = result.state;
-			if (patch.status === "cancelled") {
-				for (const t of result.state.tasks) {
-					const isPair = t.decisionOf === params.id || /^decisionOf:#(\d+)\n/.test(t.description);
-				if (isPair && t.status === "pending") {
-						const casc = updateTask(cascadeState, t.id, {
-							status: "parked",
-							appealReason: `A #${params.id} was cancelled — the decision no longer has a source. User: "cancel (user)" to clear it, or reopen it if A was cancelled by mistake.`,
-						}, Date.now());
-						if (!casc.error) cascadeState = casc.state;
-					}
-				}
-			}
+			// (v1.4.87 pair cascade on model-cancel removed — P6 v1.4.135 makes model
+			// cancel unreachable at the tool layer; control.ts owns the user-side cascade.)
 			const unblocked = newlyReady(state, cascadeState);
 			// #246 (M2): completing/parking/cancelling the LAST in_progress task clears
 			// the wake ledger right now — merged into this very commit, no extra entry,
@@ -1104,6 +1130,10 @@ export default function taskExtension(pi: ExtensionAPI) {
 				cascadeState = { ...cascadeState, wake: undefined };
 			}
 			commit(ctx as UiContext, cascadeState);
+			// #240/#257: proposed_cancel landed → cancel-proposal card (user decides).
+			if (params.status === "proposed_cancel" && result.task!.status === "proposed_cancel" && statusSessionId) {
+				cancelEntry = appendDecision(statusSessionId, params.id, "cancel-proposal", params.evidence ?? params.amendReason ?? "no reason given");
+			}
 			const warn = result.warnings.length > 0 ? `\nWarnings: ${result.warnings.join(" ")}` : "";
 			const auditNote = result.task!.audit ? `\nAudit: ${result.task!.audit.summary.replace(/\n/g, "; ")}` : "";
 			const parkedNote =
@@ -1150,9 +1180,12 @@ export default function taskExtension(pi: ExtensionAPI) {
 				unblocked.length > 0
 					? `\nNow ready (no open blockers, safe to parallelize): ${unblocked.map((t) => `#${t.id} ${t.subject}`).join(", ")}`
 					: "";
+			// #240/#257: one pointer line — the panel card is the information surface.
+			const decisionCards = [amendEntry, appealEntry, cancelEntry, noteEntry].filter((e): e is TaskDecisionEntry => e !== null);
+			const decisionNote = decisionCards.length > 0 ? `\ndecision card on panel (${decisionCards.map((e) => e.id).join(", ")}) — the user decides; this line is just the pointer.` : "";
 			return {
 				content: [
-					{ type: "text", text: `#${result.task!.id} → ${result.task!.status}${statusNote}${heldNote}${warn}${auditNote}${parkedNote}${strictNote}${followUpNote}${ready}${changesNote}` },
+					{ type: "text", text: `#${result.task!.id} → ${result.task!.status}${statusNote}${heldNote}${warn}${auditNote}${parkedNote}${strictNote}${followUpNote}${ready}${decisionNote}${changesNote}` },
 				],
 					details: {
 					id: result.task!.id,
@@ -1346,6 +1379,8 @@ export default function taskExtension(pi: ExtensionAPI) {
 			restartBackupTimer = null;
 			taskSettle();
 		}, 3_000);
+		// v1.4.135 #240: 7d housekeeping on decided panel-decision entries.
+		if (statusSessionId) pruneDecided(statusSessionId);
 		// #246 test seam wiring: let tests drive settle/fire synchronously.
 		taskWakeDrive = (step) => {
 			if (step === "settle") taskSettle();
