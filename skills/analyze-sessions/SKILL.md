@@ -11,6 +11,21 @@ Tools for querying every Paseo agent session on this machine. All scripts are st
 
 Each agent is a JSON record `~/.paseo/agents/<workspace-dir>/<agentId>.json` (provider, title, cwd, model, timestamps, archived flag) plus a `persistence.nativeHandle` pointing at the provider-native transcript — for omp/pi that's a JSONL session file with `message` records (roles: `user`, `assistant`, `toolResult`), where assistant messages carry `usage.cost` split into input/output/cacheRead/cacheWrite/total. Agents whose provider keeps transcripts elsewhere (claude, codex, ...) still appear as rows, with metadata only.
 
+## Rule: every command is BOUNDED (mandatory)
+
+Agent context is a hard ceiling and transcripts here run to hundreds of MB (the main
+learn session is 500MB+). A single unbounded command can eat the whole window.
+Before running anything that touches agent records or transcripts, make sure it
+has an explicit output cap — otherwise add one:
+
+- Use the scripts' own limits: `--limit-hits N`, `--limit N`, `--since <window>`.
+  Prefer the smallest window that answers the question (e.g. `--since 7d`, not all-time).
+- Shell pipes: always end with `head -N` (e.g. `| head -20`), never print a raw file.
+- Python one-liners: cap collections before printing (`rows[-12:]`, `text[:200]`),
+  and stream files with `for line in fh` — never `read_text()` (OOM on big transcripts).
+- Never `cat`/`read` a transcript JSONL wholesale; extract fields and slice.
+- If a probe legitimately needs a big scan, print ONLY counts + the N matching rows.
+
 ## Rule: probe before you parse (mandatory)
 
 The transcript shape changes across pi versions — never hand-parse from memory. Before writing
