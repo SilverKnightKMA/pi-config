@@ -1,0 +1,9 @@
+name: adr-check
+on: [push, pull_request]
+jobs:
+  adr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate MADR-lite decision records (structure + evidence-ref)
+        run: python3 docs/decisions/adr-check.py
