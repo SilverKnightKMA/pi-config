@@ -2,7 +2,7 @@
 
 > Single source of truth for verdicts (together with `docs/upstream-registry.md`, the provenance ledger).
 > Full briefs (15-20KB) live in the `learn/` research workspace; each row here keeps only the
-> verdict + a one-line reason + a pointer. Run process: the `pi-ext-eval` skill (3 modes:
+> verdict + a one-line reason + a pointer. Run process: the `harness-eval (ex pi-ext-eval)` skill (3 modes:
 > landscape / eval / sync-upstream).
 
 ## Master table of the 15 @pify packages (scanned 2026-09-07, frozen)
@@ -133,7 +133,7 @@ Never scanned yet (open if needed):
 | Claude Code | none — this pain has open issues #27639/#58154 | (negative evidence: nobody has solved it upstream) |
 User decision 2026-09-20: build in-house in subagent-types — 15-minute reminder (≥3 children, excluding parked/waiting, re-arm on a new spawn or after 60 minutes), no auto-archive. Archive soft-delete was verified to wake-and-auto-unarchive (9ebf7be6 → ARCHIVED-WOKE). Shipped v1.4.106.
 
-## Landscape: port subagent-types -> Paseo plugin 100% (2026-09-20, internal EVAL /skill:pi-ext-eval)
+## Landscape: port subagent-types -> Paseo plugin 100% (2026-09-20, internal EVAL /skill:harness-eval (ex pi-ext-eval))
 Question: should the entire pi subagent stack (spawn, channel, pool/swarm, reminder) be ported into a Paseo plugin for every harness to use?
 | Component | Verdict |
 |---|---|
@@ -172,7 +172,7 @@ Source: four-question spike against daemon source (/opt/paseo @getpaseo/server d
 User decision 2026-09-21 (verbatim chain in `learn/decision-2026-09-21-memory-part2.md`): **HYBRID** — build durable facts tier in-house on existing lessons-inject mechanism; model READ-ONLY (memory-guard extended to lessons.md + facts.md); 3 write paths (regex trigger / memory-curator worker proposes + engine gate / user by hand); curator usage-triggered (diff/token/session counters + 30d floor), NOT calendar; PUSH cap ~20 lines/2KB, PULL recall tool (grep backend, FTS5 swap-point); plugin panel component 7. Plan mode required (verbatim 'cái này phải dùng plan mode chứ'); plan brief `learn/plan-memory-part2-2026-09-21.md`; no build task on board (#173 cancelled per doctrine).
 
 ## Landscape: user-action → running-agent notification (task reopen/panel actions) (2026-09-22, #2)
-Trigger: user reopened task #238 via panel and had to MANUALLY tell the agent ("Đã mở lại") — asked for automation eval (/skill:pi-ext-eval, mode 1).
+Trigger: user reopened task #238 via panel and had to MANUALLY tell the agent ("Đã mở lại") — asked for automation eval (/skill:harness-eval (ex pi-ext-eval), mode 1).
 
 | Candidate | Mechanism | Verdict |
 |---|---|---|
@@ -183,3 +183,16 @@ Trigger: user reopened task #238 via panel and had to MANUALLY tell the agent ("
 | Claude Code | NO native mechanism; open feature requests (#57019, #31243); 3rd-party Kanban dashboards poll task files | Nothing to copy — upstream gap acknowledged |
 
 **Gap vs our stack**: inbound injection machinery already exists (Paseo agents.send delivered [door-grant]/[child-report]/[housekeeping]; wake driver injects display:false custom entries). Missing piece is ONLY: task-control file watcher → on user verb (reopen/unpark/cancel/proposal-decide) inject self-describing `[task-notice] user reopened #238 — …` at next turn boundary (display:false, badgeable prefix). ~30-40 lines in task ext. Doctrine-safe: user philosophy = messages must be self-describing, prefix + explanation (lesson 2026-09-22). Proposal → task pair #252/#253 awaiting user.
+
+## Self-eval: harness-eval skill itself (2026-09-24, #283)
+Trigger: user said eval results presentation was too sketchy ("/skill:harness-eval lên chính nó"), then ordered template research from his own report-rewrite history (/skill:analyze-sessions — which itself surfaced OOM bug #286).
+| Candidate | Mechanism | Verdict |
+|---|---|---|
+| harness-eval 3-mode routing + registry split | frozen from 5 real evals | **KEEP** |
+| Mode-1 researcher report (no template) | ad-hoc format each run | **FIX** → #285 (5-block template incl. THIẾT KẾ flow + NGUỒN credit + backlog rule: pending items go to repo BACKLOG.md, not SKILL.md) |
+| crawl.py silent failure | 0-items exit 0 | **FIX** → P1 task (sanity floor + tests) |
+| crawl.py supply-chain blind spot | no chain check before PORT | **FIX** → #287 DONE (2 cheap OpenSSF Scorecard checks + --supply-chain mode; amosblomqvist/pi-config itself fails pre-filter) |
+| known-gap map inside SKILL.md | skill carries state, goes stale | **MOVE** → #288 (ADR-lite/MADR docs/decisions/ in BOTH repos + adr-check.yml workflow: smadr JSON Schema + evidence-ref lint anti-fabrication; MADR 3.0 standard, adr.github.io/madr) |
+| pi-bench / evalset / paired-eval / weighted score | model/task-eval family | **DROP** — family mismatch; pseudo-precision |
+| @firstpick/lifecycle; pidev deep-tail | later value | **SET ASIDE** |
+Full report: `learn/harness-eval-self-eval-20260924.md`. User pick of build order → #284 (a/b/c/d).
