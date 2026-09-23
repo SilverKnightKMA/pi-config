@@ -29,7 +29,7 @@ read, bash, powershell, edit, write, grep, find, ls
 | snip / md-log / sse-probe / zombie-watchdog | slash commands + background only, no agent tools |
 
 ### Skills (~/.pi/agent/skills + ~/.agents/skills)
-analyze-sessions, code-review, committee-lanes, paseo, paseo-advisor, paseo-handoff, paseo-help, paseo-plugin, pdf-reader, pi-ext-eval, release-beta, release-stable, stop-slop, task, teach, visualize, youtube-transcript (+ stale `paseo-committee` in ~/.agents/skills).
+analyze-sessions, code-review, committee-lanes, paseo, paseo-advisor, paseo-handoff, paseo-help, paseo-plugin, pdf-reader, harness-eval (ex pi-ext-eval), release-beta, release-stable, stop-slop, task, teach, visualize, youtube-transcript (+ stale `paseo-committee` in ~/.agents/skills).
 
 ## 2. Key confirmations
 

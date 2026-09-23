@@ -1,6 +1,6 @@
 # Upstream registry — provenance ledger for every ported/borrowed piece
 
-> Single source of truth for the **SYNC-UPSTREAM** mode of the `pi-ext-eval` skill.
+> Single source of truth for the **SYNC-UPSTREAM** mode of the `harness-eval (ex pi-ext-eval)` skill.
 > Each row: our extension ↔ external origin ↔ ported ref ↔ last check ↔ tracking mechanism.
 > When upstream moves (dependabot witness PR or a periodic scan) → run the sync mode in the skill
 > → record the conclusion in the "last check" column + add a row to `ext-eval-index.md`.
@@ -52,8 +52,8 @@ No @pify/* or un-ported candidates are pinned in devDependencies (tried and remo
 ## Rules
 
 1. New port → add the registry row BEFORE the code merges to main (the ref column = the actual release/tarball read).
-2. When an `[upstream-sync]` issue (from the upstream-drift workflow) appears → run the sync mode in the `pi-ext-eval` skill; record the conclusion (what diffed / port or drop) in `ext-eval-index.md`; update the "last check" column + the ref in the endpoint → the issue auto-closes on the next workflow run.
+2. When an `[upstream-sync]` issue (from the upstream-drift workflow) appears → run the sync mode in the `harness-eval (ex pi-ext-eval)` skill; record the conclusion (what diffed / port or drop) in `ext-eval-index.md`; update the "last check" column + the ref in the endpoint → the issue auto-closes on the next workflow run.
 3. Periodic scans (landscape) sweep for new repos / new packages — they do not replace drift-issue for repos that already have an endpoint.
 4. "Own design" rows are still recorded — so that later we can tell what has an upstream and what does not.
 5. devDependencies keep only the 2 actually-installed externals (witness-deps above); the automated signal for ported exts is an upstream-drift issue, not a dependabot PR.
-6. The `.github/workflows/upstream-drift.yml` workflow (weekly + manual) reads the endpoint column and compares the ported ref against npm `/latest` + the GitHub HEAD; on drift it opens/updates an issue labeled `upstream-sync` (title `[upstream-sync] <name>`, NO version embedded so it dedupes); once drift is resolved it auto-closes. Sync work driven by these issues uses mode 3 of the `pi-ext-eval` skill.
+6. The `.github/workflows/upstream-drift.yml` workflow (weekly + manual) reads the endpoint column and compares the ported ref against npm `/latest` + the GitHub HEAD; on drift it opens/updates an issue labeled `upstream-sync` (title `[upstream-sync] <name>`, NO version embedded so it dedupes); once drift is resolved it auto-closes. Sync work driven by these issues uses mode 3 of the `harness-eval (ex pi-ext-eval)` skill.
