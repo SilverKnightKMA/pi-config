@@ -58,42 +58,42 @@ def main() -> int:
                 m = pattern.search(line)
                 if not m:
                     continue
-            # Skip the raw-JSON noise: only count hits inside message text values
-            try:
-                entry = json.loads(line)
-            except Exception:
-                continue
-            if entry.get("type") != "message":
-                continue
-            msg = entry.get("message") or {}
-            role = msg.get("role")
-            if args.prompts_only and role != "user":
-                continue
-            content = msg.get("content")
-            text = content if isinstance(content, str) else "\n".join(
-                c.get("text", "") for c in content or [] if isinstance(c, dict) and c.get("type") == "text"
-            )
-            if not pattern.search(text):
-                continue
+                # Skip the raw-JSON noise: only count hits inside message text values
+                try:
+                    entry = json.loads(line)
+                except Exception:
+                    continue
+                if entry.get("type") != "message":
+                    continue
+                msg = entry.get("message") or {}
+                role = msg.get("role")
+                if args.prompts_only and role != "user":
+                    continue
+                content = msg.get("content")
+                text = content if isinstance(content, str) else "\n".join(
+                    c.get("text", "") for c in content or [] if isinstance(c, dict) and c.get("type") == "text"
+                )
+                if not pattern.search(text):
+                    continue
 
-            if shown_for_agent == 0:
-                print(f"\n=== {s.agent_id[:8]} · {s.provider} · {s.title[:50]} ===")
-            shown_for_agent += 1
-            hits += 1
-            if hits > args.limit_hits:
-                print(f"\n(hit limit {args.limit_hits} reached — raise --limit-hits)")
-                return 0
+                if shown_for_agent == 0:
+                    print(f"\n=== {s.agent_id[:8]} · {s.provider} · {s.title[:50]} ===")
+                shown_for_agent += 1
+                hits += 1
+                if hits > args.limit_hits:
+                    print(f"\n(hit limit {args.limit_hits} reached — raise --limit-hits)")
+                    return 0
 
-            # Show the matching message text with limited context
-            text_lines = text.split("\n")
-            for li, tl in enumerate(text_lines):
-                if pattern.search(tl):
-                    lo = max(0, li - args.context)
-                    hi = min(len(text_lines), li + args.context + 1)
-                    print(f"  [{role}] (line {li + 1}):")
-                    for cl in text_lines[lo:hi]:
-                        print(f"    | {cl[:160]}")
-                    break
+                # Show the matching message text with limited context
+                text_lines = text.split("\n")
+                for li, tl in enumerate(text_lines):
+                    if pattern.search(tl):
+                        lo = max(0, li - args.context)
+                        hi = min(len(text_lines), li + args.context + 1)
+                        print(f"  [{role}] (line {li + 1}):")
+                        for cl in text_lines[lo:hi]:
+                            print(f"    | {cl[:160]}")
+                        break
 
     if hits == 0:
         print("No hits.")

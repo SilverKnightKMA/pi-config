@@ -285,7 +285,7 @@ def scan_transcript(summary: AgentSummary, want_prompts: bool, max_prompt_chars:
     prompts: list[str] = []
     first = ""
     try:
-        with summary.transcript.open() as f:
+        with summary.transcript.open(encoding="utf-8", errors="replace") as f:
             for line in f:
                 try:
                     e = json.loads(line)
@@ -308,8 +308,7 @@ def scan_transcript(summary: AgentSummary, want_prompts: bool, max_prompt_chars:
                         continue
                     if not first:
                         first = text
-                    if len(text) <= max_prompt_chars:
-                        prompts.append(text)
+                    prompts.append(text[:max_prompt_chars])
     except Exception:
         pass
     summary.cost_usd = cost
