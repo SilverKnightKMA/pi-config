@@ -100,6 +100,19 @@ registry + index + closes issues. Single issue: main does the diff itself.
    - **Upstream regressed** (breaking, philosophy change) → record a warning in the registry + index.
 5. Mind the regions of "own design beyond upstream" (like the task 3-tier verify): upstream adding something in that region does not automatically win — compare quality, not presence.
 
+## Self-eval (target = one of OUR skills/extensions)
+
+When the candidate is OUR OWN artifact (not an external package), run Mode 2's SHAPE with
+the own-asset vocabulary: **KEEP / FIX / MOVE / DROP / SET ASIDE** (PORT/BORROW do not apply —
+nothing to bring home). The evidence leg should use the skill's OWN tools where possible
+(the "với chính nó" pattern, user 2026-09-24): run its scripts on its own history — that is
+how the analyze-sessions self-eval (#302) caught a real false-negative bug that unit probes missed.
+Triggers: a major rework shipped, an incident attributed to the artifact, or the user asks.
+Output = the 5-block report + decision pair, same as any eval. Vocabulary note recorded after
+2 rounds on harness-eval (#283, #295) and 1 on analyze-sessions (#302); user initially declined
+the wording (2026-09-24 morning), reversed the same day on evidence.
+
+
 ---
 
 ## Verdict vocabulary (use consistently)

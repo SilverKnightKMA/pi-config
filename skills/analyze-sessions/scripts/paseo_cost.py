@@ -68,13 +68,16 @@ def print_report(report) -> None:
     for g in report["groups"]:
         label = g["key"][:48]
         print(f"{label:<50} {g['usd']:>10.4f} {g['agents']:>7} {g['messages']:>8}")
+    total = report.get("total_groups")
+    if total is not None and total > len(report["groups"]):
+        S.capped_notice(len(report["groups"]), total, "--limit", "groups")
 
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--by", default="day",
                    choices=["total", "day", "workspace", "provider", "model", "kind", "agent"])
-    p.add_argument("--limit", type=int, help="cap groups shown")
+    p.add_argument("--limit", type=int, default=30, help="cap groups shown (safe default; raise to WIDEN)")
     p.add_argument("--json", action="store_true")
     S.add_filter_args(p)
     args = p.parse_args()
@@ -94,6 +97,7 @@ def main() -> int:
 
     report = build_report(summaries, args.by)
     if group_limit:
+        report["total_groups"] = len(report["groups"])
         report["groups"] = report["groups"][:group_limit]
 
     if args.json:

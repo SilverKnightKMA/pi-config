@@ -30,6 +30,8 @@ def main() -> int:
     p.add_argument("--prompts-only", action="store_true",
                    help="search user prompts only (not assistant output)")
     p.add_argument("--limit-hits", type=int, default=50, help="max total hits printed")
+    p.add_argument("--max-output-bytes", type=int, default=65536,
+                   help="total stdout budget (safe default; raise to WIDEN, never to shrink)")
     S.add_filter_args(p)
     args = p.parse_args()
 
@@ -43,6 +45,14 @@ def main() -> int:
         return 0
 
     hits = 0
+    printed = 0
+    parse_fail = 0
+
+    def outp(s: str = "") -> None:
+        nonlocal printed
+        print(s)
+        printed += len(s) + 1
+
     for s in summaries:
         if not s.transcript:
             continue
@@ -62,6 +72,7 @@ def main() -> int:
                 try:
                     entry = json.loads(line)
                 except Exception:
+                    parse_fail += 1
                     continue
                 if entry.get("type") != "message":
                     continue
@@ -77,11 +88,14 @@ def main() -> int:
                     continue
 
                 if shown_for_agent == 0:
-                    print(f"\n=== {s.agent_id[:8]} · {s.provider} · {s.title[:50]} ===")
+                    outp(f"\n=== {s.agent_id[:8]} · {s.provider} · {s.title[:50]} ===")
                 shown_for_agent += 1
                 hits += 1
                 if hits > args.limit_hits:
-                    print(f"\n(hit limit {args.limit_hits} reached — raise --limit-hits)")
+                    outp(f"\n(hit limit {args.limit_hits} reached — raise --limit-hits)")
+                    return 0
+                if printed > args.max_output_bytes:
+                    outp(f"\nOUTPUT CAPPED at ~{args.max_output_bytes // 1024}KB — raise with --max-output-bytes or narrow filters")
                     return 0
 
                 # Show the matching message text with limited context
@@ -90,15 +104,17 @@ def main() -> int:
                     if pattern.search(tl):
                         lo = max(0, li - args.context)
                         hi = min(len(text_lines), li + args.context + 1)
-                        print(f"  [{role}] (line {li + 1}):")
+                        outp(f"  [{role}] (line {li + 1}):")
                         for cl in text_lines[lo:hi]:
-                            print(f"    | {cl[:160]}")
+                            outp(f"    | {cl[:160]}")
                         break
 
     if hits == 0:
         print("No hits.")
     else:
         print(f"\n— {hits} hit(s) across {len(summaries)} agents")
+    if parse_fail > 50:
+        print(f"NOTE: {parse_fail} lines failed json parse — transcript shape may have changed; run paseo_probe.py before trusting coverage")
     return 0
 
 

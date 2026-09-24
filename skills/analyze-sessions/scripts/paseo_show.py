@@ -27,7 +27,7 @@ def find_agent(prefix: str):
     return matches[0]
 
 
-def render(summary: S.AgentSummary, max_chars: int) -> None:
+def render(summary: S.AgentSummary, max_chars: int, limit: int = 30) -> None:
     print(f"# {summary.title or summary.agent_id}")
     print(f"agent    : {summary.agent_id}")
     print(f"provider : {summary.provider}  model: {summary.model}")
@@ -43,7 +43,8 @@ def render(summary: S.AgentSummary, max_chars: int) -> None:
     print(f"transcript: {summary.transcript}\n")
 
     total_cost = 0.0
-    with summary.transcript.open() as f:
+    shown_msgs = 0
+    with summary.transcript.open(encoding="utf-8", errors="replace") as f:
         for line in f:
             try:
                 e = json.loads(line)
@@ -61,6 +62,11 @@ def render(summary: S.AgentSummary, max_chars: int) -> None:
                     c.get("text", "") for c in content or [] if isinstance(c, dict) and c.get("type") == "text"
                 ).strip()
                 if text:
+                    if shown_msgs >= limit:
+                        S.capped_notice(limit, shown_msgs + 1, "--limit", "messages")
+                        print(f"\n— cost so far (output capped): ${total_cost:.4f}")
+                        return
+                    shown_msgs += 1
                     print(f"--- USER{ts_str} ---")
                     print(text[:max_chars] + ("\n…(truncated)" if len(text) > max_chars else ""))
                     print()
@@ -71,6 +77,11 @@ def render(summary: S.AgentSummary, max_chars: int) -> None:
                 cost = usage.get("total") or 0
                 total_cost += cost
                 if text:
+                    if shown_msgs >= limit:
+                        S.capped_notice(limit, shown_msgs + 1, "--limit", "messages")
+                        print(f"\n— cost so far (output capped): ${total_cost:.4f}")
+                        return
+                    shown_msgs += 1
                     print(f"--- ASSISTANT{ts_str} (${cost:.4f}) ---")
                     print(text[:max_chars] + ("\n…(truncated)" if len(text) > max_chars else ""))
                     print()
@@ -81,8 +92,10 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("agent", help="agent id (or unique prefix)")
     p.add_argument("--max-chars", type=int, default=1500)
+    p.add_argument("--limit", type=int, default=30,
+                   help="max messages printed (safe default; raise to WIDEN)")
     args = p.parse_args()
-    render(find_agent(args.agent), args.max_chars)
+    render(find_agent(args.agent), args.max_chars, args.limit)
     return 0
 
 

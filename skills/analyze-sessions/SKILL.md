@@ -15,10 +15,23 @@ Each agent is a JSON record `~/.paseo/agents/<workspace-dir>/<agentId>.json` (pr
 
 Agent context is a hard ceiling and transcripts here run to hundreds of MB (the main
 learn session is 500MB+). A single unbounded command can eat the whole window.
-Before running anything that touches agent records or transcripts, make sure it
-has an explicit output cap — otherwise add one:
+Protection is TWO-LAYER and script-enforced by default (user decision 2026-09-24):
+the model does NOT have to remember to set caps — every script ships safe defaults,
+flags exist only to WIDEN.
 
-- Use the scripts' own limits: `--limit-hits N`, `--limit N`, `--since <window>`.
+**The CAPPED contract (two-way):** when a script truncates, it prints `OUTPUT CAPPED at <n> —
+raise with <flag>` at the exact cut point. **No CAPPED line = the output is complete.**
+Always check for a CAPPED line before concluding "no data exists" (a silent cap would
+be the same false-negative class as the fixed "No hits." bug). Current defaults:
+
+- `paseo_search` — 50 hits, context 2 lines, ~160 chars/line, ~64KB total
+- `paseo_show` / `paseo_prompts` — capped message/prompt counts + per-item char caps
+- aggregate tables (`paseo_cost`, `paseo_subagents`, `om_worker_cost`,
+  `ccusage_crosscheck`, `anomaly_report`) — top-N rows + "+K more" notice
+
+When scripting your own probes:
+
+- Use the scripts' own limits to WIDEN when needed: `--limit-hits N`, `--limit N`, `--since <window>`.
   Prefer the smallest window that answers the question (e.g. `--since 7d`, not all-time).
 - Shell pipes: always end with `head -N` (e.g. `| head -20`), never print a raw file.
 - Python one-liners: cap collections before printing (`rows[-12:]`, `text[:200]`),

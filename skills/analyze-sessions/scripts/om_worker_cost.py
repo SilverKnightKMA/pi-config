@@ -275,8 +275,11 @@ def main() -> int:
     if args.json:
         print(json.dumps(out, indent=1))
         return 0
-    for row in out:
+    shown = out[:40]
+    for row in shown:
         print(" | ".join(f"{k}={v}" for k, v in row.items()))
+    if len(out) > len(shown):
+        print(f"OUTPUT CAPPED at 40 of {len(out)} rows — raise with --limit-rows")
     return 0
 
 

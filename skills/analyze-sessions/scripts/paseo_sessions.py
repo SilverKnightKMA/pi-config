@@ -276,6 +276,14 @@ def iter_om_worker_records(filters: Filters) -> Iterator[AgentSummary]:
 # Native transcript scan (omp/pi JSONL)
 # ---------------------------------------------------------------------------
 
+def capped_notice(shown: int, total: int, flag: str, what: str = "rows") -> None:
+    """CAPPED contract (user 2026-09-24): print the cut line exactly when truncation
+    happened. No line printed = output complete. Notices for machine-readable
+    formats (jsonl) should go to stderr instead of calling this."""
+    if total > shown:
+        print(f"\nOUTPUT CAPPED at {shown} {what} of {total} — raise with {flag}")
+
+
 def scan_transcript(summary: AgentSummary, want_prompts: bool, max_prompt_chars: int) -> None:
     """Populate cost/message counts/user prompts from the native JSONL file."""
     if not summary.transcript:

@@ -108,6 +108,8 @@ def main() -> int:
     total = sum(r["cost"] for r in rows)
 
     if args.json:
+        if len(rows) > args.limit:
+            sys.stderr.write(f"OUTPUT CAPPED at {args.limit} of {len(rows)} runs — raise with --limit\n")
         print(json.dumps({"runs": rows[: args.limit], "total": total, "dupRecordsSkipped": dup}, indent=2))
         return 0
 
@@ -118,10 +120,16 @@ def main() -> int:
         for r in rows[: args.limit]:
             flag = f" [{r['flag']}]" if r["flag"] else ""
             print(f"  ${r['cost']:8.4f}  {r['role']:<12} {r['agent']}  {r['activity']}{flag}  {r['title'][:56]}")
+        if len(rows) > args.limit:
+            print(f"OUTPUT CAPPED at {args.limit} of {len(rows)} runs — raise with --limit")
         return 0
-    for k, a in rollup(rows, args.by)[: args.limit]:
+    rolled = rollup(rows, args.by)[: args.limit]
+    for k, a in rolled:
         extra = f" ({parents.get(k, '')[:40]})" if args.by == "parent" and k in parents else ""
         print(f"  ${a['cost']:8.4f}  {a['runs']:3d} runs  {k}{extra}")
+    full = rollup(rows, args.by)
+    if len(full) > len(rolled):
+        print(f"OUTPUT CAPPED at {args.limit} of {len(full)} groups — raise with --limit")
     return 0
 
 
