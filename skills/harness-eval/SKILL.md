@@ -149,8 +149,8 @@ the wording (2026-09-24 morning), reversed the same day on evidence.
 
 | Term | Meaning |
 |---|---|
-| PORT | bring the mechanism into pi-config, adapted (no package installed) |
-| BORROW / BORROW PIECES | take a concept/loose piece, reimplement in our system's style |
+| PORT | bring the mechanism into pi-config, adapted (no package installed) — the piece keeps a 1:1 artifact lineage with a pinned upstream ref (file/function mapping), so drift-issue + Mode 3 SYNC-UPSTREAM have something to diff |
+| BORROW / BORROW PIECES | take a concept/loose piece, reimplement in our system's style — source credited in the registry but NO artifact-level correspondence; nothing to sync against upstream later |
 | DROP | duplicates something we already have, or conflicts with doctrine/safety |
 | SET ASIDE / DEFERRED | worthwhile but not yet time; record in BACKLOG.md (tag repo:) with a re-review trigger; one summary row in the index only when a final verdict lands |
 | drift-issue | the upstream-drift workflow opens an issue when upstream ≠ ported-ref; auto-closes when the registry updates — the mechanism for exts ALREADY PORTED |
