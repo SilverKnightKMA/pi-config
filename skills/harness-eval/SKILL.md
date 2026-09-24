@@ -123,6 +123,8 @@ registry + index + closes issues. Single issue: main does the diff itself.
 
 1. Open `upstream-registry.md`, find the matching row → old ref.
 2. **Diff for real** old → new ref (tarball both versions or `git diff` two SHAs). Do NOT read the changelog instead of diffing.
+
+**SYNC-BORROW variant (drift issue on a BORROW row, user 2026-09-24):** a borrow has NO 1:1 artifact to diff — a code diff would be theater. Instead: read the releases/changelog across the gap versions → compare ONLY the borrowed concept region against what we absorbed → verdict per candidate piece (absorb-more / nothing-moved / our-implementation-went-further) → update the registry endpoint ref. Sourcing rule stays code-first: if the changelog hints the concept region changed, open the actual source files to confirm before proposing. Same mini-brief template, same user-decides gate.
 3. **Mini-brief ~10 lines**: what changed / the stated reason / does it touch a region we already ported or a region where we have evolved beyond upstream / is there a piece worth bringing home / proposal.
 4. Three outcomes:
    - **Not worth it** → update the "last check" column + new ref. Done.
@@ -153,7 +155,8 @@ the wording (2026-09-24 morning), reversed the same day on evidence.
 | BORROW / BORROW PIECES | take a concept/loose piece, reimplement in our system's style — source credited in the registry but NO artifact-level correspondence; nothing to sync against upstream later |
 | DROP | duplicates something we already have, or conflicts with doctrine/safety |
 | SET ASIDE / DEFERRED | worthwhile but not yet time; record in BACKLOG.md (tag repo:) with a re-review trigger; one summary row in the index only when a final verdict lands |
-| drift-issue | the upstream-drift workflow opens an issue when upstream ≠ ported-ref; auto-closes when the registry updates — the mechanism for exts ALREADY PORTED |
+| drift-issue | the upstream-drift workflow opens an issue when upstream ≠ ported-ref; auto-closes when the registry updates — the mechanism for exts ALREADY PORTED **and BORROWED alike** (any row with an endpoint: the workflow watches the endpoint column, port or borrow) |
+| borrow-drift | a drift issue firing on a BORROW row: no 1:1 artifact to code-diff — run the SYNC-BORROW variant below (changelog/concept-region re-check), never a fake code diff |
 | witness-deps | devDeps pins for the 2 actually-installed externals (pi-mcp-adapter/pi-web-access) — a dependabot bump = a real upgrade; NOT for ported exts |
 | own design beyond | a region where we have developed further than upstream (still recorded in the registry for comparison) |
 
