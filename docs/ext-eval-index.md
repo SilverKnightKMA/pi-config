@@ -197,3 +197,4 @@ Trigger: user said eval results presentation was too sketchy ("/skill:harness-ev
 | @firstpick/lifecycle; pidev deep-tail | later value | **SET ASIDE** |
 Full report: `learn/harness-eval-self-eval-20260924.md`. User pick of build order → #284 (a/b/c/d).
 | harness-eval self-eval VÒNG 2 (bản mới) | 4 FIX doc (2-template conflict, pidev 3.2MB read, GITHUB_TOKEN use-site, SET ASIDE place) + 1 SET ASIDE | **#295 → P-A chờ user** |
+| analyze-sessions self-eval (Mode 2 'với chính nó') | **KEEP + FIXED** fceab1d | bug thụt dòng 315b696 bắt ngay trong eval; P2+P3 shipped: caps 2 tầng mặc định + CAPPED contract + tests 10/10; SET ASIDE anomaly_report → BACKLOG |
