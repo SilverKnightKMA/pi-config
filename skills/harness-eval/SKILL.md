@@ -31,6 +31,8 @@ Every report this skill produces (Mode 1 researcher report, Mode 2 brief, Mode 3
    - **NGUỒN** — every concept borrowed from outside gets credit (name + link/spec). No credit → not allowed into the report or the skill.
 4. **CẦN USER QUYẾT** — explicit options; verdicts never self-execute.
 
+Self-check before presenting (added after #294 batch slipped through with headings-only): grep for the 5 headings is NOT compliance — verify each block's sub-items (criteria numbered and locked first, verdict rows carry a criterion column, every proposal has BOTH Lý do and Kỹ thuật layers with per-piece drift-guard). The #294 upgrade pass caught a real contradiction this way: one piece's drift-guard contradicted the batch-level blanket claim.
+
 Presentation rules (distilled from the user's own report-rewrite history, researched 2026-09-24): ít chữ, no filler · real evidence, not paraphrase · items lacking data stay listed as `chưa đủ dữ kiện`, never silently skipped · any bypass/exception states its reason · every report has a follow-up (product or user review) · one consistent format every run.
 
 ## Backlog rule — this file carries NO state (user 2026-09-24)
