@@ -27,7 +27,7 @@ export function renderIndexFile(topics: Topic[]): string {
 		parts.push("_No topics yet._");
 		return `${parts.join("\n")}\n`;
 	}
-	parts.push("Durable memory topics for this project. Read a file for its full current state.", "");
+	parts.push("Durable memory topics for this project. Read a file for its full current state. Notes record what was true when written — confirm the file/function/flag still exists before acting on it (caveat freshness, port @pify/memory 0.11.1, batch #294 P3).", "");
 	for (const topic of topics) {
 		const updated = topic.updated ? ` · updated ${topic.updated}` : "";
 		parts.push(`## ${titleOf(topic)}`);
@@ -48,7 +48,7 @@ export function renderMemoryMap(topics: Topic[]): string | undefined {
 	if (topics.length === 0) return undefined;
 	const lines: string[] = [
 		"## Memory map",
-		"Durable long-term notes live in `.memory/`. Read a file when a topic below looks relevant; these summaries are intentionally terse.",
+		"Durable long-term notes live in `.memory/`. Read a file when a topic below looks relevant; these summaries are intentionally terse. Notes record what was true when written — confirm the file/function/flag still exists before acting on it (caveat freshness, @pify/memory 0.11.1, #294 P3).",
 	];
 	for (const topic of topics) {
 		const updated = topic.updated ? ` (updated ${topic.updated})` : "";

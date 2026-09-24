@@ -1,4 +1,25 @@
 
+test("#294 P1 (port @pify/task 0.4.0): reopen clears stale evidence; re-complete needs FRESH evidence in the patch", () => {
+	let s = EMPTY_STATE;
+	s = createTask(s, "t", "", [], 1).state;
+	// complete WITH evidence in the same patch
+	const done = updateTask(s, 1, { status: "in_progress" }, 1);
+	const closed = updateTask(done.state, 1, { status: "completed", evidence: "probe X ok" }, 2);
+	assert.equal(closed.task!.status, "completed");
+	assert.equal(closed.task!.evidence, "probe X ok");
+	// reopen without fresh evidence → evidence cleared (no stale "evidence recorded")
+	const reopened = updateTask(closed.state, 1, { status: "in_progress" }, 3);
+	assert.equal(reopened.task!.status, "in_progress");
+	assert.equal(reopened.task!.evidence, null);
+	// re-complete WITHOUT new evidence in the patch must ERROR (old bug: next.evidence
+	// inherited stale value → re-closed on now-wrong evidence)
+	const noFresh = updateTask(reopened.state, 1, { status: "completed" }, 4);
+	assert.match(noFresh.error ?? "", /requires evidence/);
+	// re-complete WITH fresh evidence in the patch passes
+	const fresh = updateTask(reopened.state, 1, { status: "completed", evidence: "probe Y ok" }, 5);
+	assert.equal(fresh.task!.status, "completed");
+});
+
 test("v1.4.65 #64: held — judge holds completion, blocks dependents, never ready, survives sanitize", () => {
 	let s = EMPTY_STATE;
 	s = createTask(s, "blocker", "", [], 1).state; // #1
