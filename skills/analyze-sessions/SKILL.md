@@ -169,6 +169,12 @@ Role classification probes the first 4KB of each transcript (consolidator prompt
 
 Ranked anomaly report over sessions + `~/.pi/agent/sse-probe.jsonl` + `~/.pi/agent/zombie-watchdog.jsonl` + OM worker-run costs. Stdlib only, no model calls.
 
+**When to reach for it (validated 2026-09-24 on real data):** any incident of the
+class *call errors / abnormal session aborts / stuck agents / silent deaths /
+cost spikes* → run this FIRST, before manual grepping. First real run caught SSE-drop
+clusters on the glm relay, a 183/458 drop→abort correlation, and two silent judge
+deaths — deterministic, bounded, finishes in seconds.
+
 ```bash
 # Markdown report, last 7 days (default window)
 python3 scripts/anomaly_report.py
