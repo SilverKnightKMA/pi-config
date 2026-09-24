@@ -984,7 +984,7 @@ NEXT: revise the report text (sections per template, token on first line) and ca
 						text: `Report accepted — ${v.stats.chars} chars, ${v.stats.sections} sections${v.stats.tokenVerified ? `, token verified` : ""}. ${delivered}. You may end your turn now.`,
 					},
 				],
-				details: { accepted: true, problems: [], chars: v.stats.chars, sections: v.stats.sections, tokenVerified: v.stats.tokenVerified },
+				details: { accepted: true, problems: [], chars: v.stats.chars, sections: v.stats.sections, tokenVerified: v.stats.tokenVerified, declared: v.stats.declared ?? null },
 			};
 		},
 	});

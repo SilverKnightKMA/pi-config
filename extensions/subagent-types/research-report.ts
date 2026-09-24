@@ -14,6 +14,8 @@
  * Pure validation is split out so tests never need a live channel.
  */
 
+import { outcomeLine, parseDeclaredOutcome, stripDeclaration } from "./gate-contract.ts";
+
 export interface ResearchReportInput {
 	report: string;
 	/** Optional completion token the task demanded (e.g. LANDSCAPE-WATCHDOG). */
@@ -24,7 +26,8 @@ export interface ResearchReportVerdict {
 	ok: boolean;
 	/** Denial-envelope problems — empty when ok. */
 	problems: string[];
-	stats: { chars: number; sections: number; tokenVerified: boolean };
+	/** stats.declared: the child's own OUTCOME: line, if any (claim, not evidence — #294 P5). */
+	stats: { chars: number; sections: number; tokenVerified: boolean; declared?: string };
 }
 
 export const REPORT_MIN_CHARS = 400;
@@ -65,14 +68,31 @@ export function validateResearchReport(input: ResearchReportInput): ResearchRepo
 			tokenVerified = true;
 		}
 	}
-	return { ok: problems.length === 0, problems, stats: { chars: text.length, sections, tokenVerified } };
+	const declared = parseDeclaredOutcome(text);
+	return { ok: problems.length === 0, problems, stats: { chars: text.length, sections, tokenVerified, declared } };
 }
 
-/** Build the digest the channel carries to the main: token line + full report. */
+/** Build the digest the channel carries to the main: token line + full report.
+ *
+ * #294 P5 (honest outcome): when the child ended with an OUTCOME: declaration,
+ * the digest leads with the machine-readable [outcome] line and the raw
+ * declaration is stripped from the body — the main reads the settled fact
+ * without prose-hunting, and the claim is named as a claim.
+ */
 export function researchReportDigest(text: string, token?: string): string {
-	const trimmed = text.trim();
 	const tok = (token ?? "").trim();
-	const firstLine = trimmed.split("\n", 1)[0] ?? "";
-	if (tok && firstLine.includes(tok)) return trimmed; // token already leads
-	return tok ? `${tok}\n\n${trimmed}` : trimmed;
+	const declared = parseDeclaredOutcome(text);
+	const body = declared ? stripDeclaration(text) : text.trim();
+	const note = declared ? outcomeLine(declared, "not-requested") : "";
+	const outcomeNote = note ? `${note}\n\n` : "";
+	if (tok) {
+		const firstBodyLine = body.split("\n", 1)[0] ?? "";
+		if (firstBodyLine.includes(tok)) {
+			// token already leads the body — inject the outcome note right after it
+			const rest = body.slice(firstBodyLine.length).replace(/^\n+/, "");
+			return `${firstBodyLine}\n\n${outcomeNote}${rest}`;
+		}
+		return `${tok}\n\n${outcomeNote}${body}`;
+	}
+	return `${outcomeNote}${body}`;
 }
