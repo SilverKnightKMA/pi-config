@@ -41,18 +41,33 @@ Presentation rules (distilled from the user's own report-rewrite history, resear
 - Final verdicts + dates → `docs/ext-eval-index.md`. Decisions needing permanence → `docs/decisions/` ADR records (#288).
 - SKILL.md is instructions + pointers only — nothing here can go stale.
 
+## The eval LIFECYCLE — the canonical flow (user 2026-09-24)
+
+Every eval engagement runs this spine; the modes below are the mechanics each phase calls. If an agent runs this skill and does not know whether to teach — the answer is here.
+
+1. **TEACH-IN** (~10 min, quiz-verified) — teach the CURRENT context first so the user holds the model of what we already have. Skip only when this exact topic was already taught (check `eval_log.py query --kind teach --target <x> --last 3`; a stated skip still logs a `note`).
+2. **SELF-EVAL** — Mode 2 'với chính nó' on what we own in this family: catch our own bugs before judging the market.
+3. **LANDSCAPE** — Mode 1 market scan, GATED by decay (see Decay gate below).
+4. **DECIDE** — user picks; the researcher's verdict is a proposal, never self-executes.
+5. **TEACH-OUT (R1)** — after a big port (>4h or core-loop-touching): teach the shipped mechanism (~10 min). Small borrows may fold the teach into the DECIDE report.
+
+**Logger duties per phase (mandatory as each phase closes):** teach → `--kind teach` (record gaps found); self-eval / landscape → their kind; decide → `--kind decision` with the user's pick verbatim; port ship → `--kind port` with commit/tag. A phase skipped for a stated reason still appends a `note` saying why — the timeline must show the branch taken, not just the work done.
+
 ## Timeline logger — every eval event appends ONE line (user 2026-09-24)
 
 - Ledger: `pi-config/docs/eval-timeline.jsonl` via `eval_log.py` (this dir, stdlib only).
-- MANDATORY final step of EVERY mode, teach session, port ship, and user decision:
-  `python3 eval_log.py append --kind <landscape|deep-eval|self-eval|sync-upstream|teach|port|decision|note> --target <x> --verdict <v> [--task #id] [--report path] [--commit sha]`.
+- `append --kind <landscape|deep-eval|self-eval|sync-upstream|teach|port|decision|note> --target <x> --verdict <v> [--task #id] [--report path] [--commit sha]`.
 - `query --kind/--target/--since` answers "khi nào eval X, kết quả gì" WITHOUT analyze-sessions transcript mining.
-- Append-only: corrections are new `note` events, never rewrites. Backfill uses `--ts` (stamps backfill:true — history honestly marked).
+- Append-only for corrections (new `note` events, never rewrites). Backfill uses `--ts` (stamps backfill:true — history honestly marked).
 
-## Coverage rules (user-approved 2026-09-24)
+**Growth policy (bounded, user 2026-09-24):** a typical engagement logs 3-5 lines. The `compact` verb rolls events older than 180 days into ONE `note compact` summary line per target, MOVING the raw lines to `docs/eval-timeline.archive.jsonl` (moved, never deleted — audits stay possible). Run `compact` when the live file passes ~2,000 lines. `port` and `decision` events are ALWAYS kept verbatim in the live file (they are the permanent record); compaction only merges scan/eval/teach detail lines.
 
-- **R1 teach-after-big-port**: any port/borrow >4h of work or touching a core loop → run a ~10-min teach on the shipped mechanism right after, so the user holds the core model (not just the changelog). Tracker: task #310.
-- **R2 landscape-decay**: a landscape older than ~4 weeks is REFERENCE, not current state. Before using a family scan for a new decision → re-scan (or cite it as stale with the scan date).
+## Decay gate — two thresholds (user 2026-09-24, refines old R2)
+
+Before phase 3 (LANDSCAPE), check the family's latest scan: `eval_log.py query --kind landscape --target <family> --last 1`.
+- **Scan age > 4 weeks (OVER threshold)** → the full task set is REQUIRED: re-run Mode 1 with a fresh registry crawl before any comparison; leaning on the stale scan alone is forbidden.
+- **Scan age ≤ 4 weeks (WITHIN threshold)** → reuse the existing scan and SKIP re-scanning — UNLESS the user explicitly demands a refresh.
+- Either way the report cites the scan date, so a later reader knows which branch was taken.
 
 ---
 
