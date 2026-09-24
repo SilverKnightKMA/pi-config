@@ -55,7 +55,9 @@ describe("control: applyControlAction — reopen (v1.4.35)", () => {
 		assert.equal(r.applied, true);
 		const t = r.state.tasks.find((x) => x.id === 1)!;
 		assert.equal(t.status, "in_progress");
-		assert.equal(t.evidence, "done (e2e)");
+		// #294 P1: reopening clears stale evidence — the next completion must bring
+		// fresh evidence in its own patch (inherited evidence cannot re-close).
+		assert.equal(t.evidence, null);
 	});
 
 	test("reopen of a completed task with a re-opened blocker falls back to pending", () => {
@@ -152,7 +154,8 @@ describe("control: un-park/reopen resets the judge cycle", () => {
 		const t = r3.state.tasks.find((x) => x.id === 1)!;
 		expect(t.status).toBe("in_progress");
 		expect(t.judgeRounds).toBe(0);
-		expect(t.evidence).toBe("e");
+		// #294 P1: stale evidence cleared on reopen (was "e" before the port).
+		expect(t.evidence).toBe(null);
 	});
 });
 

@@ -385,7 +385,13 @@ export function sanitizeState(data: Record<string, unknown>): TaskState {
   const w = (typeof data.wake === "object" && data.wake !== null ? data.wake : {}) as Record<string, unknown>;
   const wake =
     typeof w.rounds === "number" && typeof w.noProgress === "number" && typeof w.signature === "string"
-      ? { rounds: Math.max(0, Math.floor(w.rounds)), noProgress: Math.max(0, Math.floor(w.noProgress)), signature: w.signature.slice(0, 500) }
+      ? {
+          rounds: Math.max(0, Math.floor(w.rounds)),
+          noProgress: Math.max(0, Math.floor(w.noProgress)),
+          signature: w.signature.slice(0, 500),
+          ...(typeof w.lastActivityAt === "number" ? { lastActivityAt: Math.max(0, Math.floor(w.lastActivityAt)) } : {}),
+          ...(typeof w.lastWakeAt === "number" ? { lastWakeAt: Math.max(0, Math.floor(w.lastWakeAt)) } : {}),
+        }
       : undefined;
   return { tasks: rebuildReverseLinks(tasks), nextId, ...(wake ? { wake } : {}), ...(data.legacyArchived === true ? { legacyArchived: true } : {}) };
 }

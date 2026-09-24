@@ -307,6 +307,8 @@ export default function taskExtension(pi: ExtensionAPI) {
 	 *  remains at settle (budget 10 per episode, anti-spin 3, ladder 5→80s).
 	 *  Yields while goal/plan own main's wake cadence (single-waker priority). */
 	let taskWakeTimer: ReturnType<typeof setTimeout> | null = null;
+	// #275: a turn in flight = the agent is working. Wakes defer while true.
+	let turnActive = false;
 	// #246: the session_start restart-back-up probe belongs to the same wake
 	// machinery — clearTaskWake disarms it together with the loop timer.
 	let restartBackupTimer: ReturnType<typeof setTimeout> | null = null;
@@ -320,6 +322,20 @@ export default function taskExtension(pi: ExtensionAPI) {
 			clearTimeout(restartBackupTimer);
 			restartBackupTimer = null;
 		}
+	}
+
+	/** #275: one wake tick. A turn in flight DEFERS — emitting now would (a)
+	 *  queue a stale wake that outlives the turn and (b) count a no-progress
+	 *  round while real work is streaming. Defer emits nothing, counts nothing. */
+	function wakeTick(): void {
+		taskWakeTimer = null;
+		if (turnActive) {
+			taskWakeTimer = setTimeout(wakeTick, 15_000);
+			return;
+		}
+		fireTaskWake();
+		// schedule the next round the same way the first one was scheduled
+		taskSettle();
 	}
 
 	function taskSettle(): void {
@@ -353,12 +369,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 			}
 			return;
 		}
-		taskWakeTimer = setTimeout(() => {
-			taskWakeTimer = null;
-			fireTaskWake();
-			// schedule the next round the same way the first one was scheduled
-			taskSettle();
-		}, d.delaySec * 1000);
+		taskWakeTimer = setTimeout(wakeTick, d.delaySec * 1000);
 	}
 
 	/** #246: the fire-time half of the wake loop, extracted from the timer
@@ -367,6 +378,9 @@ export default function taskExtension(pi: ExtensionAPI) {
 	function fireTaskWake(): void {
 		if (!controlSessionId) return;
 		if (continuationOwnedByHigherKind(anyGoalRunning(), planContinuationActive(controlSessionId))) return;
+		// #275: belt-and-braces for direct/test callers — wakeTick already defers
+		// the in-flight case; this guard keeps fireTaskWake itself honest.
+		if (turnActive) return;
 		const nowOpen = state.tasks.filter((t) => t.status === "in_progress");
 		// #246 (M3): empty at fire-time → CLEAR the stale ledger, not a bare return.
 		if (nowOpen.length === 0) {
@@ -387,7 +401,23 @@ export default function taskExtension(pi: ExtensionAPI) {
 			}
 		}
 		const nowSig = nowOpen.map((t) => `${t.id}:${t.status}:${t.updatedAt}`).join(",");
-		const next = { rounds: (state.wake && state.wake.signature === nowSig ? state.wake.rounds : 0) + 1, noProgress: nextStreak(state.wake && state.wake.signature === nowSig ? state.wake.noProgress : 0, state.wake?.signature ?? "", nowSig), signature: nowSig };
+		const prevLedger = state.wake && state.wake.signature === nowSig ? state.wake : null;
+		// #275 heartbeat: a finished turn since the last wake IS progress —
+		// reads/greps/edits live inside turns and never touch the signature.
+		const hadTurnActivity = !!(
+			prevLedger?.lastActivityAt &&
+			prevLedger?.lastWakeAt &&
+			prevLedger.lastActivityAt > prevLedger.lastWakeAt
+		);
+		const next = {
+			rounds: (prevLedger ? prevLedger.rounds : 0) + 1,
+			noProgress: hadTurnActivity
+				? 0
+				: nextStreak(prevLedger ? prevLedger.noProgress : 0, state.wake?.signature ?? "", nowSig),
+			signature: nowSig,
+			lastActivityAt: prevLedger?.lastActivityAt,
+			lastWakeAt: Date.now(),
+		};
 		state = { ...state, wake: next };
 		pi.appendEntry(TASK_STATE, state);
 		projectStatus();
@@ -1397,7 +1427,12 @@ export default function taskExtension(pi: ExtensionAPI) {
 		// v1.4.28 control bridge: user-only actions (unpark / strict) from the Paseo
 		// panel. Only the main chat watches (like snip) — worker sessions have no file.
 		const parent = (ctx.sessionManager.getHeader?.() as { parentSession?: string } | undefined)?.parentSession;
-		controlSessionId = !parent && statusSessionId ? statusSessionId : "";
+		// #275 piece 3: workers NEVER take wake control — explicit, not emergent.
+		// OM workers self-identify via the OM_WORKER env they are spawned with
+		// (spawn/launch.ts contract); subagents carry parentSession. Previously
+		// the exclusion relied only on per-session task-state + the parent header.
+		const isWorker = !!parent || !!process.env.OM_WORKER;
+		controlSessionId = !isWorker && statusSessionId ? statusSessionId : "";
 		lastControlSentAt = undefined;
 		// v1.4.68 #47 Phase B: the plan engine writes plan-bridge/<sid>.json on
 		// approve/off — consume at startup (restart case) and watch for live ones.
@@ -1474,6 +1509,22 @@ export default function taskExtension(pi: ExtensionAPI) {
 				fireTaskWake();
 			}
 		};
+	});
+
+	// #275: turn-activity tracking — the wake loop defers while a turn runs
+	// and the anti-spin streak resets on finished turns (real work beats the
+	// task-mutation-only signature).
+	pi.on("turn_start", () => {
+		turnActive = true;
+	});
+	pi.on("turn_end", () => {
+		turnActive = false;
+		// heartbeat: a finished turn while tasks are open is progress even
+		// without a task mutation — the streak must not call it idle.
+		if (controlSessionId && state.wake && state.tasks.some((t) => t.status === "in_progress")) {
+			state = { ...state, wake: { ...state.wake, lastActivityAt: Date.now() } };
+			pi.appendEntry(TASK_STATE, state);
+		}
 	});
 
 	pi.on("input", () => clearTaskWake());

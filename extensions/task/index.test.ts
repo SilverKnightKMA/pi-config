@@ -1360,7 +1360,10 @@ interface WakeSeededTask {
 	status: "in_progress" | "completed" | "pending" | "cancelled";
 }
 
-function seedWakeBoard(tasks: WakeSeededTask[], wake?: { rounds: number; noProgress: number; signature: string }) {
+function seedWakeBoard(
+	tasks: WakeSeededTask[],
+	wake?: { rounds: number; noProgress: number; signature: string; lastActivityAt?: number; lastWakeAt?: number },
+) {
 	return {
 		type: "custom" as const,
 		customType: TASK_STATE,
@@ -1843,6 +1846,107 @@ test("#251 wiring: ask results, read digests and user chat ride the judge packet
 		assert.match(packet, /EVIDENCE HIERARCHY \(#251\)/);
 	} finally {
 		_setJudgeRunnerForTests(null);
+		if (prevHome !== undefined) process.env.HOME = prevHome;
+		fs.rmSync(tmp, { recursive: true, force: true });
+	}
+});
+
+// ── #275 wake-driver: defer-on-active + heartbeat + worker exclusion ──────
+// Bugs fixed: (A) progress signature covered only task mutations, so mid-turn
+// reads/greps counted as "no progress" → false wrapup after ~35s; (B) wakes
+// fired mid-turn queued and delivered stale after completion.
+
+test("#275 defer: a turn in flight emits nothing and counts nothing", async () => {
+	const tmp = fs.mkdtempSync(join(tmpdir(), "task-wake-"));
+	const prevHome = process.env.HOME;
+	process.env.HOME = tmp;
+	try {
+		const f = fakePi();
+		(f.ctx.sessionManager as { getSessionId: () => string }).getSessionId = () => "wake-275a";
+		taskExtension(f.pi as never);
+		f.setBranch([seedWakeBoard([{ id: 275, subject: "mid-investigation", status: "in_progress" }], { rounds: 1, noProgress: 1, signature: "275:in_progress:2" })]);
+		await f.handlers.get("session_start")!({}, f.ctx);
+		// the agent is mid-turn (reading/grepping/editing — the #304/#307 shape)
+		await f.handlers.get("turn_start")!({}, f.ctx);
+		const entriesBefore = f.entries.length;
+		_driveTaskWakeForTests("fire");
+		assert.equal(f.messages.filter((m) => m.content.includes("[task wake")).length, 0, "no wake may be emitted while a turn is in flight");
+		assert.equal(f.entries.length, entriesBefore, "a deferred fire must not write a ledger entry (no round consumed)");
+	} finally {
+		if (prevHome !== undefined) process.env.HOME = prevHome;
+		fs.rmSync(tmp, { recursive: true, force: true });
+	}
+});
+
+test("#275 heartbeat: turn activity since the last wake resets the no-progress streak", async () => {
+	const tmp = fs.mkdtempSync(join(tmpdir(), "task-wake-"));
+	const prevHome = process.env.HOME;
+	process.env.HOME = tmp;
+	try {
+		const f = fakePi();
+		(f.ctx.sessionManager as { getSessionId: () => string }).getSessionId = () => "wake-275b";
+		taskExtension(f.pi as never);
+		// streak 2/3, but a turn finished AFTER the last wake (reads/greps = work)
+		f.setBranch([
+			seedWakeBoard(
+				[{ id: 275, subject: "investigating", status: "in_progress" }],
+				{ rounds: 5, noProgress: 2, signature: "275:in_progress:2", lastActivityAt: 2000, lastWakeAt: 1000 },
+			),
+		]);
+		await f.handlers.get("session_start")!({}, f.ctx);
+		_driveTaskWakeForTests("fire");
+		const last = f.entries[f.entries.length - 1]!;
+		const w = (last.data as { wake?: { noProgress: number; lastWakeAt: number } }).wake!;
+		assert.equal(w.noProgress, 0, "a finished turn since the last wake is progress — streak must reset");
+		assert.ok(w.lastWakeAt >= 2000, "lastWakeAt must advance past the activity");
+	} finally {
+		if (prevHome !== undefined) process.env.HOME = prevHome;
+		fs.rmSync(tmp, { recursive: true, force: true });
+	}
+});
+
+test("#275 idle: no turn activity since the last wake → the streak still climbs", async () => {
+	const tmp = fs.mkdtempSync(join(tmpdir(), "task-wake-"));
+	const prevHome = process.env.HOME;
+	process.env.HOME = tmp;
+	try {
+		const f = fakePi();
+		(f.ctx.sessionManager as { getSessionId: () => string }).getSessionId = () => "wake-275c";
+		taskExtension(f.pi as never);
+		// genuinely idle: activity happened BEFORE the last wake, signature frozen
+		f.setBranch([
+			seedWakeBoard(
+				[{ id: 275, subject: "abandoned", status: "in_progress" }],
+				{ rounds: 5, noProgress: 2, signature: "275:in_progress:2", lastActivityAt: 1000, lastWakeAt: 2000 },
+			),
+		]);
+		await f.handlers.get("session_start")!({}, f.ctx);
+		_driveTaskWakeForTests("fire");
+		const last = f.entries[f.entries.length - 1]!;
+		const w = (last.data as { wake?: { noProgress: number } }).wake!;
+		assert.equal(w.noProgress, 3, "idle + frozen signature must still stack toward the anti-spin stop");
+	} finally {
+		if (prevHome !== undefined) process.env.HOME = prevHome;
+		fs.rmSync(tmp, { recursive: true, force: true });
+	}
+});
+
+test("#275 worker exclusion: an OM_WORKER session never takes wake control", async () => {
+	const tmp = fs.mkdtempSync(join(tmpdir(), "task-wake-"));
+	const prevHome = process.env.HOME;
+	process.env.HOME = tmp;
+	process.env.OM_WORKER = "observer";
+	try {
+		const f = fakePi();
+		(f.ctx.sessionManager as { getSessionId: () => string }).getSessionId = () => "wake-275d";
+		taskExtension(f.pi as never);
+		f.setBranch([seedWakeBoard([{ id: 275, subject: "main's task", status: "in_progress" }])]);
+		await f.handlers.get("session_start")!({}, f.ctx);
+		_driveTaskWakeForTests("settle");
+		_driveTaskWakeForTests("fire");
+		assert.equal(f.messages.filter((m) => m.content.includes("[task wake") || m.content.includes("continuation wrapped up")).length, 0, "a worker session must never wake or wrap up");
+	} finally {
+		delete process.env.OM_WORKER;
 		if (prevHome !== undefined) process.env.HOME = prevHome;
 		fs.rmSync(tmp, { recursive: true, force: true });
 	}

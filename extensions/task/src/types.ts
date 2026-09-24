@@ -101,7 +101,7 @@ export interface TaskState {
   /** v1.4.69 (#61 Phase C): continuation counters for the task wake loop —
    *  reset whenever the in_progress set changes (new episode). Persisted in
    *  the task ledger (single root snapshot, last wins). */
-  wake?: { rounds: number; noProgress: number; signature: string };
+  wake?: { rounds: number; noProgress: number; signature: string; lastActivityAt?: number; lastWakeAt?: number };
   /** #242: one-time legacy terminal stamp ran (ensureLegacyArchive). */
   legacyArchived?: boolean;
 }
