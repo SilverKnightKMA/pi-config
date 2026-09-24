@@ -66,3 +66,15 @@ repo: pi-config · mở: 2026-09-24 · nguồn: self-eval vòng 2 #295
 crawl.py:24 `CACHE = Path.home()/"workloads"...` — chính xác: `Path.home()/"workspaces"/"learn"/"harness-eval-cache"` — chỉ đúng máy có workspace learn.
 
 **Trigger làm:** chạy skill trên máy khác / image đổi workspace layout. **Hướng:** env `HARNESS_EVAL_CACHE` override, hoặc cache đặt cạnh skill dir.
+
+## anomaly_report.py — từ SET ASIDE sang CÔNG CỤ ĐẦU TIÊN khi có sự cố call/lỗi (2026-09-24)
+
+repo: pi-config · mở: 2026-09-24 · nguồn: self-eval #302 (SET ASIDE) → **đã kiểm chứng sống cùng ngày**
+
+Vấn đề gốc: trigger cũ "lần incident đầu tiên" là trigger chết — sự cố call-lỗi đã xảy ra nhiều (#277, stale wake, matrix HANG...) mà không lần nào chạy script, vì phải *nhớ ra nó tồn tại*.
+
+**Kiểm chứng 2026-09-24** (chạy thật, 7 ngày): bắt ngay cluster SSE-drop `cli-openai` 22-23/09 (z=4.0–6.7), **183/458 drop trong ±5' trước session abort** (cause→symptom), zombie spike 101 lần 18/09 (z=15.9), 2 judge-session empty-stop-turn kèm session id. Toàn bộ là các sự cố user đã gặp ngoài đời.
+
+**Trigger mới (operational):** mọi sự cố loại *call lỗi / session abort bất thường / agent treo / im lặng chết / cost spike* → chạy `anomaly_report.py` TRƯỚC khi grep tay. Deterministic, bounded, ~giây.
+
+**Còn thiếu (làm khi mở lại):** chưa có trong luồng ghi sse-probe/zombie-watchdog của các extension mới; cân nhắc cron hằng ngày in mục "Act now" nếu user muốn theo dõi chủ động.
