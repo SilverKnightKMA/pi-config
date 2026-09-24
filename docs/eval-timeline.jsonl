@@ -1,0 +1,25 @@
+{"ts": "2026-09-07", "kind": "landscape", "target": "15 @pify packages", "backfill": true, "verdict": "scanned, frozen master table", "report": "docs/ext-eval-index.md"}
+{"ts": "2026-09-08", "kind": "deep-eval", "target": "extensions/task + 5 ancestors", "backfill": true, "verdict": "PORT as-is + 6 open questions", "report": "docs/ext-eval-index.md"}
+{"ts": "2026-09-09", "kind": "deep-eval", "target": "@pify/workflow 0.9/0.10", "backfill": true, "verdict": "BORROW PIECES", "report": "learn/pify-workflow-eval-2026-09-09.md"}
+{"ts": "2026-09-09", "kind": "deep-eval", "target": "@pify/swarm 0.6.0", "backfill": true, "verdict": "BORROW, child-mechanism swapped", "report": "learn/pify-swarm-eval-2026-09-09.md"}
+{"ts": "2026-09-09", "kind": "deep-eval", "target": "@pify/plan-mode 0.4.2", "backfill": true, "verdict": "3-stage BORROW", "report": "learn/pify-planmode-eval-2026-09-09.md"}
+{"ts": "2026-09-09", "kind": "deep-eval", "target": "@pify/memory + LLM-as-judge", "backfill": true, "verdict": "SET ASIDE → direction D became layer-2 judge", "report": "learn/pify-memory-research-2026-09-09.txt"}
+{"ts": "2026-09-12", "kind": "landscape", "target": "bash-safety family (13 candidates)", "backfill": true, "verdict": "PORT opencode-bash-guard", "report": "learn/landscape-bash-safety-2026-09-12.md"}
+{"ts": "2026-09-12", "kind": "landscape", "target": "memory family (13 npm + 4 harness)", "backfill": true, "verdict": "CANDIDATE pi-hermes-memory + fradser", "report": "learn/landscape-memory-2026-09-12.md"}
+{"ts": "2026-09-12", "kind": "landscape", "target": "goal family", "backfill": true, "verdict": "CANDIDATE pi-goal-x 4 pieces", "report": "learn/landscape-goal-2026-09-12.md"}
+{"ts": "2026-09-12", "kind": "landscape", "target": "third-party Paseo plugins (~40 repos)", "backfill": true, "verdict": "market map, risk noted", "report": "learn/landscape-paseo-plugins-2026-09-12.md"}
+{"ts": "2026-09-12", "kind": "deep-eval", "target": "anthropics/sandbox-runtime", "backfill": true, "verdict": "BORROW CONCEPTS + srt optional tier", "report": "learn/sandbox-runtime-eval-2026-09-12.md"}
+{"ts": "2026-09-14", "kind": "sync-upstream", "target": "task/plan-mode/swarm/workflow (4-pkg)", "backfill": true, "verdict": "task+swarm BORROW, plan+workflow DROP"}
+{"ts": "2026-09-20", "kind": "landscape", "target": "subagent-types → Paseo plugin port", "backfill": true, "verdict": "100% port", "task": "#133"}
+{"ts": "2026-09-21", "kind": "landscape", "target": "long-term memory / facts tier", "backfill": true, "task": "#1"}
+{"ts": "2026-09-22", "kind": "landscape", "target": "user-action → running-agent notification", "backfill": true, "task": "#2"}
+{"ts": "2026-09-07", "kind": "teach", "target": "task/verify roots (input-là-quyết-định, 3 cấp sự thật)", "backfill": true, "verdict": "quiz từng node, 4 option A-D"}
+{"ts": "2026-09-23", "kind": "teach", "target": "skill:harness-eval witness-deps vocabulary", "backfill": true, "verdict": "gap duy nhất: witness-deps", "task": "#282"}
+{"ts": "2026-09-24", "kind": "self-eval", "target": "skill:harness-eval", "backfill": true, "verdict": "KEEP + 4 FIX + MOVE + DROP + SET ASIDE", "report": "learn/harness-eval-self-eval-20260924.md", "task": "#283"}
+{"ts": "2026-09-24", "kind": "self-eval", "target": "skill:harness-eval vòng 2", "backfill": true, "verdict": "6 KEEP + F1-F4 FLAG", "task": "#295"}
+{"ts": "2026-09-24", "kind": "self-eval", "target": "skill:analyze-sessions", "backfill": true, "verdict": "KEEP + FIXED (bug 315b696) + P2/P3", "report": "learn/analyze-sessions-self-eval-20260924.md", "task": "#302"}
+{"ts": "2026-09-24", "kind": "port", "target": "@pify batch #294 P1-P3", "backfill": true, "verdict": "PORTED 4be24f8", "task": "#305"}
+{"ts": "2026-09-24", "kind": "port", "target": "@pify/workflow 0.13.2 pollRequired (P4)", "backfill": true, "verdict": "PORTED ab31f8e tag v1.0.98", "task": "#306"}
+{"ts": "2026-09-24", "kind": "port", "target": "@pify/swarm 0.12.1 honest-outcome (P5)", "backfill": true, "verdict": "PORTED 1f48f74", "task": "#307"}
+{"ts": "2026-09-24", "kind": "decision", "target": "@pify batch #294 P1-P5", "backfill": true, "verdict": "user (a) làm đủ 5 mảnh", "report": "learn/harness-eval-upstream-294-20260924.md", "task": "#299"}
+{"ts": "2026-09-24", "kind": "port", "target": "wake-driver fix #275 (defer+heartbeat+worker-exclusion)", "backfill": true, "verdict": "PORTED 186788f v1.4.145", "report": "learn/wake-driver-275-20260924.md", "task": "#308"}

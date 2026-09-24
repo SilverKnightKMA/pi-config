@@ -41,6 +41,19 @@ Presentation rules (distilled from the user's own report-rewrite history, resear
 - Final verdicts + dates → `docs/ext-eval-index.md`. Decisions needing permanence → `docs/decisions/` ADR records (#288).
 - SKILL.md is instructions + pointers only — nothing here can go stale.
 
+## Timeline logger — every eval event appends ONE line (user 2026-09-24)
+
+- Ledger: `pi-config/docs/eval-timeline.jsonl` via `eval_log.py` (this dir, stdlib only).
+- MANDATORY final step of EVERY mode, teach session, port ship, and user decision:
+  `python3 eval_log.py append --kind <landscape|deep-eval|self-eval|sync-upstream|teach|port|decision|note> --target <x> --verdict <v> [--task #id] [--report path] [--commit sha]`.
+- `query --kind/--target/--since` answers "khi nào eval X, kết quả gì" WITHOUT analyze-sessions transcript mining.
+- Append-only: corrections are new `note` events, never rewrites. Backfill uses `--ts` (stamps backfill:true — history honestly marked).
+
+## Coverage rules (user-approved 2026-09-24)
+
+- **R1 teach-after-big-port**: any port/borrow >4h of work or touching a core loop → run a ~10-min teach on the shipped mechanism right after, so the user holds the core model (not just the changelog). Tracker: task #310.
+- **R2 landscape-decay**: a landscape older than ~4 weeks is REFERENCE, not current state. Before using a family scan for a new decision → re-scan (or cite it as stale with the scan date).
+
 ---
 
 ## Mode 1 — LANDSCAPE (an extension family: "what's out there?")
