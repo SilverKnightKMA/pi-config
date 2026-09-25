@@ -81,6 +81,13 @@ The tool already tells you to keep options even. That rule isn't enough on its o
 
 If, reading the finished set cold, you can still tell which is right without knowing the material, you skipped step 1 or 2 — regenerate, don't patch.
 
+**The question text is part of the same contract — it must be self-contained.** A perfectly-built option set still fails if the *question* can't be understood without context that isn't in it:
+
+- **Open with the motivating situation, not the abstraction.** 2-3 sentences of concrete story — what actually happened, with real artifacts/names from this project or the problem domain — before the actual ask. A question that opens with the concept under test is a question half the learners misread.
+- **Assume nothing from earlier exchanges** except nodes already taught and confirmed *in this session*. He did not just read your draft; "we covered this two questions ago" is not available context inside the quiz tool.
+- **Cold-read test both halves**: hand the question *and* its options to someone who missed the conversation — if they'd have to ask "what is this even about?", regenerate the question, not his patience.
+- If he answers a well-formed question with "I don't understand the question", that is a **construction failure, not a knowledge gap** — rebuild the question with fuller context before drawing any conclusion about what he knows. (Born 2026-09-25: 3 of 8 quiz questions in one eval-teach session were returned for missing context.)
+
 ### Phase 1 — Probe (never skip this)
 
 You can't teach into his zone of proximal development without knowing where its edges are, and you can't aim the teaching without knowing what he's actually reaching for. Two separate unknowns, two separate tools — keep the boundary clean:
@@ -131,6 +138,8 @@ For **every node** (each unconditional truth *and* each non-trivial reasoning st
    - If it's a derived step: build it up from what's already established via a motivated move (Socratic or expository), answering "how could I have discovered this?" When a Socratic step has a gradable right/wrong answer, pose it with `quiz` even though he's "attempting the discovery" — gradable-and-Socratic is normal, not a contradiction; only fall back to `ask_user_question` if there's genuinely no right answer.
 3. **Connect.** Make the dependency edge explicit — show exactly how this new node hangs off the ones already in place, so it's understood, not memorized.
 4. **Quiz-check.** Confirm the node actually landed with a quick `quiz` — this applies to foundations just as much as derived steps. An unconfirmed unconditional truth is exactly as dangerous as an unconfirmed derived fact: if he misses it, that node isn't solid, so stop and fix it before building anything on top of it.
+
+   **A reasoned alternative is design input, not just a wrong answer.** When his answer comes with reasoning — especially an "Other" that argues for a different approach — grade the intended answer honestly, but then *engage the alternative on its merits*: either adopt it (adjust the node or the solution, and say explicitly what changed because of his answer) or refute it with a specific reason he can check. Dismissing a reasoned alternative as simply "incorrect" wastes the most valuable signal a quiz produces — and at decision-time it degrades him from decider to confirmer. Never defend a prepared answer just because it was prepared.
 
 Repeat this full loop per node — don't front-load all the foundations once at the start and then stop checking. Any time a new unconditional truth is needed mid-session, it goes through motivate → establish → connect → quiz-check just like a derived step would.
 
