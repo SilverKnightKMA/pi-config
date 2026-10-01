@@ -217,6 +217,8 @@ export default function activate(pi: ExtensionAPI): void {
 				{ deliverAs: "followUp" },
 			);
 		}, waitMs);
+		// far-future wake must not hold a one-shot process open (#322)
+		wakeTimer?.unref?.();
 	}
 
 	pi.on("session_start", (_event, ctx) => {
@@ -239,7 +241,8 @@ export default function activate(pi: ExtensionAPI): void {
 		say(pi, `[goal] resumed — epoch ${st.epoch}/20, lease ${st.lease.used}/1, members ${st.memberIds.length} + stamped (anchor: ${st.anchor.slice(0, 120)})`);
 		// piece 6 restart-back-up: if wakeAt is already in the past, wake again soon
 		const past = st.wakeAt ? Date.parse(st.wakeAt) < Date.now() : true;
-		setTimeout(() => settle(pi), past ? 5_000 : Math.max(1_000, Math.min(60_000, (st.wakeAt ? Date.parse(st.wakeAt) - Date.now() : 5_000))));
+		const resumeTimer = setTimeout(() => settle(pi), past ? 5_000 : Math.max(1_000, Math.min(60_000, (st.wakeAt ? Date.parse(st.wakeAt) - Date.now() : 5_000))));
+		resumeTimer.unref?.();
 	});
 
 	// Control bridge (user-only door): panel buttons write goal-control/<sid>.json.
@@ -389,7 +392,7 @@ export default function activate(pi: ExtensionAPI): void {
 		mkdirSync(dirname(controlPath("x")), { recursive: true });
 		let debounce: ReturnType<typeof setTimeout> | null = null;
 		let lastAckAt = "";
-		watch(join(home(), ".pi", "agent", "goal-control"), () => {
+		const controlWatcher = watch(join(home(), ".pi", "agent", "goal-control"), () => {
 			if (debounce) clearTimeout(debounce);
 			debounce = setTimeout(() => {
 				debounce = null;
@@ -430,6 +433,9 @@ export default function activate(pi: ExtensionAPI): void {
 				}
 			}, 150);
 		});
+		// #322: strong-ref watcher keeps headless `pi -p` alive after the reply — unref
+		// so a one-shot process can exit when work is done (daemon sessions unaffected).
+		controlWatcher.unref?.();
 	} catch {
 		// could not create the control dir — panel buttons won't work, slash still runs
 	}

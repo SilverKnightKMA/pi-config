@@ -336,6 +336,7 @@ export default function snip(pi: ExtensionAPI) {
 				watcher.on("error", () => {
 					// best-effort — /snip commands never depend on the watcher
 				});
+				watcher.unref?.(); // #322: strong-ref watcher keeps `pi -p` alive
 			} catch {
 				// watch unsupported (exotic fs) — panel stays read-only
 			}

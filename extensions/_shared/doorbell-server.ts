@@ -93,6 +93,7 @@ export function startDoorbellServer(sessionId: string, opts: DoorbellServerOpts 
 			// not there — fine
 		}
 		const s = createServer((conn) => {
+			conn.unref?.(); // #322: an accepted bell socket must not hold a one-shot process either
 			let buf = "";
 			conn.on("data", (d) => {
 				buf += d.toString("utf8");
@@ -129,6 +130,7 @@ export function startDoorbellServer(sessionId: string, opts: DoorbellServerOpts 
 			log(`doorbell-server: listening ${sockPath}`);
 		});
 		server = s;
+		s.unref?.(); // #322: the bell must not keep headless `pi -p` alive after the reply
 		return () => stopDoorbellServer();
 	} catch (err) {
 		log(`doorbell-server: unavailable (${String(err)}) — fs.watch fallback`);

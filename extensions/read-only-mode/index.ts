@@ -346,6 +346,7 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 			}
 			planSettle(); // schedule the next round from the updated counters
 		}, d.delaySec * 1000);
+		planWakeTimer?.unref?.(); // #322: plan wake must not hold a one-shot process
 	}
 
 	/** v1.4.67 (#47 Phase A) + v1.4.68 (Phase B): drift repair at load points —
@@ -533,7 +534,7 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 		}
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		try {
-			watch(dir, () => {
+			const controlWatcher = watch(dir, () => {
 				clearTimeout(timer);
 				timer = setTimeout(() => {
 					const file = controlFilePath(sessionId);
@@ -548,6 +549,7 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 					consumeControlFile(sessionId, ctx);
 				}, 150);
 			});
+			controlWatcher.unref?.(); // #322: strong-ref watcher keeps `pi -p` alive
 		} catch {
 			// watcher best effort
 		}
@@ -904,7 +906,7 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 				const tsDir = join(homedir(), ".pi", "agent", "task-status");
 				mkdirSync(tsDir, { recursive: true });
 				let tsDebounce: ReturnType<typeof setTimeout> | undefined;
-				watch(tsDir, (_event, filename) => {
+				const tsWatcher = watch(tsDir, (_event, filename) => {
 					if (!filename || !filename.endsWith(`${sessionId}.json`)) return;
 					if (plan.mode !== "tracking" || !plan.planId) return;
 					if (tsDebounce) clearTimeout(tsDebounce);
@@ -913,6 +915,7 @@ export default function readOnlyModeExtension(pi: ExtensionAPI) {
 						reconcileAndPersist();
 					}, 300);
 				});
+				tsWatcher.unref?.(); // #322
 			} catch {
 				// watcher best effort
 			}

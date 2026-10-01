@@ -222,6 +222,7 @@ export function watchFactsControl(env: NodeJS.ProcessEnv = process.env, home = p
 			if (timer) clearTimeout(timer);
 			timer = setTimeout(triggerSweep, 200);
 		});
+		w.unref?.(); // #322: strong-ref watcher keeps `pi -p` alive
 		return () => {
 			if (timer) clearTimeout(timer);
 			stopBell?.();

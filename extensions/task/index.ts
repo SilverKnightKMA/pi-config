@@ -331,6 +331,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 		taskWakeTimer = null;
 		if (turnActive) {
 			taskWakeTimer = setTimeout(wakeTick, 15_000);
+			taskWakeTimer?.unref?.(); // #322: wake chain must not hold a one-shot process
 			return;
 		}
 		fireTaskWake();
@@ -370,6 +371,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 			return;
 		}
 		taskWakeTimer = setTimeout(wakeTick, d.delaySec * 1000);
+		taskWakeTimer?.unref?.(); // #322: wake chain must not hold a one-shot process
 	}
 
 	/** #246: the fire-time half of the wake loop, extracted from the timer
@@ -1455,6 +1457,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 				planBridgeWatcher.on("error", () => {
 					// best-effort — tools never depend on the watcher
 				});
+				planBridgeWatcher.unref?.(); // #322: strong-ref watcher keeps `pi -p` alive
 			} catch {
 				// no plan-bridge dir → no bridge
 			}
@@ -1474,6 +1477,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 				watcher.on("error", () => {
 					// best-effort — tools never depend on the watcher
 				});
+				watcher.unref?.(); // #322: strong-ref watcher keeps `pi -p` alive
 			} catch {
 				// no control dir → no bridge; tools unaffected
 			}
@@ -1499,6 +1503,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 			restartBackupTimer = null;
 			taskSettle();
 		}, 3_000);
+		restartBackupTimer?.unref?.(); // #322
 		// v1.4.135 #240: 7d housekeeping on decided panel-decision entries.
 		if (statusSessionId) pruneDecided(statusSessionId);
 		// #246 test seam wiring: let tests drive settle/fire synchronously.

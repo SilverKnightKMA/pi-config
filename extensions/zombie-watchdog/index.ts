@@ -261,6 +261,7 @@ export function wire(pi: ExtensionAPI, opts: WireOptions = {}): () => WatchdogSi
 		}
 		if (timer) clearInterval(timer);
 		timer = setInterval(tick, CHECK_INTERVAL_MS);
+		(timer as unknown as { unref?: () => void }).unref?.(); // #322: watchdog tick must not hold `pi -p`
 	}) as never);
 
 	pi.on("turn_start", () => {
