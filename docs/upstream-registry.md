@@ -44,7 +44,7 @@ The **endpoint** column is the machine-readable format for the `upstream-drift` 
 
 | Package | Pin | Meaning |
 |---|---|---|
-| `pi-mcp-adapter` | 2.32.1 | actually installed via install-externals.mjs — a dependabot bump = a real upgrade (release → docker pin → host install) |
+| `pi-mcp-adapter` | 2.32.1 | actually installed via install-externals.mjs — a dependabot bump = a real upgrade (release → docker pin → host install). 2026-10-01: pi 1.0 ships builtin:mcp (verified: stdio server connects, 14 tools) covering the generic MCP-client need — pi-mcp-adapter RETAINED because paseo still delivers its own MCP servers through it (paseo #5762, fixed 0.11-beta); re-review when paseo ships a native path |
 | `pi-web-access` | 0.28.0 | actually installed via install-externals.mjs — same as above |
 
 No @pify/* or un-ported candidates are pinned in devDependencies (tried and removed 2026-09-12 per the user: nothing reads those pins, so bump PRs were meaningless; ported exts are tracked via drift-issue, and undecided candidates get their version re-checked when their eval is revisited per the skill).
