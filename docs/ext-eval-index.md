@@ -122,6 +122,7 @@ Never scanned yet (open if needed):
 | 2026-09-16 | **pi-crew** (EVAL mode-2: @melihmucuk/pi-crew 1.0.34 + npm pi-crew 0.11.0 discovered to be a different project by baphuongna) | `learn/pi-crew-eval-2026-09-16.md` (14.5KB) | Proposal: **DROP both + BORROW 2 pieces**: (1) one-time reminder when a child finishes a task without submitting a report (supplements research_report), (2) structured task schema {goal,context,instructions} for spawn_pool/subagent task text. ~90% overlap with subagent-types; in-process + RAM state vs disk-is-truth/daemon-owns-children. **Awaiting user decision** |
 | 2026-09-17 | **@tintinweb/pi-subagents** (EVAL mode-2: npm tarball 0.19.0, MIT — focuses on two mechanisms, group-join + consume-dedupe, per chat review #95 channel 3/5) | `learn/tintinweb-pi-subagents-eval-2026-09-17.md` (10.9KB) | User decision 2026-09-17 (#111): **BORROW group-join** (timer from first completion + straggler re-batch + implicit parent grouping, rewrite ~60 lines into subagent-types, port task #112) **· DROP consume-dedupe** (duplicates shouldAutoPing/calledMessageMain consume-mark; record re-check-at-send-time hardening when it hurts) · keep six small pieces under "combine when it hurts" |
 
+| 2026-09-24 | **subagent family (regime mới, #311)** — self-eval 5 PASS + 3 khoảng trống · landscape LANDSCAPE-SUBAGENT-24 (nicobailon 0.71 evidence-based cùng trục P5: BORROW 4; parity @pify/swarm 0.12.1) | `learn/subagent-types-selfeval-20260924.md` + `learn/landscape-subagent-24-20260924.md` | teach 5 node quiz-verified (3 đúng/2 lấp); menu quyết để #312/#313 |
 ## Landscape: subagent lifecycle / auto-archive / agent GC (2026-09-20, #129)
 | Candidate | Mechanism | Verdict |
 |---|---|---|
@@ -133,6 +134,7 @@ Never scanned yet (open if needed):
 | Claude Code | none — this pain has open issues #27639/#58154 | (negative evidence: nobody has solved it upstream) |
 User decision 2026-09-20: build in-house in subagent-types — 15-minute reminder (≥3 children, excluding parked/waiting, re-arm on a new spawn or after 60 minutes), no auto-archive. Archive soft-delete was verified to wake-and-auto-unarchive (9ebf7be6 → ARCHIVED-WOKE). Shipped v1.4.106.
 
+| 2026-09-24 | **subagent family (regime mới, #311)** — self-eval 5 PASS + 3 khoảng trống · landscape LANDSCAPE-SUBAGENT-24 (nicobailon 0.71 evidence-based cùng trục P5: BORROW 4; parity @pify/swarm 0.12.1) | `learn/subagent-types-selfeval-20260924.md` + `learn/landscape-subagent-24-20260924.md` | teach 5 node quiz-verified (3 đúng/2 lấp); menu quyết để #312/#313 |
 ## Landscape: port subagent-types -> Paseo plugin 100% (2026-09-20, internal EVAL /skill:harness-eval (ex pi-ext-eval))
 Question: should the entire pi subagent stack (spawn, channel, pool/swarm, reminder) be ported into a Paseo plugin for every harness to use?
 | Component | Verdict |
@@ -160,6 +162,7 @@ Source: four-question spike against daemon source (/opt/paseo @getpaseo/server d
 - spec v12 (user approved 2026-09-21, verbatim "Approve spec v12 with all three pieces (Recommended)"): L1 door grant through a [door-grant] message at turn_ended for main without a door; L2 env-door through session_open; pa1 adopt-from-disk restores minted tokens from the record (one-way disk→RAM read, hatch PASEO_SUBAGENTS_ADOPT=0).
 - Task board #150 [AWAITING PLAN APPROVAL]; P1-d2 upstream draft (proposed agent.update hook) remains parked awaiting the user.
 
+| 2026-09-24 | **subagent family (regime mới, #311)** — self-eval 5 PASS + 3 khoảng trống · landscape LANDSCAPE-SUBAGENT-24 (nicobailon 0.71 evidence-based cùng trục P5: BORROW 4; parity @pify/swarm 0.12.1) | `learn/subagent-types-selfeval-20260924.md` + `learn/landscape-subagent-24-20260924.md` | teach 5 node quiz-verified (3 đúng/2 lấp); menu quyết để #312/#313 |
 ## Landscape: long-term memory / facts tier (2026-09-21, #1)
 | Candidate | Mechanism | Verdict |
 |---|---|---|
@@ -171,6 +174,7 @@ Source: four-question spike against daemon source (/opt/paseo @getpaseo/server d
 
 User decision 2026-09-21 (verbatim chain in `learn/decision-2026-09-21-memory-part2.md`): **HYBRID** — build durable facts tier in-house on existing lessons-inject mechanism; model READ-ONLY (memory-guard extended to lessons.md + facts.md); 3 write paths (regex trigger / memory-curator worker proposes + engine gate / user by hand); curator usage-triggered (diff/token/session counters + 30d floor), NOT calendar; PUSH cap ~20 lines/2KB, PULL recall tool (grep backend, FTS5 swap-point); plugin panel component 7. Plan mode required (verbatim 'cái này phải dùng plan mode chứ'); plan brief `learn/plan-memory-part2-2026-09-21.md`; no build task on board (#173 cancelled per doctrine).
 
+| 2026-09-24 | **subagent family (regime mới, #311)** — self-eval 5 PASS + 3 khoảng trống · landscape LANDSCAPE-SUBAGENT-24 (nicobailon 0.71 evidence-based cùng trục P5: BORROW 4; parity @pify/swarm 0.12.1) | `learn/subagent-types-selfeval-20260924.md` + `learn/landscape-subagent-24-20260924.md` | teach 5 node quiz-verified (3 đúng/2 lấp); menu quyết để #312/#313 |
 ## Landscape: user-action → running-agent notification (task reopen/panel actions) (2026-09-22, #2)
 Trigger: user reopened task #238 via panel and had to MANUALLY tell the agent ("Đã mở lại") — asked for automation eval (/skill:harness-eval (ex pi-ext-eval), mode 1).
 
