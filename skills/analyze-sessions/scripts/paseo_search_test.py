@@ -157,6 +157,34 @@ def main() -> int:
     check("T10 parse-fail NOTE reminder", rc == 0 and "NOTE:" in out and "paseo_probe.py" in out
           and "1 hit(s)" in out, f"rc={rc} out={out[:200]!r}")
 
+    # T11 — summary-first (#331, sec-lab miss 2026-10-12): every matching
+    # agent is named in the MATCHED header BEFORE any detail, so caller-side
+    # truncation (byte cap here, or the caller's own `head` pipe) can never
+    # hide an agent
+    pair = make_env({
+        "hhhh1111-0000-0000-0000-000000000001": [msg("user", "SUMFIRST loud " + "z" * 4000), msg("user", "SUMFIRST loud again " + "z" * 4000)],
+        "hhhh2222-0000-0000-0000-000000000002": [msg("user", "SUMFIRST quiet single")],
+    })
+    S.PASEO_AGENTS_DIR = pair
+    out, rc = run_main(paseo_search, ["SUMFIRST", "--max-output-bytes", "100"])
+    check("T11 summary-first names ALL agents pre-truncation",
+          rc == 0 and "MATCHED 2 agent(s), 3 hit(s)" in out
+          and "hhhh1111" in out and "hhhh2222" in out and "OUTPUT CAPPED" in out,
+          f"rc={rc} out={out[:300]!r}")
+
+    # T12 — per-agent cap: one agent cannot monopolize the detail budget;
+    # header/footer counts stay TRUE totals
+    trio = make_env({
+        "iiii1111-0000-0000-0000-000000000001": [msg("user", "PERCAP one"), msg("user", "PERCAP two"), msg("user", "PERCAP three")],
+        "iiii2222-0000-0000-0000-000000000002": [msg("user", "PERCAP other")],
+    })
+    S.PASEO_AGENTS_DIR = trio
+    out, rc = run_main(paseo_search, ["PERCAP", "--per-agent", "2"])
+    check("T12 per-agent cap + true totals",
+          rc == 0 and "MATCHED 2 agent(s), 4 hit(s)" in out and "per-agent cap 2 reached" in out
+          and "iiii2222" in out and "4 hit(s) across 2 agents" in out,
+          f"rc={rc} out={out[:300]!r}")
+
     failed = [n for n, c, _ in RESULTS if not c]
     print(f"\n{len(RESULTS) - len(failed)}/{len(RESULTS)} pass")
     if failed:

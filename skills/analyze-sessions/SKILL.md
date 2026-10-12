@@ -244,6 +244,8 @@ python3 scripts/paseo_search.py "global instruction" --prompts-only --since 60d
 python3 scripts/paseo_search.py "rate limit" --literal --context 3
 ```
 
+Output is summary-first (#331, 2026-10-12): a bounded `MATCHED <n> agent(s), <total> hit(s):` header lists every matching agent (top 10 by hits) BEFORE any detail line, so neither `--limit-hits` nor the caller's own `head` pipe can hide an agent — a chatty agent cannot monopolize the budget either (details default to `--per-agent 10`; raise to WIDEN). Header/footer counts are always true totals.
+
 Each hit prints the agent header (id prefix, provider, title) so you can drill in with `paseo_show.py <prefix>` — EXCEPT OM-worker hits: workers have no paseo record, so read their transcript directly at `~/.pi/agent/sessions/<bucket>/<worker-id>....jsonl`.
 
 ## Shared filters
