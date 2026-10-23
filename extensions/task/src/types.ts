@@ -108,8 +108,13 @@ export interface TaskState {
 
 export const EMPTY_STATE: TaskState = { tasks: [], nextId: 1 };
 
-/** Nudge thresholds (Claude Code-style reminders). */
-export const NUDGE_AFTER_TURNS = 3;
+/**
+ * Nudge thresholds (Claude Code-style reminders).
+ * #319: NUDGE_TEXT_ONLY_STREAK replaces NUDGE_AFTER_TURNS — the trigger is
+ * consecutive text-only turns ("stopped working, talking"), not turns since
+ * a task tool (which cannot tell busy from forgot).
+ */
+export const NUDGE_TEXT_ONLY_STREAK = 2;
 export const MAX_NUDGE_TASKS = 10;
 export const MAX_WIDGET_TASKS = 10;
 

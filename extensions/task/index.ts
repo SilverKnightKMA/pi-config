@@ -34,7 +34,7 @@ import {
 	openBlockers,
 	type UpdatePatch,
 } from "./src/graph.ts";
-import { buildCompletionSweep, buildNudge, classifyTurn, completionSignature, shouldNudge } from "./src/nudge.ts";
+import { buildCompletionSweep, buildNudge, classifyTurn, completionSignature, openSignature, shouldNudge } from "./src/nudge.ts";
 import { buildWidgetLines } from "./src/widget.ts";
 import { buildTaskStatus, taskStatusPath, writeTaskStatus } from "./src/status-file.ts";
 import {
@@ -242,10 +242,12 @@ function runJudge(packet: string, cwd: string): Promise<string | null> {
 
 export default function taskExtension(pi: ExtensionAPI) {
 	let state: TaskState = EMPTY_STATE;
-	let turnsSinceTaskTool = 0;
+	/** #319: consecutive text-only agent turns — no tool calls of any kind. */
+	let textOnlyStreak = 0;
 	/** Which completed list has already had its sweep, so it fires once. */
 	let sweptSignature: string | null = null;
-	let lastTurnTextOnly = false;
+	/** #319: which open board state has already had its nudge, so it fires once. */
+	let nudgedSignature: string | null = null;
 	let lastUiCtx: UiContext | null = null;
 	/** Session whose status projection we write (set at session_start). */
 	let statusSessionId = "";
@@ -776,7 +778,6 @@ export default function taskExtension(pi: ExtensionAPI) {
 			_onUpdate,
 			ctx,
 		) {
-			turnsSinceTaskTool = 0;
 			let verifySpec: VerifySpec | undefined;
 			if (params.verify !== undefined) {
 				const parsed = parseVerify(params.verify);
@@ -935,7 +936,6 @@ export default function taskExtension(pi: ExtensionAPI) {
 			_onUpdate,
 			ctx,
 		) {
-			turnsSinceTaskTool = 0;
 			// #240/#257 (P6, v1.4.135): cancel is USER-ONLY — the model's only door is
 			// PROPOSING: status:"proposed_cancel" creates the panel card, the user decides.
 			if (params.status === "cancelled") {
@@ -1325,7 +1325,6 @@ export default function taskExtension(pi: ExtensionAPI) {
 			id: Type.Optional(Type.Number({ description: "Task id for the scope:'id' deep view" })),
 		}),
 		async execute(_sid, params: { scope?: "open" | "all" | "id"; id?: number }) {
-			turnsSinceTaskTool = 0;
 			if ((params.scope ?? "open") === "id") {
 				const t = state.tasks.find((x) => x.id === params.id);
 				if (!t) return { content: [{ type: "text", text: `no task #${params.id}` }], details: { count: 0, total: state.tasks.length, tasks: [] } };
@@ -1380,11 +1379,17 @@ export default function taskExtension(pi: ExtensionAPI) {
 		if (sweep) sweptSignature = signature;
 		else if (signature === null) sweptSignature = null;
 
-		const text = sweep
-			? buildCompletionSweep(state)
-			: shouldNudge({ state, turnsSinceTaskTool, lastTurnTextOnly })
-				? buildNudge(state)
-				: null;
+		let text: string | null = null;
+		if (sweep) text = buildCompletionSweep(state);
+		else if (shouldNudge({ state, textOnlyStreak })) {
+			// #319: one nudge per board state — a stale board is nudged once, and
+			// only re-armed when the board itself changes (sweptSignature pattern).
+			const open = openSignature(state);
+			if (open !== nudgedSignature) {
+				nudgedSignature = open;
+				text = buildNudge(state);
+			}
+		}
 		if (text === null) return undefined;
 
 		const messages = [
@@ -1400,9 +1405,10 @@ export default function taskExtension(pi: ExtensionAPI) {
 
 	pi.on("agent_end", async (event) => {
 		const messages = (event as { messages?: unknown[] }).messages ?? [];
-		const { usedTaskTool, anyToolCall } = classifyTurn(messages);
-		lastTurnTextOnly = !anyToolCall;
-		turnsSinceTaskTool = usedTaskTool ? 0 : turnsSinceTaskTool + 1;
+		const { anyToolCall } = classifyTurn(messages);
+		// #319: ANY tool call means work is still in flight — a task tool is just
+		// one flavor of it. Only consecutive pure-text turns build a streak.
+		textOnlyStreak = anyToolCall ? 0 : textOnlyStreak + 1;
 	});
 
 	// ── Lifecycle & command ──────────────────────────────────────────────
@@ -1416,8 +1422,8 @@ export default function taskExtension(pi: ExtensionAPI) {
 			pi.appendEntry(TASK_STATE, state);
 		}
 		statusSessionId = (ctx.sessionManager.getSessionId?.() as string | undefined) ?? "";
-		turnsSinceTaskTool = 0;
-		lastTurnTextOnly = false;
+		textOnlyStreak = 0;
+		nudgedSignature = null;
 		runLog = [];
 		runLogByCall.clear();
 		// #251: judge-evidence channels reset with the run log (restart = fresh evidence)

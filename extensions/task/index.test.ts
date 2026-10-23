@@ -21,7 +21,7 @@ import {
 	wouldCycle,
 } from "./src/graph.ts";
 import { applyControlAction } from "./src/control.ts";
-import { buildCompletionSweep, buildNudge, classifyTurn, completionSignature, shouldNudge } from "./src/nudge.ts";
+import { buildCompletionSweep, buildNudge, classifyTurn, completionSignature, openSignature, shouldNudge } from "./src/nudge.ts";
 import { buildWidgetLines } from "./src/widget.ts";
 import { buildTaskStatus, taskStatusPath } from "./src/status-file.ts";
 import { EMPTY_STATE, type TaskState, type ThemeLike } from "./src/types.ts";
@@ -122,21 +122,36 @@ test("replayBranch: last snapshot wins, junk skipped", () => {
 test("v1.4.65 #64: a held task is still nudged — held by the judge means work still open", () => {
 	const s0 = seed();
 	const held = updateTask(s0, 1, { status: "held" }, 5).state;
-	assert.ok(shouldNudge({ state: held, turnsSinceTaskTool: 3, lastTurnTextOnly: false }));
-	assert.ok(shouldNudge({ state: held, turnsSinceTaskTool: 1, lastTurnTextOnly: true }));
+	assert.ok(shouldNudge({ state: held, textOnlyStreak: 2 }));
+	assert.ok(!shouldNudge({ state: held, textOnlyStreak: 1 }));
 });
 
 test("nudge only fires when a task is in_progress — a pending-only board is the user's queue, not the model forgetting (v1.4.63 #61/#63)", () => {
 	const s = seed();
-	assert.ok(!shouldNudge({ state: EMPTY_STATE, turnsSinceTaskTool: 99, lastTurnTextOnly: true }));
-	// pending-only: NEVER nudge, no matter how stale (user 00:5x — 14 pending
-	// tasks awaiting the user once made the reminder fire almost every turn)
-	assert.ok(!shouldNudge({ state: s, turnsSinceTaskTool: 99, lastTurnTextOnly: false }));
-	assert.ok(!shouldNudge({ state: s, turnsSinceTaskTool: 99, lastTurnTextOnly: true }));
+	assert.ok(!shouldNudge({ state: EMPTY_STATE, textOnlyStreak: 99 }));
+	// pending-only: NEVER nudge, no matter how long the text streak (user 00:5x —
+	// 14 pending tasks awaiting the user once made the reminder fire almost every turn)
+	assert.ok(!shouldNudge({ state: s, textOnlyStreak: 99 }));
 	const stuck = updateTask(s, 1, { status: "in_progress" }, 5).state;
-	assert.ok(shouldNudge({ state: stuck, turnsSinceTaskTool: 1, lastTurnTextOnly: true }));
-	assert.ok(shouldNudge({ state: stuck, turnsSinceTaskTool: 3, lastTurnTextOnly: false }));
-	assert.ok(!shouldNudge({ state: stuck, turnsSinceTaskTool: 0, lastTurnTextOnly: true }));
+	// #319: streak 0/1 — mid-work, or a single text turn — stays silent
+	assert.ok(!shouldNudge({ state: stuck, textOnlyStreak: 0 }));
+	assert.ok(!shouldNudge({ state: stuck, textOnlyStreak: 1 }));
+	// two consecutive text-only turns = "stopped working, talking" → nudge
+	assert.ok(shouldNudge({ state: stuck, textOnlyStreak: 2 }));
+	assert.ok(shouldNudge({ state: stuck, textOnlyStreak: 5 }));
+});
+
+test("#319: openSignature tracks the open set — same board nudged once, changed board re-armed", () => {
+	const s = seed();
+	assert.equal(openSignature(s), "1:pending,2:pending,3:pending");
+	const open = updateTask(s, 1, { status: "in_progress" }, 5).state;
+	assert.equal(openSignature(open), "1:in_progress,2:pending,3:pending");
+	// a status flip changes the signature (re-armable)
+	const flipped = updateTask(open, 1, { status: "held" }, 5).state;
+	assert.equal(openSignature(flipped), "1:held,2:pending,3:pending");
+	// terminal states leave the open set entirely
+	const done = updateTask(s, 1, { status: "completed", evidence: "bun test green" }, 5).state;
+	assert.equal(openSignature(done), "2:pending,3:pending");
 });
 
 test("nudge content lists open tasks with blockers, never completed ones", () => {
@@ -414,6 +429,58 @@ test("wiring: context hook injects a transient reminder and returns messages", a
 	// (2 entries = task_create + task_update; the nudge itself writes nothing)
 	assert.equal(result.messages.length, 2);
 	assert.equal(f.entries.length, 2);
+});
+
+test("#319 regression: a mid-work tool loop is never nudged (discord agent 76b81150 — 16 reminders in one 15-min loop)", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	await f.tool("task_create").execute("c1", { subject: "deep loop" }, undefined, undefined, f.ctx);
+	await f.tool("task_update").execute("u1", { id: 1, status: "in_progress" }, undefined, undefined, f.ctx);
+	// 30 bash/read cycles: the OLD rule (≥3 turns since a task tool) re-fired
+	// every 3rd turn; any tool call now keeps the streak at 0 — 0 nudges.
+	for (let i = 0; i < 30; i++) {
+		await f.handlers.get("agent_end")!({
+			messages: [{ role: "assistant", content: [{ type: "toolCall", name: "bash" }] }],
+		});
+		const result = await f.handlers.get("context")!({ messages: [{ role: "user", content: [] }] });
+		assert.equal(result, undefined, `cycle ${i}: a tool-loop turn must not nudge`);
+	}
+});
+
+test("#319: the stale-board nudge fires once per board state, re-armed only when the board changes", async () => {
+	const f = fakePi();
+	taskExtension(f.pi as never);
+	await f.tool("task_create").execute("c1", { subject: "stale work" }, undefined, undefined, f.ctx);
+	await f.tool("task_update").execute("u1", { id: 1, status: "in_progress" }, undefined, undefined, f.ctx);
+	// two text-only turns → the nudge fires once
+	for (let i = 0; i < 2; i++) {
+		await f.handlers.get("agent_end")!({ messages: [{ role: "assistant", content: [{ type: "text", text: "talk" }] }] });
+	}
+	const first = (await f.handlers.get("context")!({ messages: [{ role: "user", content: [] }] })) as {
+		messages: { role: string; content: { type: string; text: string }[] }[];
+	};
+	assert.ok(first, "streak 2 with a dirty board must nudge");
+	assert.match(first.messages.at(-1)!.content[0]!.text, /responding without tools/);
+	// same board, streak keeps growing → deduped, no second nudge
+	await f.handlers.get("agent_end")!({ messages: [{ role: "assistant", content: [{ type: "text", text: "talk" }] }] });
+	const again = await f.handlers.get("context")!({ messages: [{ role: "user", content: [] }] });
+	assert.equal(again, undefined, "same board state must not re-nudge");
+	// streak rebuilt after a tool turn, but board UNCHANGED → still deduped
+	await f.handlers.get("agent_end")!({
+		messages: [{ role: "assistant", content: [{ type: "toolCall", name: "task_list" }] }],
+	});
+	for (let i = 0; i < 2; i++) {
+		await f.handlers.get("agent_end")!({ messages: [{ role: "assistant", content: [{ type: "text", text: "talk" }] }] });
+	}
+	const rebuilt = await f.handlers.get("context")!({ messages: [{ role: "user", content: [] }] });
+	assert.equal(rebuilt, undefined, "streak alone must not re-arm — only a board change does");
+	// actually change the board → nudge re-armed for the new signature
+	await f.tool("task_create").execute("c2", { subject: "second front" }, undefined, undefined, f.ctx);
+	const rearmed = (await f.handlers.get("context")!({ messages: [{ role: "user", content: [] }] })) as {
+		messages: { role: string; content: { type: string; text: string }[] }[];
+	};
+	assert.ok(rearmed, "board changed → nudge re-armed");
+	assert.match(rearmed.messages.at(-1)!.content[0]!.text, /second front/);
 });
 
 test("wiring: session_start replays state from the session branch", async () => {
