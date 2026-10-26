@@ -10,7 +10,7 @@
         "@sinclair/typebox": "^0.34.0",
         "@types/bun": "^1.4.4",
         "bun-types": "latest",
-        "pi-mcp-adapter": "5.3.1",
+        "pi-mcp-adapter": "6.0.0",
         "pi-web-access": "0.44.0",
         "typescript": "^7.0.2",
       },
@@ -1004,7 +1004,7 @@
 
     "path-to-regexp": ["path-to-regexp@8.4.2", "", {}, "sha512-qRcuIdP69NPm4qbACK+aDogI5CBDMi1jKe0ry5rSQJz8JVLsC7jV8XpiJjGRLLol3N+R5ihGYcrPLTno6pAdBA=="],
 
-    "pi-mcp-adapter": ["pi-mcp-adapter@5.3.1", "", { "dependencies": { "@modelcontextprotocol/client": "2.3.1", "@modelcontextprotocol/core": "2.3.1", "@modelcontextprotocol/ext-tasks": "^0.1.0", "@napi-rs/keyring": "^2.1.0", "@typesafe-ai/sdk": "0.6.0", "ajv": "^8.17.1", "ajv-formats": "^3.0.1", "cross-spawn": "^7.0.6", "open": "^10.2.0", "quickjs-wasi": "3.6.2", "recheck": "4.6.0-beta.3", "smol-toml": "^1.9.0", "strip-json-comments": "^5.0.3", "undici": "^6.28.1", "zod": "^3.25.0 || ^4.0.0" }, "peerDependencies": { "@earendil-works/pi-ai": "^0.84.1 || ^0.85.0 || ^0.86.0 || ^0.87.0 || ^0.99.0 || ^1.0.0", "@earendil-works/pi-tui": "*", "typebox": "*" }, "optionalPeers": ["@earendil-works/pi-ai"], "bin": { "pi-mcp-adapter": "cli.js" } }, "sha512-3b7DxTc7g1vbHngJY59nfcykel1iihSSJ1jv+4kkMSGJteTI/W7N8NNV2MrqX/HTdVFgd5OIcET8OeIcgG175A=="],
+    "pi-mcp-adapter": ["pi-mcp-adapter@6.0.0", "", { "dependencies": { "@modelcontextprotocol/client": "2.3.1", "@modelcontextprotocol/core": "2.3.1", "@modelcontextprotocol/ext-tasks": "^0.1.0", "@napi-rs/keyring": "^2.1.0", "@typesafe-ai/sdk": "0.6.0", "ajv": "^8.17.1", "ajv-formats": "^3.0.1", "cross-spawn": "^7.0.6", "open": "^10.2.0", "recheck": "4.6.0-beta.3", "smol-toml": "^1.9.0", "strip-json-comments": "^5.0.3", "undici": "^6.28.1", "zod": "^3.25.0 || ^4.0.0" }, "peerDependencies": { "@earendil-works/pi-ai": "^0.84.1 || ^0.85.0 || ^0.86.0 || ^0.87.0 || ^0.99.0 || ^1.0.0", "@earendil-works/pi-tui": "*", "typebox": "*" }, "optionalPeers": ["@earendil-works/pi-ai"], "bin": { "pi-mcp-adapter": "cli.js" } }, "sha512-pmCLEaxsvElxahdevTpocmaou6SVMRgNSc/L3b1xZIGtw9t6M56yZxP6SO21mdu9SZiUUeQR50aKmY54WflpKA=="],
 
     "pi-web-access": ["pi-web-access@0.44.0", "", { "dependencies": { "@modelcontextprotocol/sdk": "1.32.1", "@mozilla/readability": "^0.6.0", "defuddle": "0.19.3", "linkedom": "^0.16.0", "p-limit": "^6.1.0", "promise.try": "^2.0.1", "turndown": "^7.2.0", "undici": "^8.11.2", "unpdf": "^1.6.2" }, "peerDependencies": { "@earendil-works/pi-ai": "*", "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*", "typebox": "*" }, "optionalPeers": ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"], "bin": { "pi-web-access-mcp": "dist/mcp-cli.js" } }, "sha512-8YK2Nb0P7ezRL0FS7P1cPYu7gDUOuhXWA3FOBev0bKsuPtG2QrDVm2GriKBgZI1Sq7SC8QRsfVFYYP8huUEo8w=="],
 
