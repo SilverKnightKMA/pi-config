@@ -7,8 +7,43 @@ import { controlFilePath, parseControlPayload, sweepableControlFile,
 	loadSnippets,
 	applySnippets,
 	parseSelection,
+	fastPathArgv,
 	snippetLine,
 } from "./index";
+
+describe("fastPathArgv (#90 — /snip <ids> fast path)", () => {
+	test("/snip 1,3 → fast path one-shot (bug: previously fell to dialogs)", () => {
+		expect(fastPathArgv(["1,3"])).toEqual({ idArg: "1,3", sticky: false });
+	});
+
+	test("/snip sticky 1,3 → fast path sticky (kept working)", () => {
+		expect(fastPathArgv(["sticky", "1,3"])).toEqual({ idArg: "1,3", sticky: true });
+	});
+
+	test("case-insensitive subcommand", () => {
+		expect(fastPathArgv(["STICKY", "1,3"])).toEqual({ idArg: "1,3", sticky: true });
+	});
+
+	test("bare /snip, on, setup, bare sticky → guided dialogs (undefined)", () => {
+		expect(fastPathArgv([])).toBeUndefined();
+		expect(fastPathArgv(["on"])).toBeUndefined();
+		expect(fastPathArgv(["setup"])).toBeUndefined();
+		expect(fastPathArgv(["sticky"])).toBeUndefined();
+	});
+
+	test("off/list are gate-excluded (order-independent safety)", () => {
+		expect(fastPathArgv(["off"])).toBeUndefined();
+		expect(fastPathArgv(["list"])).toBeUndefined();
+	});
+
+	test("/snip garbage → reaches parseSelection, which rejects with a clear error", () => {
+		const fast = fastPathArgv(["garbage"])!;
+		expect(fast).toEqual({ idArg: "garbage", sticky: false });
+		const parsed = parseSelection(fast.idArg, loadSnippets());
+		expect(parsed.error).toContain("not a number");
+		expect(parsed.ids).toEqual([]);
+	});
+});
 
 describe("parseSnippet", () => {
 	test("parses frontmatter + body", () => {

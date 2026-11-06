@@ -171,6 +171,23 @@ export function parseSelection(raw: string, snippets: Snippet[]): { ids: string[
 	return { ids };
 }
 
+/**
+ * #90 — classify a `/snip` argv into the fast-path decision.
+ * Returns undefined when the guided dialogs should open (bare `/snip`, `on`,
+ * `setup`, bare `sticky`) — `off`/`list` are also excluded so the gate stays
+ * correct even if the handler's early-return order ever changes.
+ * Non-numeric tokens are NOT filtered here — parseSelection rejects them with a
+ * clear error (e.g. `/snip garbage` → "Invalid selection: not a number").
+ */
+export function fastPathArgv(argv: string[]): { idArg: string; sticky: boolean } | undefined {
+	const sub = argv[0]?.toLowerCase();
+	const sticky = sub === "sticky";
+	const idArg = sticky ? argv[1] : argv[0];
+	if (idArg !== undefined && sub !== "on" && sub !== "setup" && sub !== "off" && sub !== "list") {
+		return { idArg, sticky };
+	}
+	return undefined;
+}
 /** Display list line for the select dialog (description embedded, RPC-safe). */
 export function snippetLine(snippet: Snippet, index: number): string {
 	const tag = snippet.placement === "prepend" ? "↑" : "↓";
@@ -412,24 +429,19 @@ export default function snip(pi: ExtensionAPI) {
 				return;
 			}
 
-			// Fast paths (power users): "/snip 1,3" / "/snip sticky 1,3".
-			const sticky = sub === "sticky";
-			const idArg = sticky ? argv[1] : argv[0];
-			if (sub !== undefined && !sticky && sub !== "on" && sub !== "setup") {
-				// unknown subcommand → treat as numeric fast path only if it parses
-				if (idArg === undefined) {
-					ctx.ui.notify(`Unknown subcommand "${sub}". Use /snip (guided), /snip <ids>, /snip sticky <ids>, /snip off, /snip list`, "warning");
-					return;
-				}
-			}
-			if (idArg !== undefined && idArg !== sub) {
+			// Fast paths (power users): "/snip 1,3" / "/snip sticky 1,3" (#90).
+			const fast = fastPathArgv(argv);
+			if (fast) {
 				const snippets = loadSnippets();
-				const parsed = parseSelection(idArg, snippets);
+				const parsed = parseSelection(fast.idArg, snippets);
 				if (parsed.error) {
-					ctx.ui.notify(`Invalid selection: ${parsed.error}`, "warning");
+					ctx.ui.notify(
+						`Invalid selection: ${parsed.error}. Use /snip (guided), /snip <ids>, /snip sticky <ids>, /snip off, /snip list`,
+						"warning",
+					);
 					return;
 				}
-				setState({ active: parsed.ids, sticky }, ctx);
+				setState({ active: parsed.ids, sticky: fast.sticky }, ctx);
 				return;
 			}
 
