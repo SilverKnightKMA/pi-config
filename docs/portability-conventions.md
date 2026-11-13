@@ -41,9 +41,24 @@ Built-in default (v1.4.x): haiku→`cli-openai/zaicp/glm-5.3-flash`,
 sonnet/claude→`cli-openai/zaicp/glm-5.3`, `openrouter/z-ai/glm-5.3`→`cli-openai/zaicp/glm-5.3`.
 
 Pinned defaults elsewhere (all individually overridable):
-- task judge: `TASK_JUDGE_MODEL` env > `taskJudgeModel` settings > `cli-openai/fci/deepseek-v4-flash`
+- task judge: `taskJudgeModel` settings > pi's own `defaultProvider`/`defaultModel`
 - OM workers: `observational-memory.models` in settings (observer/consolidator, each provider+id+thinking)
+- facts curator: `factsCuratorModel` settings > pi's own `defaultProvider`/`defaultModel`
 - paseo-subagents plugin roles: spawn-request `model` param > per-role default
+
+### No model id is hardcoded in extension source (2026-11-13)
+
+Directive from the user: extension source must not bake in any model or
+provider id — every model comes from pi's `settings.json`. When a settings
+key is missing, extensions fall back to pi's own configured default model
+(`defaultProvider` + `defaultModel` in the same file), resolved by
+`extensions/_shared/settings-models.ts`. If nothing can be resolved, the
+extension fails closed with an explicit message instead of spawning with a
+half-empty model.
+
+Three constants used to break this rule and were removed:
+`CURATOR_DEFAULT_MODEL` (facts), `DEFAULT_JUDGE_MODEL` (task), and
+`DEFAULTS.models` (observational-memory).
 
 ### sse-probe is a zaicp-specific diagnostic
 
