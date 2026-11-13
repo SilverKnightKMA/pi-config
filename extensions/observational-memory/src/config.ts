@@ -2,11 +2,25 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { readPiDefaultModel } from "../../_shared/settings-models.ts";
 
 export interface ConfiguredModel {
 	provider: string;
 	id: string;
 	thinking?: ModelThinkingLevel;
+}
+
+/**
+ * Fallback model when the settings file names none: pi's own configured default
+ * (`defaultProvider` + `defaultModel` in the same settings.json). No model id is
+ * baked into this source — settings.json stays the single source of truth.
+ */
+function piConfiguredDefaultModel(): ConfiguredModel | undefined {
+	const raw = readPiDefaultModel();
+	if (!raw) return undefined;
+	const slash = raw.indexOf("/");
+	if (slash <= 0) return undefined;
+	return { provider: raw.slice(0, slash), id: raw.slice(slash + 1) };
 }
 
 export interface Config {
@@ -57,8 +71,9 @@ export const DEFAULTS: Config = {
 	observerConcurrency: 4,
 	resumeAfterMidRunCompaction: true,
 	models: {
-		observer: { provider: "openrouter", id: "z-ai/glm-5.3", thinking: "low" },
-		consolidator: { provider: "openrouter", id: "z-ai/glm-5.3", thinking: "medium" },
+		// Overwritten by loadConfig() from settings.json; no model id is hardcoded here.
+		observer: { provider: "", id: "", thinking: "low" },
+		consolidator: { provider: "", id: "", thinking: "medium" },
 	},
 	passive: false,
 	debugLog: false,
@@ -152,15 +167,34 @@ export function loadConfig(cwd: string, env: NodeJS.ProcessEnv = process.env): C
 	const globalConfig = readNamespacedConfig(globalPath, DEFAULTS);
 	const projectConfig = readNamespacedConfig(projectPath, DEFAULTS);
 	const envConfig = readEnvConfig(env);
+	const configured = {
+		...DEFAULTS.models,
+		...globalConfig.models,
+		...projectConfig.models,
+	};
+	// Any missing field falls back to pi's own default model (same settings.json).
+	const fallback = piConfiguredDefaultModel();
+	const fill = (model: ConfiguredModel): ConfiguredModel | undefined => {
+		const provider = model.provider || fallback?.provider || "";
+		const id = model.id || fallback?.id || "";
+		if (!provider || !id) return undefined;
+		const filled: ConfiguredModel = { provider, id };
+		if (model.thinking) filled.thinking = model.thinking;
+		return filled;
+	};
+	const observer = fill(configured.observer);
+	const consolidator = fill(configured.consolidator);
+	if (!observer || !consolidator) {
+		throw new Error(
+			"observational-memory: no model configured. Set observational-memory.models.observer/.consolidator " +
+				"in ~/.pi/agent/settings.json, or set defaultProvider/defaultModel there.",
+		);
+	}
 	return {
 		...DEFAULTS,
 		...globalConfig,
 		...projectConfig,
 		...envConfig,
-		models: {
-			...DEFAULTS.models,
-			...globalConfig.models,
-			...projectConfig.models,
-		},
+		models: { observer, consolidator },
 	};
 }

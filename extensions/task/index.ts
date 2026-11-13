@@ -60,6 +60,7 @@ import { activeGoal, anyGoalRunning, goalIdActive, planContinuationActive, tryCo
 import { appendDecision, decideDecision, pruneDecided, readDecisions, type TaskDecisionEntry } from "./src/decisions.ts";
 import { decide, nextStreak, TASK_BUDGET, continuationOwnedByHigherKind } from "../_shared/continuation-driver.ts";
 import { pokeBridges } from "../_shared/doorbell.ts";
+import { readPiDefaultModel } from "../_shared/settings-models.ts";
 import { registerBellListener, startDoorbellServer } from "../_shared/doorbell-server.ts";
 import { ackPlanBridge, applyPlanBridge, planBridgePath, readPlanBridge } from "./src/plan-bridge.ts";
 
@@ -70,7 +71,6 @@ type UiContext = ExtensionContext;
 // 2026-09-09). Judge model MUST be a different family than the worker's
 // GLM — default fci/deepseek-v4-flash; override: env TASK_JUDGE_MODEL, then
 // settings taskJudgeModel (workspace .pi/settings.json > ~/.pi/agent).
-const DEFAULT_JUDGE_MODEL = "cli-openai/fci/deepseek-v4-flash";
 const DEFAULT_JUDGE_THINKING = "medium";
 const JUDGE_TIMEOUT_MS = 60_000;
 
@@ -92,7 +92,17 @@ function readSettingsKey(cwd: string, key: string): string | null {
 function resolveJudgeModel(cwd: string): string {
 	// F12 2026-09-22: settings-only (một chỗ duy nhất ~/.pi/agent/settings.json /
 	// workspace .pi/settings.json) — env TASK_JUDGE_MODEL đã bỏ theo directive user.
-	return readSettingsKey(cwd, "taskJudgeModel") ?? DEFAULT_JUDGE_MODEL;
+	// No model id is hardcoded: without taskJudgeModel we fall back to pi's own
+	// configured default model (defaultProvider/defaultModel in the same file).
+	const configured = readSettingsKey(cwd, "taskJudgeModel");
+	if (configured) return configured;
+	const fallback = readPiDefaultModel(cwd);
+	if (!fallback) {
+		throw new Error(
+			"task: no judge model configured — set taskJudgeModel in ~/.pi/agent/settings.json (or defaultProvider/defaultModel there)",
+		);
+	}
+	return fallback;
 }
 
 /** F12: judge thinking — settings taskJudgeThinking, default medium. */

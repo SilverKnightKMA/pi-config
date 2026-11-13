@@ -32,6 +32,8 @@ export const MAX_PACK_BYTES = 100 * 1024; // ≤~100KB evidence ration (plan 202
 
 // --- F12 model/thinking: settings-only (một chỗ duy nhất, bỏ env) -----------------
 
+import { readPiDefaultModel } from "../../_shared/settings-models.ts";
+
 /** Read a string key from workspace .pi/settings.json > ~/.pi/agent/settings.json. */
 export function readCuratorSettingsKey(key: string, cwd = process.cwd()): string | null {
 	const candidates = [`${cwd}/.pi/settings.json`, `${process.env.HOME || ""}/.pi/agent/settings.json`];
@@ -48,7 +50,6 @@ export function readCuratorSettingsKey(key: string, cwd = process.cwd()): string
 	return null;
 }
 
-export const CURATOR_DEFAULT_MODEL = "cli-openai/fci/deepseek-v4-flash";
 export const CURATOR_DEFAULT_THINKING = "medium";
 
 // --- paths ------------------------------------------------------------------------
@@ -106,8 +107,14 @@ export function realPlannerSpawn(env: NodeJS.ProcessEnv = process.env): PlannerS
 			];
 			// F12: model+thinking từ settings (factsCuratorModel/factsCuratorThinking) —
 			// env FACTS_CURATOR_MODEL đã bỏ theo directive user (một chỗ config duy nhất).
-			const curatorModel = readCuratorSettingsKey("factsCuratorModel") ?? CURATOR_DEFAULT_MODEL;
+			const curatorModel = readCuratorSettingsKey("factsCuratorModel") ?? readPiDefaultModel();
 			const curatorThinking = readCuratorSettingsKey("factsCuratorThinking") ?? CURATOR_DEFAULT_THINKING;
+			if (!curatorModel) {
+				// Fail closed: without a model there is nothing to run.
+				throw new Error(
+					"facts: no curator model configured — set factsCuratorModel in ~/.pi/agent/settings.json (or defaultProvider/defaultModel there)",
+				);
+			}
 			args.push("--model", curatorModel, "--thinking", curatorThinking);
 			const cwd = factsRunsDir(env);
 			mkdirSync(cwd, { recursive: true });
